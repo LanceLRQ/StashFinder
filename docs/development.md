@@ -2,7 +2,9 @@
 
 简体中文 | [English](development.en.md)
 
-本工程目前只提供 M0 验证窗口和合成数据测量，不会登记、枚举或索引现有硬盘。后台状态中的登记数固定为 0。不要将此版本作为个人文件目录库使用。
+本工程目前提供 M1 分区登记与持久化。后台只读查询设备基础信息，只有用户所选分区才会登记；所有分区都尚未扫描文件。登记成功显示“尚未索引”。M0 文件桥接与合成数据测量保留在开发验证入口。
+
+NTFS 卷身份查询需要只读访问句柄，不能使用仅用于设备属性的零访问句柄。VHD 实机验收包含这一查询；自动检查不能替代实机流程。
 
 ## 环境与构建
 
@@ -28,7 +30,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1
 终端一，普通用户运行后台验证进程：
 
 ```powershell
-cargo run -p stashfinder-service -- --foreground
+cargo run -p stashfinder-service -- --foreground --data-dir "$PWD\.local\dev-assets"
 ```
 
 终端二：
@@ -37,7 +39,19 @@ cargo run -p stashfinder-service -- --foreground
 npm --prefix ui run tauri -- dev
 ```
 
-点击“检查连接”应显示“前台验证进程”。这条路径复用服务通信循环，但不等同于已经安装 Windows 服务。关闭界面不停止该后台进程；在终端一用 Ctrl+C 停止。命名管道限定配置账户、SYSTEM 和管理员，拒绝远程连接；没有磁盘扫描、任意文件操作或执行命令的 IPC。
+首页为硬盘管理。普通用户前台模式可能无权读取物理磁盘布局，界面应明确显示不可访问；完整设备验收需使用下述 LocalSystem 服务。开发验证入口中的“检查连接”可确认后台模式。关闭界面不停止后台；在终端一用 Ctrl+C 停止。命名管道限定配置账户、SYSTEM 和管理员，拒绝远程连接；IPC 不接受数据库路径或任意执行命令。
+
+## 分区登记验收
+
+- 首次打开不勾选任何分区。选择需要管理的分区并命名；没有选择的分区不登记，也不扫描文件。
+- 已登记分区按物理盘分组，显示当前挂载点、文件系统、容量及采集时间。改名只改变软件内名称，不修改卷标。
+- 接入、拔出或换盘符后点击“刷新设备”。离线容量是历史快照；未获取到的值显示未知。M1 不提供自动插拔同步。
+- 身份冲突、证据不足、文件系统变化和库异常会显示原因，不自动关联不确定设备或覆盖旧记录。格式化后的历史管理在后续阶段提供。
+- 退出、重开界面和服务，登记 ID、名称及历史容量应保留。ready 子库丢失/损坏不会被空库替换，其他分区仍可用。
+
+开发模式必须显式指定绝对数据目录。SCM 模式默认 `%ProgramData%\StashFinder`，需预先创建；目录必须直接位于 ProgramData 下、禁用根目录 ACL 继承，仅允许 SYSTEM 和 Administrators 完全控制并向子项继承，不能包含重解析点。GUI 通过服务读取数据，不直接打开数据库。下面的验证脚本会创建独立的受保护目录。正式安装与迁移流程尚未提供。
+
+`catalog.sqlite` 保存登记，`volumes/<filesystem-id>.sqlite` 保存独立文件系统数据。SQLite 使用 WAL/FULL；不能只复制活动的主数据库文件作为备份。恢复接口仅生成单独的候选资产库，尚无完整备份恢复工具。协议版本为 2，单帧上限为 16 KiB，资产快照分页读取；界面和服务需使用同一次构建。
 
 无开发服务器的构建与启动：
 
@@ -47,6 +61,8 @@ npm --prefix ui run tauri -- build --debug --no-bundle
 ```
 
 ## 文件桥接验收
+
+先进入“开发验证”。以下操作只用于可丢弃样本。
 
 1. 点击“准备验证样本”，默认生成两个文件、一个含文件的目录及一个超过 260 字符路径的文件。它们位于本机应用数据目录 `io.github.lancelrq.stashfinder/m0-samples/`，路径在窗口中显示，退出后保留。
 2. 点击第一行，按住 Shift 点击第三行（Ctrl 可逐项选择，Ctrl+A 全选）。按 Ctrl+C 或右键“复制”，到一个空的测试目录粘贴。核对文件内容和目录内文件，并确认源仍存在。方向键可选择条目，Esc 取消选择。
@@ -87,9 +103,13 @@ $env:STASHFINDER_M0_SAMPLE_ROOT = 'D:\tmp\已准备的M0样本目录'
 .\scripts\verify-service.ps1 -OwnerSid 'S-1-5-21-填入普通账户SID' -HoldSeconds 120
 ```
 
-脚本将已构建的服务程序复制到受保护的 `%ProgramFiles%/StashFinder-M0-Verification/`，以 LocalSystem 手动启动临时服务 `StashFinderM0`，检查状态，等待 120 秒供普通权限 GUI 连接，然后停止、移除服务及本次生成的受保护程序。既有同名服务或目录会导致拒绝执行，不能覆盖。此脚本不是正式安装程序，不扫描磁盘。
+脚本将已构建的服务程序复制到受保护的 `%ProgramFiles%/StashFinder-M0-Verification/`，新建 `%ProgramData%/StashFinder-Verification-<随机ID>/`，以 LocalSystem 手动启动临时服务 `StashFinderM0`，检查状态，等待 120 秒供普通权限 GUI 连接，然后停止、移除服务及本次生成的程序。既有同名服务或程序目录会导致拒绝执行。数据目录保留供核对，不复用开发数据库。此脚本不是正式安装程序，只发现设备基础信息，不扫描文件。
 
 在等待期间，普通权限窗口“检查连接”应显示“Windows 后台服务”。关闭界面后用普通账户运行 `target/debug/stashfinder-service.exe --probe`，服务应仍可响应。结果写入忽略的 `.local/service-verification.json`。真实其他账户的拒绝访问和 Windows 10 验证需有相应测试环境。
+
+需要验证换盘符和卸载重挂时，可显式添加 `-VhdDirectory 'D:\tmp\StashFinder-M1-全新目录'`。脚本只接受尚不存在的 D:\tmp 子目录，创建一块 512 MiB 动态 VHDX，并在新磁盘中格式化 NTFS/exFAT/FAT32 测试分区；验证选择子集、命名、盘符变化、离线容量、重挂及 SCM 重启。等待期供普通权限 GUI 验收，结束后卸载 VHD；测试镜像和受保护数据目录保留，不自动删除。报告在 `.local/assets-verification.json`。不要直接对资料盘执行这些挂载和格式化测试。
+
+自动验证成功后，脚本另建一个 64 MiB NTFS 分区供 GUI 登记和改名，盘符见报告的 `guiMount`。只操作该测试分区；关闭重开界面后核对名称和登记数量。失败时同样保留指定等待期供诊断，随后执行卸载和服务清理；不要直接结束管理员脚本进程。
 
 ## 合成性能基线
 
@@ -108,4 +128,4 @@ cargo build -p stashfinder-store --bin baseline --release --locked
 
 ## 布局
 
-`crates/core` 是通信协议；`crates/windows` 是 Windows 适配；`crates/service` 是后台入口；`crates/store` 是合成存储基线；`ui` 是验证窗口。M1 才引入正式的资产登记和独立分区数据库模式。
+`crates/core` 定义身份模型与通信协议；`crates/windows` 提供 Windows 适配；`crates/service` 协调设备发现和登记；`crates/store` 提供资产目录、独立分区数据库及合成基线；`ui` 提供资产管理界面与开发验证入口。

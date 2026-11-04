@@ -2,7 +2,9 @@
 
 [简体中文](development.md) | English
 
-This project currently provides an M0 validation window and synthetic benchmarks. It does not register, enumerate, or index existing disks. The service reports a fixed registration count of zero. Do not use this version as a personal file catalog.
+This project provides M1 partition registration and persistence. The service queries device metadata without modifying it and registers only selected partitions. No files are scanned on any partition; registered partitions show “not indexed.” The development view retains M0 file bridge tests and synthetic benchmarks.
+
+NTFS volume identity queries require a read-access handle, not a zero-access device-attribute handle. VHD acceptance exercises this query; automated checks cannot replace device-level validation.
 
 ## Environment and build
 
@@ -28,7 +30,7 @@ When available memory is limited, set `$env:CARGO_BUILD_JOBS = '1'` in the curre
 In an ordinary-user terminal:
 
 ```powershell
-cargo run -p stashfinder-service -- --foreground
+cargo run -p stashfinder-service -- --foreground --data-dir "$PWD\.local\dev-assets"
 ```
 
 In a second terminal:
@@ -37,7 +39,19 @@ In a second terminal:
 npm --prefix ui run tauri -- dev
 ```
 
-Use the connection check button. It should report a foreground validation process. This reuses the service communication loop but does not install a Windows service. Closing the GUI does not stop this process; use Ctrl+C in its terminal. The local pipe allows the configured account, SYSTEM and administrators and rejects remote clients. No scanning, arbitrary file operations or command execution are exposed over IPC.
+The home screen manages disks. An ordinary foreground process may lack access to physical disk layouts; the UI must report this explicitly. Use the LocalSystem verification service below for complete device validation. The development view includes a connection check. Closing the GUI does not stop the backend; use Ctrl+C in its terminal. The local pipe allows the configured account, SYSTEM and administrators and rejects remote clients. IPC accepts neither database paths nor arbitrary commands.
+
+## Partition registration acceptance
+
+- Nothing is selected on first launch. Select and name the partitions to manage; unselected partitions are neither registered nor scanned.
+- Registered partitions are grouped by physical disk, with current mounts, filesystem, capacity and collection time. Naming changes software records only, not volume labels.
+- Refresh devices after connection, disconnection or drive-letter changes. Offline capacity is historical; unavailable values remain unknown. M1 has no automatic hotplug synchronization.
+- Conflicting or insufficient identity evidence, filesystem changes and database errors have explicit states. Uncertain devices are not automatically associated and old records are not overwritten. Post-format history management comes later.
+- Registrations, IDs, names and historical capacity survive UI/service restart. A missing or corrupt ready database is not replaced by an empty one, and other partitions remain usable.
+
+Foreground development requires an explicit absolute data directory. SCM mode defaults to `%ProgramData%\StashFinder`, which must be provisioned beforehand as a direct child of ProgramData. Disable root ACL inheritance, grant only SYSTEM and Administrators inheritable full control, and disallow reparse points. The GUI reads through the service, not directly from databases. The verification script below provisions isolated protected storage. Production installation and migration are not implemented.
+
+`catalog.sqlite` stores registrations; `volumes/<filesystem-id>.sqlite` stores independent filesystem data. SQLite uses WAL/FULL: copying only a live main database is not a backup. The recovery API creates a separate candidate catalog only, not a complete backup/restore tool. Protocol version 2 has a 16 KiB frame limit and paginated asset snapshots; use UI and service binaries from the same build.
 
 To build and launch without a development server:
 
@@ -47,6 +61,8 @@ npm --prefix ui run tauri -- build --debug --no-bundle
 ```
 
 ## File bridge acceptance
+
+Open the development view first. These operations are limited to disposable samples.
 
 1. Use the prepare-samples button: by default it generates two files, a directory containing a file, and a file with a path longer than 260 characters. Their displayed locations are under the local application data directory `io.github.lancelrq.stashfinder/m0-samples/`. They remain after the GUI closes.
 2. Click the first row and Shift-click the third (Ctrl toggles individual entries; Ctrl+A selects all). Press Ctrl+C or right-click and choose copy, then paste into an empty directory in Explorer. Verify contents, nested files, and that sources remain. Arrow keys select entries and Esc clears selection.
@@ -87,9 +103,13 @@ Stop the foreground process. Run `target/debug/stashfinder-service.exe --sid` as
 .\scripts\verify-service.ps1 -OwnerSid 'S-1-5-21-REPLACE-WITH-USER-SID' -HoldSeconds 120
 ```
 
-The script copies the built service to protected `%ProgramFiles%/StashFinder-M0-Verification/`, manually starts temporary service `StashFinderM0` as LocalSystem, probes it, waits 120 seconds for ordinary-user GUI checks, then stops/removes the service and generated protected binary. Existing services or directories with those names cause rejection rather than replacement. This is not a production installer and performs no disk scanning.
+The script copies the built service to protected `%ProgramFiles%/StashFinder-M0-Verification/`, provisions `%ProgramData%/StashFinder-Verification-<random-id>/`, manually starts temporary service `StashFinderM0` as LocalSystem, probes it, waits 120 seconds for ordinary-user GUI checks, then stops/removes the service and generated binary. Existing services or binary directories cause rejection. Data is retained for inspection and never reuses the development catalog. This is not a production installer; it queries device metadata without scanning files.
 
 During the wait, the ordinary-user window should report a Windows background service. Close the GUI and run `target/debug/stashfinder-service.exe --probe` as that user; the service should still respond. Results are saved to ignored `.local/service-verification.json`. Actual second-account rejection and Windows 10 checks require corresponding test environments.
+
+For drive-letter and detach/remount checks, explicitly add `-VhdDirectory 'D:\tmp\StashFinder-M1-new-directory'`. The script accepts only a new directory under D:\tmp, creates a 512 MiB dynamic VHDX and formats NTFS/exFAT/FAT32 partitions on that new disk. It verifies selection, naming, drive-letter changes, offline capacity, remounting and SCM restart. The hold period permits ordinary-user GUI checks; afterward the VHD is detached. The image and protected data directory are retained, not automatically deleted. Results are in `.local/assets-verification.json`. Never run these mounting/formatting tests against personal data disks.
+
+After automated checks pass, the script creates an additional 64 MiB NTFS partition for GUI registration and naming; its drive letter is recorded as `guiMount`. Operate only on this test partition, then close and reopen the UI to check its name and the registration count. Failures also retain the requested diagnostic hold before disk and service cleanup; do not terminate the elevated script process directly.
 
 ## Synthetic baseline
 
@@ -108,4 +128,4 @@ The OS file cache is still warm after import; this is not a cold-start test. It 
 
 ## Layout
 
-`crates/core` contains the protocol, `crates/windows` Windows adapters, `crates/service` the background entry point, `crates/store` the synthetic baseline, and `ui` the validation window. Production asset registration and independent partition database schemas begin in M1.
+`crates/core` defines identity models and the protocol; `crates/windows` provides Windows adapters; `crates/service` coordinates device discovery and registration; `crates/store` provides the asset catalog, independent partition databases and synthetic baseline; `ui` provides asset management and the development validation view.

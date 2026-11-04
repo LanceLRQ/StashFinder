@@ -25,6 +25,26 @@ async fn service_status() -> Result<stashfinder_core::Status, String> {
 }
 
 #[tauri::command]
+async fn asset_snapshot() -> Result<stashfinder_core::assets::Snapshot, String> {
+    ipc::snapshot(ipc::DEFAULT_PIPE)
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+async fn asset_command(action: stashfinder_core::Action) -> Result<(), String> {
+    match action {
+        stashfinder_core::Action::Status | stashfinder_core::Action::Page { .. } => {
+            Err("不是资产操作".into())
+        }
+        action => ipc::request(ipc::DEFAULT_PIPE, action)
+            .await
+            .map(|_| ())
+            .map_err(|error| format!("{error:#}")),
+    }
+}
+
+#[tauri::command]
 fn create_samples(app: AppHandle, state: State<'_, Samples>) -> Result<Vec<Sample>, String> {
     (|| -> Result<Vec<Sample>> {
         let mut samples = state
@@ -242,6 +262,8 @@ fn main() {
         .manage(Samples::default())
         .invoke_handler(tauri::generate_handler![
             service_status,
+            asset_snapshot,
+            asset_command,
             create_samples,
             copy_samples,
             drag_samples,

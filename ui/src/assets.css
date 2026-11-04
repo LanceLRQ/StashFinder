@@ -1,0 +1,234 @@
+.assets-app {
+  max-width: 1440px;
+  padding: 22px 28px;
+}
+.asset-toolbar,
+.candidate-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.asset-toolbar h1 {
+  margin: 22px 0 0;
+}
+.asset-toolbar p {
+  margin: 3px 0 22px;
+  color: #53625d;
+  font-size: 13px;
+}
+.assets-app .quiet {
+  border-color: transparent;
+  background: transparent;
+  color: #53625d;
+}
+.asset-empty {
+  padding: 24px 0;
+  border-top: 1px solid #d4d9d2;
+}
+.asset-empty h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+.asset-empty p {
+  margin: 0;
+  color: #53625d;
+  font-size: 13px;
+}
+.disk-group {
+  margin: 12px 0 24px;
+}
+.disk-group h2 {
+  font-size: 14px;
+  margin: 0;
+  padding: 10px 12px;
+  background: #e8ece5;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.disk-group h2 span {
+  color: #53625d;
+  font-weight: 400;
+}
+.asset-table-wrap {
+  overflow-x: auto;
+}
+.assets-app table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  background: #fff;
+}
+.assets-app th {
+  text-align: left;
+  font-size: 12px;
+  color: #53625d;
+  font-weight: 500;
+  padding: 8px 12px;
+  border-bottom: 1px solid #d4d9d2;
+  white-space: nowrap;
+}
+.assets-app td {
+  padding: 12px;
+  border-bottom: 1px solid #e0e4dd;
+  vertical-align: top;
+  min-width: 85px;
+}
+.assets-app td:first-child {
+  min-width: 130px;
+  overflow-wrap: anywhere;
+}
+.assets-app small {
+  display: block;
+  color: #64716d;
+  font-size: 11px;
+  margin-top: 4px;
+}
+.assets-app td button {
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+.assets-app .asset-error {
+  color: #a2382b;
+  overflow-wrap: anywhere;
+}
+.assets-app p.asset-error {
+  border-left: 3px solid #a2382b;
+  padding: 8px 12px;
+  background: #fff4ef;
+}
+.connection {
+  color: #64716d;
+  white-space: nowrap;
+}
+.connection.online {
+  color: #236856;
+}
+.connection.uncertain,
+.connection.changed,
+.connection.inaccessible {
+  color: #98600e;
+}
+.candidate-section {
+  margin-top: 30px;
+  border-top: 1px solid #d4d9d2;
+  padding-top: 14px;
+}
+.candidate-disk h3 {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 18px 0 0;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: #e8ece5;
+}
+.candidate-disk h3 span {
+  font-weight: 400;
+  color: #53625d;
+}
+.asset-dialog::backdrop {
+  background: #172a3040;
+}
+.candidate-heading h2 {
+  font-size: 17px;
+  margin: 0;
+}
+.candidate-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid #e0e4dd;
+  padding: 12px 0;
+}
+.candidate-row label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  cursor: pointer;
+}
+.candidate-row label span {
+  overflow-wrap: anywhere;
+}
+.candidate-row input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  accent-color: #236856;
+}
+.candidate-row.blocked {
+  color: #64716d;
+}
+.candidate-row input:not([type="checkbox"]),
+.asset-dialog input {
+  border: 1px solid #aebbb4;
+  border-radius: 3px;
+  padding: 7px 9px;
+  background: #fff;
+  font: inherit;
+  color: inherit;
+}
+.candidate-row input:not([type="checkbox"]) {
+  width: 180px;
+}
+.asset-footer {
+  margin-top: 24px;
+  font-size: 11px;
+  color: #64716d;
+}
+.asset-dialog {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  width: min(440px, calc(100vw - 40px));
+  border: 1px solid #b9c3bd;
+  border-radius: 6px;
+  padding: 24px;
+  box-shadow:
+    0 10px 60px #182d3040,
+    0 0 0 100vmax #172a3040;
+  z-index: 10;
+  color: #24302e;
+}
+.asset-dialog h2 {
+  margin: 0 0 18px;
+  font-size: 20px;
+}
+.asset-dialog label {
+  display: grid;
+  gap: 6px;
+}
+.asset-dialog p {
+  font-size: 13px;
+  color: #53625d;
+}
+.asset-dialog div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+.asset-return {
+  padding: 12px 28px 0;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+@media (max-width: 700px) {
+  .assets-app {
+    padding: 16px;
+  }
+  .candidate-row {
+    align-items: flex-start;
+  }
+  .candidate-row input:not([type="checkbox"]) {
+    width: 130px;
+  }
+}

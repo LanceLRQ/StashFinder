@@ -2,7 +2,7 @@
 
 简体中文 | [English](third-party.en.md)
 
-M0 代码独立实现，未复制 FindX 或 goz 源码。两者是设计调研参考，不作为运行依赖。后续若引入源码，需逐文件保留原版权与许可声明。
+M0/M1 代码独立实现，未复制 FindX 或 goz 源码。两者是设计调研参考，不作为运行依赖。后续若引入源码，需逐文件保留原版权与许可声明。
 
 直接依赖版本由 manifests 和锁文件确定。下表记录来源和许可，不替代发布包中完整的传递依赖许可清单。
 
@@ -17,6 +17,7 @@ M0 代码独立实现，未复制 FindX 或 goz 源码。两者是设计调研�
 | serde / serde_json | [serde-rs](https://github.com/serde-rs) | MIT OR Apache-2.0 |
 | anyhow | [dtolnay/anyhow](https://github.com/dtolnay/anyhow) | MIT OR Apache-2.0 |
 | tempfile | [Stebalien/tempfile](https://github.com/Stebalien/tempfile) | MIT OR Apache-2.0 |
+| uuid | [uuid-rs/uuid](https://github.com/uuid-rs/uuid) | MIT OR Apache-2.0 |
 | React / React DOM | [facebook/react](https://github.com/facebook/react) | MIT |
 | TypeScript | [microsoft/TypeScript](https://github.com/microsoft/TypeScript) | Apache-2.0 |
 | Vite / React plugin | [vitejs](https://github.com/vitejs) | MIT |

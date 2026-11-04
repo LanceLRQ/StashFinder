@@ -1,9 +1,12 @@
+pub mod assets;
+
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_FRAME: usize = 16 * 1024;
+pub const SNAPSHOT_EXPIRED: &str = "设备快照已更新，请刷新";
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -13,10 +16,56 @@ pub struct Request {
     pub action: Action,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
     Status,
+    Page {
+        version: Option<u64>,
+        offset: usize,
+    },
+    Refresh,
+    Register {
+        version: u64,
+        candidate_id: String,
+        name: String,
+        allow_weak: bool,
+    },
+    Retry {
+        version: u64,
+        partition_id: String,
+        candidate_id: String,
+    },
+    Rename {
+        partition_id: String,
+        name: String,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Reply {
+    pub version: u32,
+    pub id: u64,
+    pub body: Response,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
+pub enum Response {
+    Status(Status),
+    Page(Box<Page>),
+    Accepted,
+    Error(String),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Page {
+    pub version: u64,
+    pub busy: bool,
+    pub error: Option<String>,
+    pub asset: Option<assets::Asset>,
+    pub candidate: Option<assets::Candidate>,
+    pub next: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

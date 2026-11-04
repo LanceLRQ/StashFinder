@@ -17,7 +17,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Rust tests failed' }
     & cargo build --workspace --locked
     if ($LASTEXITCODE -ne 0) { throw 'Rust build failed' }
-    Write-Output 'All M0 automated checks passed.'
+    Write-Output 'All automated checks passed.'
 } finally {
     Pop-Location
 }

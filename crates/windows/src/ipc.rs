@@ -1,5 +1,8 @@
 use anyhow::{Context, Result, ensure};
-use stashfinder_core::{Action, PROTOCOL_VERSION, Request, Status, read_frame, write_frame};
+use stashfinder_core::{
+    Action, PROTOCOL_VERSION, Reply, Request, Response, SNAPSHOT_EXPIRED, Status, assets::Snapshot,
+    read_frame, write_frame,
+};
 use std::{mem::size_of, time::Duration};
 use tokio::{
     net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions},
@@ -85,7 +88,8 @@ pub fn create_pipe(name: &str, owner_sid: &str, first: bool) -> Result<NamedPipe
         let result = ServerOptions::new()
             .first_pipe_instance(first)
             .reject_remote_clients(true)
-            .max_instances(2)
+            // Keep the default instance limit: Windows retains closed instances
+            // until overlapped IO drains. Only two are owned by the service loop.
             .create_with_security_attributes_raw(
                 name,
                 (&mut attributes as *mut SECURITY_ATTRIBUTES).cast(),
@@ -96,6 +100,58 @@ pub fn create_pipe(name: &str, owner_sid: &str, first: bool) -> Result<NamedPipe
 }
 
 pub async fn status(name: &str) -> Result<Status> {
+    match request(name, Action::Status).await? {
+        Response::Status(status) => Ok(status),
+        _ => anyhow::bail!("unexpected status response"),
+    }
+}
+
+pub async fn snapshot(name: &str) -> Result<Snapshot> {
+    let mut result = Snapshot::default();
+    let mut offset = 0;
+    let mut restarts = 0;
+    loop {
+        let response = request(
+            name,
+            Action::Page {
+                version: (offset > 0).then_some(result.version),
+                offset,
+            },
+        )
+        .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) if error.to_string() == SNAPSHOT_EXPIRED && restarts < 3 => {
+                // Discard every partial page instead of mixing two device snapshots.
+                restarts += 1;
+                result = Snapshot::default();
+                offset = 0;
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        let Response::Page(page) = response else {
+            anyhow::bail!("unexpected asset response")
+        };
+        result.version = page.version;
+        result.busy = page.busy;
+        result.error = page.error;
+        if let Some(asset) = page.asset {
+            result.assets.push(asset);
+        }
+        if let Some(candidate) = page.candidate {
+            result.candidates.push(candidate);
+        }
+        match page.next {
+            Some(next) => offset = next,
+            None => break,
+        }
+        ensure!(offset <= 10000, "too many asset records");
+    }
+    Ok(result)
+}
+
+pub async fn request(name: &str, action: Action) -> Result<Response> {
     timeout(IO_TIMEOUT, async {
         let mut client = loop {
             // SECURITY_IDENTIFICATION prevents server impersonation of the client.
@@ -110,15 +166,18 @@ pub async fn status(name: &str) -> Result<Status> {
         let request = Request {
             version: PROTOCOL_VERSION,
             id: 1,
-            action: Action::Status,
+            action,
         };
         write_frame(&mut client, &serde_json::to_vec(&request)?).await?;
-        let response: Status = serde_json::from_slice(&read_frame(&mut client).await?)?;
+        let response: Reply = serde_json::from_slice(&read_frame(&mut client).await?)?;
         ensure!(
             response.version == PROTOCOL_VERSION && response.id == request.id,
             "response version or request ID mismatch"
         );
-        Ok(response)
+        match response.body {
+            Response::Error(message) => anyhow::bail!(message),
+            body => Ok(body),
+        }
     })
     .await
     .context("service did not respond within 3 seconds")?

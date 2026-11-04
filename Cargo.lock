@@ -2984,7 +2984,9 @@ dependencies = [
  "anyhow",
  "serde_json",
  "stashfinder-core",
+ "stashfinder-store",
  "stashfinder-windows",
+ "tempfile",
  "tokio",
  "windows-service",
 ]
@@ -2997,7 +2999,9 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "stashfinder-core",
  "tempfile",
+ "uuid",
  "windows",
 ]
 

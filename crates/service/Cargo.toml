@@ -7,12 +7,14 @@ license.workspace = true
 [dependencies]
 stashfinder-core = { path = "../core" }
 stashfinder-windows = { path = "../windows" }
+stashfinder-store = { path = "../store" }
 windows-service = "=0.8.1"
 tokio.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

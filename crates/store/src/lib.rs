@@ -1,4 +1,7 @@
-//! Synthetic M0 baseline, deliberately separate from the production catalog schema.
+//! Persistent catalogs and partition stores. Synthetic M0 helpers retain a separate schema.
+pub mod catalog;
+pub mod volume;
+
 use anyhow::{Result, ensure};
 use rusqlite::{Connection, OpenFlags, params, params_from_iter};
 use std::path::Path;

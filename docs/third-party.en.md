@@ -2,7 +2,7 @@
 
 [简体中文](third-party.md) | English
 
-M0 is independently implemented. No FindX or goz source code has been copied. They are design research references, not runtime dependencies. Any future source reuse must retain original copyright and license notices per file.
+M0/M1 is independently implemented. No FindX or goz source code has been copied. They are design research references, not runtime dependencies. Any future source reuse must retain original copyright and license notices per file.
 
 Manifests and lockfiles determine exact direct dependency versions. This table records sources and licenses; it does not replace the full transitive license inventory required for release packages.
 
@@ -17,6 +17,7 @@ Manifests and lockfiles determine exact direct dependency versions. This table r
 | serde / serde_json | [serde-rs](https://github.com/serde-rs) | MIT OR Apache-2.0 |
 | anyhow | [dtolnay/anyhow](https://github.com/dtolnay/anyhow) | MIT OR Apache-2.0 |
 | tempfile | [Stebalien/tempfile](https://github.com/Stebalien/tempfile) | MIT OR Apache-2.0 |
+| uuid | [uuid-rs/uuid](https://github.com/uuid-rs/uuid) | MIT OR Apache-2.0 |
 | React / React DOM | [facebook/react](https://github.com/facebook/react) | MIT |
 | TypeScript | [microsoft/TypeScript](https://github.com/microsoft/TypeScript) | Apache-2.0 |
 | Vite / React plugin | [vitejs](https://github.com/vitejs) | MIT |
