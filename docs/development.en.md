@@ -2,7 +2,7 @@
 
 [简体中文](development.md) | English
 
-This project provides M1 partition registration and persistence. The service queries device metadata without modifying it and registers only selected partitions. No files are scanned on any partition; registered partitions show “not indexed.” The development view retains M0 file bridge tests and synthetic benchmarks.
+This project provides partition registration, manual NTFS indexing and basic offline search. Registration does not start scanning; indexing starts from the partition row. The development view retains M0 file bridge tests and synthetic benchmarks, separate from real search results.
 
 NTFS volume identity queries require a read-access handle, not a zero-access device-attribute handle. VHD acceptance exercises this query; automated checks cannot replace device-level validation.
 
@@ -45,13 +45,13 @@ The home screen manages disks. An ordinary foreground process may lack access to
 
 - Nothing is selected on first launch. Select and name the partitions to manage; unselected partitions are neither registered nor scanned.
 - Registered partitions are grouped by physical disk, with current mounts, filesystem, capacity and collection time. Naming changes software records only, not volume labels.
-- Refresh devices after connection, disconnection or drive-letter changes. Offline capacity is historical; unavailable values remain unknown. M1 has no automatic hotplug synchronization.
+- Refresh devices after connection, disconnection or drive-letter changes. Offline capacity is historical; unavailable values remain unknown. Automatic hotplug synchronization is not implemented.
 - Conflicting or insufficient identity evidence, filesystem changes and database errors have explicit states. Uncertain devices are not automatically associated and old records are not overwritten. Post-format history management comes later.
 - Registrations, IDs, names and historical capacity survive UI/service restart. A missing or corrupt ready database is not replaced by an empty one, and other partitions remain usable.
 
 Foreground development requires an explicit absolute data directory. SCM mode defaults to `%ProgramData%\StashFinder`, which must be provisioned beforehand as a direct child of ProgramData. Disable root ACL inheritance, grant only SYSTEM and Administrators inheritable full control, and disallow reparse points. The GUI reads through the service, not directly from databases. The verification script below provisions isolated protected storage. Production installation and migration are not implemented.
 
-`catalog.sqlite` stores registrations; `volumes/<filesystem-id>.sqlite` stores independent filesystem data. SQLite uses WAL/FULL: copying only a live main database is not a backup. The recovery API creates a separate candidate catalog only, not a complete backup/restore tool. Protocol version 2 has a 16 KiB frame limit and paginated asset snapshots; use UI and service binaries from the same build.
+`catalog.sqlite` stores registrations; `volumes/<filesystem-id>.sqlite` stores independent filesystem data. SQLite uses WAL/FULL: copying only a live main database is not a backup. The recovery API creates a separate candidate catalog only, not a complete backup/restore tool. Protocol version 3 has a 16 KiB frame limit and paginated assets/search results; use UI and service binaries from the same build. Existing partition databases migrate transactionally only after ownership validation; mismatched databases are not migrated.
 
 To build and launch without a development server:
 
@@ -59,6 +59,26 @@ To build and launch without a development server:
 npm --prefix ui run tauri -- build --debug --no-bundle
 & .\target\debug\stashfinder-desktop.exe
 ```
+
+## NTFS indexing and offline search
+
+1. Register an accessible NTFS partition and choose its index action. The default uses an existing USN journal; an absent journal produces an explicit failure without creating one.
+2. Scan-only mode creates no journal, but cannot guarantee capture of changes during the scan, so results are marked as snapshots requiring validation. Creating a journal requires a separate checkbox: a new journal has a 32 MiB maximum and an 8 MiB allocation delta; existing settings remain unchanged.
+3. Progress shows NTFS enumeration, metadata scanning and replay of changes during scanning. Cancellation is available. Failed/cancelled builds preserve the previous active index; readable data from a failed first build is marked incomplete. Read errors are not evidence of deletion.
+4. Open file search. Matching is case-insensitive and includes paths by default: `aaa` matches `aaa\bbb.exe`; `aaa bbb` requires both words in either order; `"aaa bbb"` matches consecutive text. Filename-only mode and partition filters are available. Drive-letter terms match current online mounts only.
+5. Detach the test disk, refresh devices, then search or restart the service. Partition names, relative paths, index timestamps and offline status must persist. Online describes partition state, not a guarantee that each snapshot entry still exists unchanged.
+
+Search returns at most the first 200 results in a deterministic order and indicates when more exist; it does not provide an exact total or global sorting. Type filters, regex, `dupe` expressions, automatic incremental synchronization, exFAT/FAT32 indexing and file operations on real results are not implemented. Reparse points are recorded without traversing targets; hard links retain multiple paths. File contents are not read. Large caches and no-match queries still need further performance work.
+
+Build generations currently remain in partition databases, so repeated rebuilding increases database size; automatic reclamation is not implemented. Healthy local snapshots remain searchable when device access or identity is uncertain, with the connection issue shown instead of online status.
+
+For complete device validation, run this command in elevated PowerShell. It explicitly authorizes journal creation and sample creation, renaming and deletion **only inside a newly created disposable VHD**:
+
+```powershell
+.\scripts\verify-service.ps1 -OwnerSid 'S-1-5-21-your-normal-user-SID' -IndexVhdDirectory 'D:\tmp\StashFinder-M2-new-directory' -HoldSeconds 600
+```
+
+The script requires a nonexistent directory, creates a 512 MiB VHDX with an NTFS test partition, and compares Unicode names, zero sizes, hard links, long paths, reparse points and metadata against independent directory enumeration. It then tests changes during scanning, cancellation, detachment and search after SCM restart. `.local/index-verification.json` records sample size, build time, no-match query time and service working set. These small debug-build measurements do not represent million/ten-million-file performance. The successful hold period permits ordinary-user GUI acceptance while the test disk is already offline. Completion or failure detaches the disk and cleans up the temporary service, retaining the image and protected data.
 
 ## File bridge acceptance
 
@@ -128,4 +148,4 @@ The OS file cache is still warm after import; this is not a cold-start test. It 
 
 ## Layout
 
-`crates/core` defines identity models and the protocol; `crates/windows` provides Windows adapters; `crates/service` coordinates device discovery and registration; `crates/store` provides the asset catalog, independent partition databases and synthetic baseline; `ui` provides asset management and the development validation view.
+`crates/core` defines identity/query models and the protocol; `crates/windows` provides device and NTFS adapters; `crates/service` coordinates registration, indexing and search jobs; `crates/store` provides the asset catalog, independent partition databases, search caches and synthetic baseline; `ui` provides asset management, read-only search and development validation.

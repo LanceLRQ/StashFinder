@@ -4,10 +4,12 @@ param(
     [string]$OwnerSid,
     [ValidateRange(0, 600)]
     [int]$HoldSeconds = 0,
-    [string]$VhdDirectory
+    [string]$VhdDirectory,
+    [string]$IndexVhdDirectory
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if ($VhdDirectory -and $IndexVhdDirectory) { throw 'Select either asset or index verification.' }
 $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Run this verification script as administrator, with the ordinary GUI user SID.'
@@ -42,7 +44,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'SCM service probe failed' }
     $result.probe = $probe | ConvertFrom-Json
     if ($result.probe.mode -ne 'windows_service') { throw 'Probe did not reach the SCM service' }
-    if ($VhdDirectory) {
+    if ($IndexVhdDirectory) {
+        & (Join-Path $PSScriptRoot 'verify-index.ps1') -Binary $binary -Directory $IndexVhdDirectory -HoldSeconds $HoldSeconds
+    } elseif ($VhdDirectory) {
         & (Join-Path $PSScriptRoot 'verify-assets.ps1') -Binary $binary -Directory $VhdDirectory -HoldSeconds $HoldSeconds
     } else {
         $deadline = [DateTime]::UtcNow.AddSeconds($HoldSeconds)
