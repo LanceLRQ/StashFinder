@@ -347,7 +347,12 @@ impl VolumeReader {
         decode_usn(&self.handle.ioctl(FSCTL_READ_USN_JOURNAL, &input)?)
     }
     pub fn object(&self, id: u64) -> Result<NativeObject> {
-        let handle = self.by_id(id, FILE_READ_ATTRIBUTES.0)?;
+        let handle = self
+            .by_id(id, FILE_READ_ATTRIBUTES.0)
+            .with_context(|| format!("OpenFileById {id:016x}"))?;
+        self.read_object(id, handle)
+    }
+    fn read_object(&self, id: u64, handle: Handle) -> Result<NativeObject> {
         let info = handle.info()?;
         ensure!(
             (((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64) == id
@@ -444,19 +449,42 @@ impl VolumeReader {
     }
 
     pub fn lookup_object(&self, id: u64) -> Result<Option<NativeObject>> {
-        match self.object(id) {
-            Ok(object) => Ok(Some(object)),
-            Err(error)
-                if error
+        let handle = match self.by_id(id, FILE_READ_ATTRIBUTES.0) {
+            Ok(handle) => handle,
+            Err(error) => {
+                let code = error
                     .downcast_ref::<windows::core::Error>()
-                    .is_some_and(|e| {
-                        e.code() == ERROR_FILE_NOT_FOUND.to_hresult()
-                            || e.code() == ERROR_PATH_NOT_FOUND.to_hresult()
-                    }) =>
-            {
-                Ok(None)
+                    .map(|e| e.code());
+                if code == Some(ERROR_FILE_NOT_FOUND.to_hresult())
+                    || code == Some(ERROR_PATH_NOT_FOUND.to_hresult())
+                {
+                    return Ok(None);
+                }
+                if code == Some(ERROR_INVALID_PARAMETER.to_hresult()) {
+                    // NTFS can reject a stale sequence number with INVALID_PARAMETER.
+                    // Verify the MFT slot instead of interpreting the error as deletion.
+                    let slot = id & 0x0000ffffffffffff;
+                    let mut input = Vec::new();
+                    input.extend_from_slice(&slot.to_le_bytes());
+                    input.extend_from_slice(&0i64.to_le_bytes());
+                    input.extend_from_slice(&i64::MAX.to_le_bytes());
+                    let present = match self.handle.ioctl(FSCTL_ENUM_USN_DATA, &input) {
+                        Ok(bytes) => {
+                            let page = decode_usn(&bytes)?;
+                            ensure!(page.next > slot, "MFT 身份核验未覆盖目标槽位");
+                            page.records.iter().any(|r| r.id == id)
+                        }
+                        Err(e) if e.code() == ERROR_HANDLE_EOF.to_hresult() => false,
+                        Err(e) => return Err(e.into()),
+                    };
+                    if !present {
+                        return Ok(None);
+                    }
+                }
+                return Err(error).with_context(|| format!("OpenFileById {id:016x}"));
             }
-            Err(error) => Err(error),
-        }
+        };
+        // Parent/link lookup failures are not evidence that this object is absent.
+        self.read_object(id, handle).map(Some)
     }
 }

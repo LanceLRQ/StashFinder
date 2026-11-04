@@ -196,7 +196,9 @@ pub fn build(
                 );
                 while next < boundary.next {
                     ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
-                    let page = source.changes(journal.id, next)?;
+                    let page = source
+                        .changes(journal.id, next)
+                        .with_context(|| format!("读取 USN 日志失败，起点 {next}"))?;
                     ensure!(
                         page.next > next as u64 && page.next <= i64::MAX as u64,
                         "USN 回放未前进"
@@ -215,7 +217,9 @@ pub fn build(
                         if id & 0x0000ffffffffffff < 16 && id != source.root_id() {
                             continue;
                         }
-                        match source.object(id)? {
+                        match source.object(id).with_context(|| {
+                            format!("回放文件 {id:016x} 失败，原因 {reason:08x}")
+                        })? {
                             Some(current) => collect_object(
                                 source,
                                 db,

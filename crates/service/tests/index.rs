@@ -197,6 +197,7 @@ fn cancellation_after_final_scan_batch_does_not_publish() {
 
 struct ChangesFixture {
     scanned: Cell<bool>,
+    deletion_reason: u32,
 }
 impl Source for ChangesFixture {
     fn root_id(&self) -> u64 {
@@ -258,18 +259,23 @@ impl Source for ChangesFixture {
     fn changes(&self, _: u64, _: i64) -> anyhow::Result<UsnPage> {
         Ok(UsnPage {
             next: 1000,
-            records: [(20, 0x2000), (21, 1), (22, 0x200), (23, 0x10000)]
-                .into_iter()
-                .enumerate()
-                .map(|(i, (id, reason))| UsnRecord {
-                    id,
-                    parent: 5,
-                    usn: 200 + i as i64 * 100,
-                    reason,
-                    attributes: 0,
-                    name: vec![65],
-                })
-                .collect(),
+            records: [
+                (20, 0x2000),
+                (21, 1),
+                (22, self.deletion_reason),
+                (23, 0x10000),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(i, (id, reason))| UsnRecord {
+                id,
+                parent: 5,
+                usn: 200 + i as i64 * 100,
+                reason,
+                attributes: 0,
+                name: vec![65],
+            })
+            .collect(),
         })
     }
 }
@@ -281,6 +287,7 @@ fn replay_updates_directory_children_deletes_and_all_hard_links() {
     build(
         &ChangesFixture {
             scanned: Cell::new(false),
+            deletion_reason: 0x200,
         },
         &mut db,
         IndexMode::Journal,
@@ -324,5 +331,39 @@ fn replay_updates_directory_children_deletes_and_all_hard_links() {
             .filter(|r| r.object == 23u64.to_le_bytes())
             .count(),
         2
+    );
+}
+
+#[test]
+fn missing_object_without_delete_record_does_not_remove_persisted_path() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut db = Volume::create(&temp.path().join("v.sqlite"), "{}").unwrap();
+    let error = build(
+        &ChangesFixture {
+            scanned: Cell::new(false),
+            deletion_reason: 1,
+        },
+        &mut db,
+        IndexMode::Journal,
+        &AtomicBool::new(false),
+        &mut |_| {},
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("没有删除证据"));
+    assert_eq!(db.active_generation().unwrap(), None);
+    let index = SearchIndex::load(&db).unwrap().unwrap();
+    assert!(index.partial);
+    assert_eq!(
+        index
+            .search(
+                &Query::parse("gone.txt", false).unwrap(),
+                &[],
+                200,
+                &AtomicBool::new(false)
+            )
+            .unwrap()
+            .rows
+            .len(),
+        1
     );
 }
