@@ -34,13 +34,31 @@ async fn asset_snapshot() -> Result<stashfinder_core::assets::Snapshot, String> 
 #[tauri::command]
 async fn asset_command(action: stashfinder_core::Action) -> Result<(), String> {
     match action {
-        stashfinder_core::Action::Status | stashfinder_core::Action::Page { .. } => {
-            Err("不是资产操作".into())
-        }
-        action => ipc::request(ipc::DEFAULT_PIPE, action)
+        stashfinder_core::Action::Refresh
+        | stashfinder_core::Action::Register { .. }
+        | stashfinder_core::Action::Retry { .. }
+        | stashfinder_core::Action::Rename { .. } => ipc::request(ipc::DEFAULT_PIPE, action)
             .await
             .map(|_| ())
             .map_err(|error| format!("{error:#}")),
+        _ => Err("不是资产操作".into()),
+    }
+}
+
+#[tauri::command]
+async fn index_request(
+    action: stashfinder_core::Action,
+) -> Result<stashfinder_core::Response, String> {
+    match action {
+        stashfinder_core::Action::IndexStart { .. }
+        | stashfinder_core::Action::IndexCancel
+        | stashfinder_core::Action::IndexState { .. }
+        | stashfinder_core::Action::SearchStart(_)
+        | stashfinder_core::Action::SearchPage { .. }
+        | stashfinder_core::Action::SearchCancel { .. } => ipc::request(ipc::DEFAULT_PIPE, action)
+            .await
+            .map_err(|error| format!("{error:#}")),
+        _ => Err("不是索引操作".into()),
     }
 }
 
@@ -264,6 +282,7 @@ fn main() {
             service_status,
             asset_snapshot,
             asset_command,
+            index_request,
             create_samples,
             copy_samples,
             drag_samples,

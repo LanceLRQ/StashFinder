@@ -1,0 +1,118 @@
+.search-app {
+  max-width: none;
+}
+.search-app h1 {
+  margin: 22px 0 16px;
+}
+.search-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.search-toolbar input[type="search"] {
+  flex: 1;
+  min-width: 280px;
+  padding: 10px 12px;
+  border: 1px solid #7d9c8f;
+  border-radius: 3px;
+  font: inherit;
+  background: #fff;
+}
+.search-toolbar select {
+  max-width: 240px;
+  padding: 9px;
+  border: 1px solid #b9c3bd;
+  border-radius: 3px;
+  font: inherit;
+  background: #fff;
+}
+.search-toolbar label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.search-toolbar input[type="checkbox"],
+.index-dialog input {
+  accent-color: #236856;
+}
+.search-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px 0 10px;
+  font-size: 12px;
+  color: #53625d;
+}
+.search-results {
+  border: 1px solid #d4d9d2;
+  min-height: 280px;
+  max-height: calc(100vh - 245px);
+  overflow: auto;
+  background: white;
+}
+.search-results th {
+  position: sticky;
+  top: 0;
+  background: #e8ece5;
+  z-index: 1;
+}
+.search-results td {
+  padding: 8px 12px;
+}
+.search-results tr:hover {
+  background: #f0f6f2;
+}
+.search-results .result-path {
+  min-width: 200px;
+  max-width: 440px;
+  overflow-wrap: anywhere;
+}
+.result-size {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.file-mark {
+  display: inline-block;
+  height: 13px;
+  width: 10px;
+  margin-right: 8px;
+  border: 1px solid #869c91;
+  background: #f5f8f6;
+  vertical-align: -2px;
+}
+.file-mark.folder {
+  width: 15px;
+  height: 11px;
+  border-color: #a68e46;
+  background: #eee1ae;
+}
+.search-empty {
+  padding: 55px 20px;
+  text-align: center;
+  color: #64716d;
+}
+.search-unavailable {
+  margin: 12px 0;
+  font-size: 12px;
+  color: #98600e;
+}
+.search-unavailable p {
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+.index-controls > button {
+  margin-top: 6px;
+}
+.index-dialog label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0;
+}
+.index-dialog p {
+  line-height: 1.6;
+}

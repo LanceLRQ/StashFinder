@@ -183,7 +183,7 @@ test("late initial response cannot overwrite a newer snapshot", async () => {
   });
   render(<Assets />);
   fireEvent.click(screen.getByRole("button", { name: "刷新设备" }));
-  expect(await screen.findByText(/新设备/)).toBeTruthy();
+  expect(await screen.findByRole("heading", { name: /新设备/ })).toBeTruthy();
   await act(async () => {
     resolveInitial(old);
   });

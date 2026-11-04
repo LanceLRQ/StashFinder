@@ -1,0 +1,62 @@
+import { invoke } from "@tauri-apps/api/core";
+
+export type IndexStatus = {
+  generation: number | null;
+  active_generation: number | null;
+  phase: string;
+  started: number | null;
+  completed: number | null;
+  records: number;
+  error: string | null;
+};
+export type SearchHit = {
+  partition_id: string;
+  partition_name: string;
+  connection: string;
+  mounts: string[];
+  generation: number;
+  partial: boolean;
+  indexed_at: number | null;
+  needs_validation: boolean;
+  file: {
+    object: number[];
+    name: string;
+    path: string;
+    kind: string;
+    attributes: number;
+    size: string | null;
+    created: string | null;
+    modified: string | null;
+  };
+};
+export type SearchPage = {
+  id: number;
+  done: boolean;
+  row: SearchHit | null;
+  next: number | null;
+  more: boolean;
+  error: string | null;
+  unavailable: string[];
+};
+type Action =
+  | { index_state: { partition_id: string } }
+  | {
+      index_start: {
+        partition_id: string;
+        mode: "journal" | "create_journal" | "scan_only";
+      };
+    }
+  | "index_cancel"
+  | {
+      search_start: { text: string; names_only: boolean; partitions: string[] };
+    }
+  | { search_page: { id: number; offset: number } }
+  | { search_cancel: { id: number } };
+type Reply =
+  | { kind: "accepted" }
+  | { kind: "index"; data: IndexStatus }
+  | { kind: "search_started"; data: number }
+  | { kind: "search_page"; data: SearchPage };
+export function indexRequest(action: Action) {
+  return invoke<Reply>("index_request", { action });
+}

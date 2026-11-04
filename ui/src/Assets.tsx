@@ -7,6 +7,8 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import App from "./App";
+import Search from "./Search";
+import IndexControls from "./IndexControls";
 import "./assets.css";
 
 type Observation = {
@@ -121,6 +123,7 @@ export default function Assets() {
   const [name, setName] = useState("");
   const [weakConfirm, setWeakConfirm] = useState(false);
   const [development, setDevelopment] = useState(false);
+  const [searching, setSearching] = useState(false);
   const request = useRef(0);
   const mounted = useRef(true);
   const lock = useRef(false);
@@ -257,6 +260,20 @@ export default function Assets() {
     candidateGroups.set(key, [...(candidateGroups.get(key) || []), candidate]);
   }
 
+  if (searching)
+    return (
+      <Search
+        partitions={(data?.assets || []).map((a) => ({
+          id: a.registration.partition_id,
+          name: a.registration.name,
+        }))}
+        onBack={() => {
+          setSearching(false);
+          void reload().catch((e) => setMessage(String(e)));
+        }}
+      />
+    );
+
   if (development)
     return (
       <>
@@ -273,9 +290,12 @@ export default function Assets() {
         <span className="wordmark">
           StashFinder<span className="dot">.</span>
         </span>
-        <button className="quiet" onClick={() => setDevelopment(true)}>
-          开发验证
-        </button>
+        <nav>
+          <button onClick={() => setSearching(true)}>文件搜索</button>
+          <button className="quiet" onClick={() => setDevelopment(true)}>
+            开发验证
+          </button>
+        </nav>
       </header>
       <div className="asset-toolbar">
         <div>
@@ -300,7 +320,7 @@ export default function Assets() {
       {data && !data.busy && !data.error && !data.assets.length && (
         <div className="asset-empty">
           <h2>尚未登记分区</h2>
-          <p>从下方选择需要管理的分区。M1 只保存登记信息，尚不扫描文件。</p>
+          <p>从下方选择需要管理的分区，登记后可手动建立 NTFS 文件索引。</p>
         </div>
       )}
       {Array.from(groups, ([id, assets]) => (
@@ -364,7 +384,20 @@ export default function Assets() {
                         )}
                       </td>
                       <td>
-                        {r.state === "ready" ? "尚未索引" : "初始化未完成"}
+                        {r.state === "ready" ? (
+                          <IndexControls
+                            partitionId={r.partition_id}
+                            name={r.name}
+                            eligible={
+                              !disabled &&
+                              !asset.error &&
+                              asset.connection === "online" &&
+                              o.identity.filesystem === "NTFS"
+                            }
+                          />
+                        ) : (
+                          "初始化未完成"
+                        )}
                       </td>
                       <td>
                         <button
@@ -497,7 +530,9 @@ export default function Assets() {
           ))}
         </section>
       )}
-      <footer className="asset-footer">分区登记与持久化 · M1</footer>
+      <footer className="asset-footer">
+        接入或拔出硬盘后，请刷新设备。当前索引由你手动启动。
+      </footer>
       {rename && (
         <Modal
           title="rename-title"
