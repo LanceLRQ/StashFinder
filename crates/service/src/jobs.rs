@@ -105,6 +105,7 @@ impl Indexes {
             worker_busy.store(false, Ordering::Release);
             while let Ok(job) = receiver.recv() {
                 let partition = job.asset.registration.partition_id.clone();
+                let mut completed_status = None;
                 let result = (|| -> Result<()> {
                     let mut catalog = Catalog::open(&worker_root)?;
                     let registered = catalog.get(&partition)?;
@@ -151,11 +152,7 @@ impl Indexes {
                             state.error = None;
                         },
                     );
-                    let status = db.index_status()?;
-                    worker_states
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .insert(partition.clone(), status);
+                    completed_status = Some(db.index_status()?);
                     if let Some(index) = SearchIndex::load(&db)? {
                         worker_caches
                             .lock()
@@ -173,12 +170,16 @@ impl Indexes {
                     catalog.observe(&partition, &after)?;
                     Ok(())
                 })();
+                let mut states = worker_states.lock().unwrap_or_else(|e| e.into_inner());
+                let status = states.entry(partition).or_default();
+                if let Some(completed) = completed_status {
+                    *status = completed;
+                }
                 if let Err(error) = result {
-                    let mut states = worker_states.lock().unwrap_or_else(|e| e.into_inner());
-                    let status = states.entry(partition).or_default();
                     status.phase = "failed".into();
                     status.error = Some(format!("{error:#}"));
                 }
+                // Publish a terminal status and release the slot under the same lock.
                 worker_busy.store(false, Ordering::Release);
             }
         });
