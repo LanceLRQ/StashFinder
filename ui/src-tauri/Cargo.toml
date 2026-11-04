@@ -1,0 +1,24 @@
+[package]
+name = "stashfinder-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.5", features = [] }
+stashfinder-core = { path = "../../crates/core" }
+stashfinder-windows = { path = "../../crates/windows" }
+serde.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

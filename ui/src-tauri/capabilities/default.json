@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "Local development verification window only",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

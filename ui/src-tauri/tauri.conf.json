@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "StashFinder",
+  "version": "0.1.0",
+  "identifier": "io.github.lancelrq.stashfinder",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "title": "StashFinder · 开发验证", "width": 920, "height": 720, "minWidth": 640, "minHeight": 500, "dragDropEnabled": false }],
+    "security": { "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-src 'none'" }
+  },
+  "bundle": { "active": false }
+}

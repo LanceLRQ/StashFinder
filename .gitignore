@@ -5,3 +5,10 @@ docs/_internal/
 CLAUDE.local.md
 .claude/
 # <<< vibesop
+
+# Build outputs and local verification data
+/target/
+/ui/node_modules/
+/ui/dist/
+/ui/src-tauri/gen/
+/.local/
