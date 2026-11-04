@@ -1,5 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexMode {
+    Journal,
+    CreateJournal,
+    ScanOnly,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct IndexStatus {
     pub generation: Option<i64>,
@@ -27,4 +35,36 @@ pub struct SearchRow {
 pub struct Matches {
     pub rows: Vec<SearchRow>,
     pub more: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchRequest {
+    pub text: String,
+    pub names_only: bool,
+    pub partitions: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SearchHit {
+    pub partition_id: String,
+    pub partition_name: String,
+    pub connection: String,
+    pub mounts: Vec<String>,
+    pub generation: i64,
+    pub partial: bool,
+    pub indexed_at: Option<u64>,
+    pub needs_validation: bool,
+    pub file: SearchRow,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SearchPage {
+    pub id: u64,
+    pub done: bool,
+    pub row: Option<SearchHit>,
+    pub next: Option<usize>,
+    pub more: bool,
+    pub error: Option<String>,
+    pub unavailable: Vec<String>,
 }

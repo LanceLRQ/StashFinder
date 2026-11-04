@@ -1,5 +1,7 @@
 pub mod assets;
-use anyhow::{Result, bail};
+pub mod index;
+pub mod jobs;
+use anyhow::{Context, Result, bail};
 use stashfinder_core::{
     Action, MAX_FRAME, PROTOCOL_VERSION, Reply, Request, Response, Status, read_frame,
     validate_request, write_frame,
@@ -18,13 +20,41 @@ pub async fn serve(
 }
 
 pub async fn serve_assets(
+    pipe: NamedPipeServer,
+    name: &str,
+    sid: &str,
+    mode: &str,
+    stop: watch::Receiver<bool>,
+    assets: Option<&assets::Assets>,
+) -> Result<()> {
+    serve_runtime(
+        pipe,
+        name,
+        sid,
+        mode,
+        stop,
+        Services {
+            assets,
+            indexes: None,
+        },
+    )
+    .await
+}
+
+pub struct Services<'a> {
+    pub assets: Option<&'a assets::Assets>,
+    pub indexes: Option<&'a jobs::Indexes>,
+}
+
+pub async fn serve_runtime(
     mut pipe: NamedPipeServer,
     name: &str,
     sid: &str,
     mode: &str,
     mut stop: watch::Receiver<bool>,
-    assets: Option<&assets::Assets>,
+    services: Services<'_>,
 ) -> Result<()> {
+    let Services { assets, indexes } = services;
     loop {
         tokio::select! {
             _ = stop.changed() => return Ok(()),
@@ -59,6 +89,43 @@ pub async fn serve_assets(
                     Action::Page { version, offset } => {
                         Ok(Response::Page(Box::new(assets.page(version, offset)?)))
                     }
+                    Action::IndexStart { partition_id, mode } => {
+                        indexes.context("索引服务未配置")?.scan(
+                            &partition_id,
+                            mode,
+                            &assets.snapshot(),
+                        )?;
+                        Ok(Response::Accepted)
+                    }
+                    Action::IndexCancel => {
+                        indexes.context("索引服务未配置")?.cancel_scan();
+                        Ok(Response::Accepted)
+                    }
+                    Action::IndexState { partition_id } => {
+                        anyhow::ensure!(
+                            assets
+                                .snapshot()
+                                .assets
+                                .iter()
+                                .any(|a| a.registration.partition_id == partition_id),
+                            "分区未登记"
+                        );
+                        Ok(Response::Index(
+                            indexes.context("索引服务未配置")?.status(&partition_id),
+                        ))
+                    }
+                    Action::SearchStart(request) => Ok(Response::SearchStarted(
+                        indexes
+                            .context("索引服务未配置")?
+                            .search(request, &assets.snapshot())?,
+                    )),
+                    Action::SearchPage { id, offset } => Ok(Response::SearchPage(Box::new(
+                        indexes.context("索引服务未配置")?.page(id, offset)?,
+                    ))),
+                    Action::SearchCancel { id } => {
+                        indexes.context("索引服务未配置")?.cancel_search(id);
+                        Ok(Response::Accepted)
+                    }
                     action => {
                         assets.submit(action)?;
                         Ok(Response::Accepted)
@@ -73,7 +140,7 @@ pub async fn serve_assets(
             };
             let mut bytes = serde_json::to_vec(&response)?;
             if bytes.len() > MAX_FRAME {
-                response.body = Response::Error("单项设备信息超过通信帧上限，未截断数据".into());
+                response.body = Response::Error("单项信息超过通信帧上限，未截断数据".into());
                 bytes = serde_json::to_vec(&response)?;
             }
             write_frame(&mut pipe, &bytes).await

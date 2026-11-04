@@ -231,6 +231,7 @@ pub struct VolumeReader {
     root: PathBuf,
     pub root_id: u64,
     serial: u32,
+    serial64: u64,
 }
 impl VolumeReader {
     pub fn open(root: &str) -> Result<Self> {
@@ -240,12 +241,26 @@ impl VolumeReader {
         );
         let handle = Handle::open(Path::new(root.trim_end_matches('\\')), GENERIC_READ.0)?;
         let info = Handle::open(Path::new(root), FILE_READ_ATTRIBUTES.0)?.info()?;
+        let serial64 = read_field::<u64>(&handle.ioctl(FSCTL_GET_NTFS_VOLUME_DATA, &[])?, 0)?;
         Ok(Self {
             handle,
             root: root.into(),
             root_id: ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
             serial: info.dwVolumeSerialNumber,
+            serial64,
         })
+    }
+    pub fn volume_serial(&self) -> u64 {
+        self.serial64
+    }
+    pub fn verify(&self) -> Result<()> {
+        let access = self.root.as_os_str().to_string_lossy();
+        let handle = Handle::open(Path::new(access.trim_end_matches('\\')), GENERIC_READ.0)?;
+        ensure!(
+            read_field::<u64>(&handle.ioctl(FSCTL_GET_NTFS_VOLUME_DATA, &[])?, 0)? == self.serial64,
+            "卷文件系统身份已变化"
+        );
+        Ok(())
     }
     fn by_id(&self, id: u64, access: u32) -> Result<Handle> {
         let descriptor = FILE_ID_DESCRIPTOR {
@@ -426,5 +441,22 @@ impl VolumeReader {
             },
             links,
         })
+    }
+
+    pub fn lookup_object(&self, id: u64) -> Result<Option<NativeObject>> {
+        match self.object(id) {
+            Ok(object) => Ok(Some(object)),
+            Err(error)
+                if error
+                    .downcast_ref::<windows::core::Error>()
+                    .is_some_and(|e| {
+                        e.code() == ERROR_FILE_NOT_FOUND.to_hresult()
+                            || e.code() == ERROR_PATH_NOT_FOUND.to_hresult()
+                    }) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
     }
 }

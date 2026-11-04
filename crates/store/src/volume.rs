@@ -27,6 +27,15 @@ pub struct Cursor {
     pub next: i64,
 }
 
+pub struct Changes<'a> {
+    pub objects: &'a [Object],
+    pub entries: &'a [Entry],
+    pub removed: &'a [Vec<u8>],
+    pub pending: &'a [Vec<u8>],
+    pub cursor: Option<&'a Cursor>,
+    pub replace_links: bool,
+}
+
 pub(crate) fn configure(db: &Connection) -> Result<()> {
     db.busy_timeout(Duration::from_secs(2))?;
     db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")?;
@@ -34,6 +43,21 @@ pub(crate) fn configure(db: &Connection) -> Result<()> {
 }
 
 impl Volume {
+    pub fn inspect_manifest(path: &Path) -> Result<String> {
+        let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        ensure!(
+            matches!(
+                db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
+                1 | 2
+            ),
+            "不支持的分区库版本"
+        );
+        ensure!(
+            db.query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))? == "ok",
+            "分区库损坏"
+        );
+        Ok(db.query_row("SELECT value FROM manifest WHERE id=1", [], |r| r.get(0))?)
+    }
     pub fn create(path: &Path, manifest: &str) -> Result<Self> {
         std::fs::OpenOptions::new()
             .write(true)
@@ -156,6 +180,28 @@ impl Volume {
         pending: &[Vec<u8>],
         cursor: Option<&Cursor>,
     ) -> Result<()> {
+        self.apply_changes(
+            generation,
+            Changes {
+                objects,
+                entries,
+                removed: &[],
+                pending,
+                cursor,
+                replace_links: false,
+            },
+        )
+    }
+
+    pub fn apply_changes(&mut self, generation: i64, changes: Changes<'_>) -> Result<()> {
+        let Changes {
+            objects,
+            entries,
+            removed,
+            pending,
+            cursor,
+            replace_links,
+        } = changes;
         let tx = self.db.transaction()?;
         let writable: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM generations WHERE id=?1) AND NOT EXISTS(SELECT 1 FROM index_state WHERE active_generation=?1)",
@@ -166,7 +212,24 @@ impl Volume {
             "UPDATE generations SET complete=0 WHERE id=?1",
             [generation],
         )?;
+        for id in removed {
+            tx.execute("WITH RECURSIVE doomed(id) AS (SELECT id FROM paths WHERE generation=?1 AND object=?2 UNION SELECT p.id FROM paths p JOIN doomed d ON p.parent=d.id WHERE p.generation=?1) DELETE FROM paths WHERE generation=?1 AND id IN (SELECT id FROM doomed)",params![generation,id])?;
+            tx.execute(
+                "DELETE FROM pending_metadata WHERE generation=?1 AND object=?2",
+                params![generation, id],
+            )?;
+            tx.execute(
+                "DELETE FROM objects WHERE generation=?1 AND id=?2",
+                params![generation, id],
+            )?;
+        }
         for object in objects {
+            if replace_links {
+                tx.execute(
+                    "DELETE FROM paths WHERE generation=?1 AND object=?2",
+                    params![generation, object.id],
+                )?;
+            }
             ensure!(!object.id.is_empty(), "文件 ID 为空");
             tx.execute("INSERT INTO objects VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(generation,id) DO UPDATE SET source=excluded.source,kind=excluded.kind,size=excluded.size,created=excluded.created,modified=excluded.modified,attributes=excluded.attributes", params![generation, object.id, object.source, object.kind, object.size, object.created.as_ref().map(|v|v.as_slice()), object.modified.as_ref().map(|v|v.as_slice()), object.attributes])?;
             // Replaced metadata and its pending state share the cursor transaction.
@@ -212,6 +275,14 @@ impl Volume {
     }
 
     pub fn publish(&mut self, generation: i64) -> Result<()> {
+        self.publish_mode(generation, "ready")
+    }
+
+    pub fn publish_snapshot(&mut self, generation: i64) -> Result<()> {
+        self.publish_mode(generation, "snapshot")
+    }
+
+    fn publish_mode(&mut self, generation: i64, phase: &str) -> Result<()> {
         let tx = self.db.transaction()?;
         let complete: bool = tx.query_row(
             "SELECT complete FROM generations WHERE id=?1",
@@ -229,9 +300,29 @@ impl Volume {
             [generation],
         )?;
         tx.execute(
-            "UPDATE generations SET phase='ready',completed=?2,error=NULL WHERE id=?1",
-            params![generation, stashfinder_core::assets::now() as i64],
+            "UPDATE generations SET phase=?3,completed=?2,error=NULL WHERE id=?1",
+            params![generation, stashfinder_core::assets::now() as i64, phase],
         )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn has_path(&self, generation: i64, id: &[u8]) -> Result<bool> {
+        Ok(self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM paths WHERE generation=?1 AND id=?2)",
+            params![generation, id],
+            |r| r.get(0),
+        )?)
+    }
+
+    pub fn prune_inventory(&mut self, generation: i64) -> Result<()> {
+        ensure!(
+            self.active_generation()? != Some(generation),
+            "不能修改已发布代次"
+        );
+        let tx = self.db.transaction()?;
+        tx.execute("DELETE FROM pending_metadata WHERE generation=?1 AND object NOT IN (SELECT object FROM paths WHERE generation=?1)",[generation])?;
+        tx.execute("DELETE FROM objects WHERE generation=?1 AND id NOT IN (SELECT object FROM paths WHERE generation=?1)",[generation])?;
         tx.commit()?;
         Ok(())
     }

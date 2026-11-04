@@ -11,6 +11,21 @@ pub struct Catalog {
 }
 
 impl Catalog {
+    pub fn read(root: &Path) -> Result<Self> {
+        ensure!(root.is_absolute(), "数据库目录必须为绝对路径");
+        let db = Connection::open_with_flags(
+            root.join("catalog.sqlite"),
+            OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        ensure!(
+            db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))? == 1,
+            "资产库版本不支持"
+        );
+        Ok(Self {
+            db,
+            root: root.into(),
+        })
+    }
     pub fn open(root: &Path) -> Result<Self> {
         ensure!(root.is_absolute(), "数据库目录必须为绝对路径");
         std::fs::create_dir_all(root.join("volumes"))?;
@@ -181,18 +196,10 @@ impl Catalog {
         let path = self.volume_path(&row.filesystem_id)?;
         row.state = "ready".into();
         let child = if path.exists() {
-            Volume::open(&path)?
+            self.open_owned(&row)?
         } else {
             Volume::create(&path, &serde_json::to_string(&row)?)?
         };
-        let saved: Registration = serde_json::from_str(&child.manifest()?)?;
-        ensure!(
-            saved.filesystem_id == row.filesystem_id
-                && saved.partition_id == row.partition_id
-                && saved.disk_id == row.disk_id
-                && saved.observation.identity == row.observation.identity,
-            "分区库归属不一致"
-        );
         if let Some(capacity) = &row.observation.capacity {
             child.set_capacity(capacity)?;
         }
@@ -226,15 +233,8 @@ impl Catalog {
             .find(|r| r.filesystem_id == filesystem)
             .context("登记不存在")?;
         ensure!(row.state == "ready", "登记初始化未完成，可重试");
-        let child = Volume::open(&self.volume_path(filesystem)?)?;
+        let child = self.open_owned(&row)?;
         let saved: Registration = serde_json::from_str(&child.manifest()?)?;
-        ensure!(
-            saved.filesystem_id == row.filesystem_id
-                && saved.partition_id == row.partition_id
-                && saved.disk_id == row.disk_id
-                && saved.observation.identity == row.observation.identity,
-            "分区库身份不一致"
-        );
         ensure!(
             saved.revision == row.revision && saved.name == row.name,
             "名称恢复副本尚未同步，请刷新重试"
@@ -242,9 +242,9 @@ impl Catalog {
         Ok(())
     }
 
-    fn sync_manifest(&self, row: &Registration) -> Result<()> {
-        let child = Volume::open(&self.volume_path(&row.filesystem_id)?)?;
-        let saved: Registration = serde_json::from_str(&child.manifest()?)?;
+    fn open_owned(&self, row: &Registration) -> Result<Volume> {
+        let path = self.volume_path(&row.filesystem_id)?;
+        let saved: Registration = serde_json::from_str(&Volume::inspect_manifest(&path)?)?;
         ensure!(
             saved.filesystem_id == row.filesystem_id
                 && saved.partition_id == row.partition_id
@@ -252,6 +252,12 @@ impl Catalog {
                 && saved.observation.identity == row.observation.identity,
             "分区库归属不一致"
         );
+        Volume::open(&path)
+    }
+
+    fn sync_manifest(&self, row: &Registration) -> Result<()> {
+        let child = self.open_owned(row)?;
+        let saved: Registration = serde_json::from_str(&child.manifest()?)?;
         ensure!(
             saved.revision <= row.revision,
             "分区配置版本高于资产库，需要恢复"
@@ -309,8 +315,8 @@ impl Catalog {
                 continue;
             }
             let result = (|| -> Result<Registration> {
-                let child = Volume::open(&path)?;
-                let mut row: Registration = serde_json::from_str(&child.manifest()?)?;
+                let mut row: Registration =
+                    serde_json::from_str(&Volume::inspect_manifest(&path)?)?;
                 ensure!(row.state == "ready", "未发布的库不用于恢复");
                 ensure!(
                     path.file_stem().and_then(|s| s.to_str()) == Some(row.filesystem_id.as_str()),

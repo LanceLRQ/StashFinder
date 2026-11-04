@@ -85,6 +85,49 @@ async fn rename_over_real_pipe_survives_process_termination_and_restart() {
     };
     let row = catalog.prepare(&observation, "Before").unwrap();
     catalog.finish(&row.partition_id).unwrap();
+    {
+        use stashfinder_store::volume::*;
+        let mut db = Volume::open(&catalog.volume_path(&row.filesystem_id).unwrap()).unwrap();
+        let generation = db.begin_generation().unwrap();
+        let objects = [
+            Object {
+                id: vec![1],
+                source: "ntfs64".into(),
+                kind: "folder".into(),
+                size: None,
+                created: None,
+                modified: None,
+                attributes: 16,
+            },
+            Object {
+                id: vec![2],
+                source: "ntfs64".into(),
+                kind: "file".into(),
+                size: Some(0),
+                created: None,
+                modified: None,
+                attributes: 0,
+            },
+        ];
+        let entries = [
+            Entry {
+                id: vec![1],
+                object: vec![1],
+                parent: None,
+                name: vec![92],
+            },
+            Entry {
+                id: vec![2],
+                object: vec![2],
+                parent: Some(vec![1]),
+                name: "offline-result.txt".encode_utf16().collect(),
+            },
+        ];
+        db.write_batch(generation, &objects, &entries, &[], None)
+            .unwrap();
+        db.complete(generation).unwrap();
+        db.publish(generation).unwrap();
+    }
     drop(catalog);
     let name = format!(r"\\.\pipe\StashFinder.restart-{}", std::process::id());
     for attempt in 0..2 {
@@ -121,6 +164,34 @@ async fn rename_over_real_pipe_survives_process_termination_and_restart() {
             }
             assert!(std::time::Instant::now() < deadline);
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        }
+        let response = request(
+            &name,
+            Action::SearchStart(stashfinder_core::index::SearchRequest {
+                text: "offline-result".into(),
+                names_only: false,
+                partitions: vec![],
+            }),
+        )
+        .await
+        .unwrap();
+        let stashfinder_core::Response::SearchStarted(id) = response else {
+            panic!("search did not start")
+        };
+        loop {
+            let response = request(&name, Action::SearchPage { id, offset: 0 })
+                .await
+                .unwrap();
+            let stashfinder_core::Response::SearchPage(page) = response else {
+                panic!("search page missing")
+            };
+            if page.done {
+                assert!(page.error.is_none());
+                assert_eq!(page.row.unwrap().file.path, "offline-result.txt");
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         drop(server);
     }

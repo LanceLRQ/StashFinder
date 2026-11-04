@@ -1,6 +1,57 @@
 use stashfinder_core::assets::*;
 use stashfinder_store::catalog::Catalog;
 
+#[test]
+fn read_only_catalog_does_not_initialize_pending_children() {
+    let root = tempfile::tempdir().unwrap();
+    let mut catalog = Catalog::open(root.path()).unwrap();
+    let pending = catalog.prepare(&observed("pending"), "Pending").unwrap();
+    let path = catalog.volume_path(&pending.filesystem_id).unwrap();
+    drop(catalog);
+    let reader = Catalog::read(root.path()).unwrap();
+    assert_eq!(
+        reader.get(&pending.partition_id).unwrap().state,
+        "preparing"
+    );
+    assert!(!path.exists());
+    assert!(Catalog::read(&root.path().join("missing")).is_err());
+    assert!(!root.path().join("missing").exists());
+}
+
+#[test]
+fn foreign_m1_database_is_not_migrated_during_health_or_startup() {
+    let root = tempfile::tempdir().unwrap();
+    let mut catalog = Catalog::open(root.path()).unwrap();
+    let row = catalog.prepare(&observed("a"), "A").unwrap();
+    catalog.finish(&row.partition_id).unwrap();
+    let path = catalog.volume_path(&row.filesystem_id).unwrap();
+    let mut foreign = catalog.get(&row.partition_id).unwrap();
+    foreign.partition_id = "foreign".into();
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute(
+        "UPDATE manifest SET value=?1",
+        [serde_json::to_string(&foreign).unwrap()],
+    )
+    .unwrap();
+    db.execute_batch(
+        "ALTER TABLE objects DROP COLUMN attributes;
+        ALTER TABLE generations DROP COLUMN phase; ALTER TABLE generations DROP COLUMN started;
+        ALTER TABLE generations DROP COLUMN completed; ALTER TABLE generations DROP COLUMN error;
+        DROP INDEX paths_parent; PRAGMA user_version=1;",
+    )
+    .unwrap();
+    drop(db);
+    assert!(catalog.health(&row.filesystem_id).is_err());
+    drop(catalog);
+    drop(Catalog::open(root.path()).unwrap());
+    let db = rusqlite::Connection::open(path).unwrap();
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+}
+
 fn observed(partition: &str) -> Observation {
     Observation {
         candidate_id: format!("volume-{partition}"),

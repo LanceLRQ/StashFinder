@@ -6,7 +6,7 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 pub const MAX_FRAME: usize = 16 * 1024;
 pub const SNAPSHOT_EXPIRED: &str = "设备快照已更新，请刷新";
 
@@ -42,6 +42,22 @@ pub enum Action {
         partition_id: String,
         name: String,
     },
+    IndexStart {
+        partition_id: String,
+        mode: index::IndexMode,
+    },
+    IndexCancel,
+    IndexState {
+        partition_id: String,
+    },
+    SearchStart(index::SearchRequest),
+    SearchPage {
+        id: u64,
+        offset: usize,
+    },
+    SearchCancel {
+        id: u64,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -57,6 +73,9 @@ pub enum Response {
     Status(Status),
     Page(Box<Page>),
     Accepted,
+    Index(index::IndexStatus),
+    SearchStarted(u64),
+    SearchPage(Box<index::SearchPage>),
     Error(String),
 }
 

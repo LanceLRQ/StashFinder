@@ -12,6 +12,8 @@ use std::{
 pub struct SearchIndex {
     pub generation: i64,
     pub partial: bool,
+    pub indexed_at: Option<u64>,
+    pub needs_validation: bool,
     directories: Vec<String>,
     entries: Vec<CachedEntry>,
 }
@@ -29,6 +31,19 @@ impl SearchIndex {
             None if status.phase == "failed" => status.generation.context("缺少部分索引代次")?,
             None => return Ok(None),
         };
+        Ok(Some(Self::load_generation(
+            volume,
+            generation,
+            status.active_generation.is_none(),
+        )?))
+    }
+
+    pub fn load_generation(volume: &Volume, generation: i64, partial: bool) -> Result<Self> {
+        let (completed, phase): (Option<i64>, String) = volume.db.query_row(
+            "SELECT completed,phase FROM generations WHERE id=?1",
+            [generation],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
         let mut directories = Vec::new();
         let mut ids = HashMap::new();
         let mut parents = Vec::new();
@@ -92,12 +107,14 @@ impl SearchIndex {
                 },
             });
         }
-        Ok(Some(Self {
+        Ok(Self {
             generation,
-            partial: status.active_generation.is_none(),
+            partial,
+            indexed_at: completed.map(u64::try_from).transpose()?,
+            needs_validation: phase != "ready",
             directories,
             entries,
-        }))
+        })
     }
 
     pub fn search(

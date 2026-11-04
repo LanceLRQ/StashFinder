@@ -29,6 +29,8 @@ fn main() -> Result<()> {
                 .map(String::as_str)
                 .unwrap_or(DEFAULT_PIPE);
             let sid = current_user_sid()?;
+            let _ = stashfinder_store::catalog::Catalog::open(&root);
+            let indexes = stashfinder_service::jobs::Indexes::start(root.clone());
             let assets = stashfinder_service::assets::Assets::start(
                 root,
                 stashfinder_windows::volumes::discover,
@@ -41,13 +43,16 @@ fn main() -> Result<()> {
                     let _ = stop.send(true);
                 });
                 println!("listening: {name}");
-                stashfinder_service::serve_assets(
+                stashfinder_service::serve_runtime(
                     pipe,
                     name,
                     &sid,
                     "foreground",
                     receiver,
-                    Some(&assets),
+                    stashfinder_service::Services {
+                        assets: Some(&assets),
+                        indexes: Some(&indexes),
+                    },
                 )
                 .await
             })?;
@@ -68,8 +73,15 @@ fn main() -> Result<()> {
                 .block_on(stashfinder_windows::ipc::snapshot(name))?;
             println!("{}", serde_json::to_string_pretty(&snapshot)?);
         }
+        Some("--request") if (2..=3).contains(&args.len()) => {
+            let action: stashfinder_core::Action = serde_json::from_str(&args[1])?;
+            let name = args.get(2).map(String::as_str).unwrap_or(DEFAULT_PIPE);
+            let response = tokio::runtime::Runtime::new()?
+                .block_on(stashfinder_windows::ipc::request(name, action))?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
         _ => bail!(
-            "usage: stashfinder-service --foreground [pipe] --data-dir <absolute directory> | --probe [pipe] | --snapshot [pipe] | --devices | --sid | --service <owner SID> [--data-dir <directory>]"
+            "usage: stashfinder-service --foreground [pipe] --data-dir <absolute directory> | --probe [pipe] | --snapshot [pipe] | --request <action-json> [pipe] | --devices | --sid | --service <owner SID> [--data-dir <directory>]"
         ),
     }
     Ok(())
@@ -104,6 +116,8 @@ fn run_service() -> Result<()> {
         .context("missing configured user SID")?;
     let root = data_root(&std::env::args().skip(1).collect::<Vec<_>>(), true)?;
     stashfinder_windows::storage::validate_service_root(&root)?;
+    let _ = stashfinder_store::catalog::Catalog::open(&root);
+    let indexes = stashfinder_service::jobs::Indexes::start(root.clone());
     let assets =
         stashfinder_service::assets::Assets::start(root, stashfinder_windows::volumes::discover);
     let (stop, receiver) = watch::channel(false);
@@ -133,13 +147,16 @@ fn run_service() -> Result<()> {
             state.checkpoint = 0;
             state.wait_hint = Duration::ZERO;
             handle.set_service_status(state.clone())?;
-            stashfinder_service::serve_assets(
+            stashfinder_service::serve_runtime(
                 pipe,
                 DEFAULT_PIPE,
                 &sid,
                 "windows_service",
                 receiver,
-                Some(&assets),
+                stashfinder_service::Services {
+                    assets: Some(&assets),
+                    indexes: Some(&indexes),
+                },
             )
             .await
         })
