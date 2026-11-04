@@ -13,6 +13,7 @@ fn failed_batch_does_not_advance_cursor_or_leave_objects() {
         size: None,
         created: None,
         modified: None,
+        attributes: 0,
     };
     let bad_path = Entry {
         id: vec![1],
@@ -140,6 +141,7 @@ fn missing_size_is_distinct_from_an_empty_file_in_the_persisted_schema() {
             size,
             created: None,
             modified: None,
+            attributes: 0,
         })
         .collect::<Vec<_>>();
     db.write_batch(generation, &objects, &[], &[], None)

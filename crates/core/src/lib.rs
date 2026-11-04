@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod index;
 pub mod search;
 
 use anyhow::{Result, ensure};

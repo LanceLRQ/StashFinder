@@ -3,7 +3,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use std::{path::Path, time::Duration};
 
 pub struct Volume {
-    db: Connection,
+    pub(crate) db: Connection,
 }
 
 #[derive(Clone)]
@@ -14,6 +14,7 @@ pub struct Object {
     pub size: Option<i64>,
     pub created: Option<[u8; 8]>,
     pub modified: Option<[u8; 8]>,
+    pub attributes: u32,
 }
 pub struct Entry {
     pub id: Vec<u8>,
@@ -52,13 +53,18 @@ impl Volume {
             PRAGMA user_version=1;")?;
         tx.execute("INSERT INTO manifest VALUES(1,?1)", [manifest])?;
         tx.commit()?;
-        Ok(Self { db })
+        let mut volume = Self { db };
+        volume.migrate()?;
+        Ok(volume)
     }
 
     pub fn open(path: &Path) -> Result<Self> {
         let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         ensure!(
-            db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))? == 1,
+            matches!(
+                db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
+                1 | 2
+            ),
             "不支持的分区库版本"
         );
         ensure!(
@@ -66,7 +72,29 @@ impl Volume {
             "分区库损坏"
         );
         configure(&db)?;
-        Ok(Self { db })
+        let mut volume = Self { db };
+        volume.migrate()?;
+        Ok(volume)
+    }
+
+    fn migrate(&mut self) -> Result<()> {
+        if self
+            .db
+            .query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?
+            == 1
+        {
+            let tx = self.db.transaction()?;
+            tx.execute_batch("ALTER TABLE objects ADD COLUMN attributes INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE generations ADD COLUMN phase TEXT NOT NULL DEFAULT 'building';
+                ALTER TABLE generations ADD COLUMN started INTEGER;
+                ALTER TABLE generations ADD COLUMN completed INTEGER;
+                ALTER TABLE generations ADD COLUMN error TEXT;
+                UPDATE generations SET phase='ready' WHERE id=(SELECT active_generation FROM index_state WHERE id=1);
+                CREATE INDEX paths_parent ON paths(generation,parent);
+                PRAGMA user_version=2;")?;
+            tx.commit()?;
+        }
+        Ok(())
     }
 
     pub fn manifest(&self) -> Result<String> {
@@ -113,8 +141,10 @@ impl Volume {
     }
 
     pub fn begin_generation(&mut self) -> Result<i64> {
-        self.db
-            .execute("INSERT INTO generations DEFAULT VALUES", [])?;
+        self.db.execute(
+            "INSERT INTO generations(started) VALUES(?1)",
+            [stashfinder_core::assets::now() as i64],
+        )?;
         Ok(self.db.last_insert_rowid())
     }
 
@@ -138,7 +168,7 @@ impl Volume {
         )?;
         for object in objects {
             ensure!(!object.id.is_empty(), "文件 ID 为空");
-            tx.execute("INSERT INTO objects VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(generation,id) DO UPDATE SET source=excluded.source,kind=excluded.kind,size=excluded.size,created=excluded.created,modified=excluded.modified", params![generation, object.id, object.source, object.kind, object.size, object.created.as_ref().map(|v|v.as_slice()), object.modified.as_ref().map(|v|v.as_slice())])?;
+            tx.execute("INSERT INTO objects VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(generation,id) DO UPDATE SET source=excluded.source,kind=excluded.kind,size=excluded.size,created=excluded.created,modified=excluded.modified,attributes=excluded.attributes", params![generation, object.id, object.source, object.kind, object.size, object.created.as_ref().map(|v|v.as_slice()), object.modified.as_ref().map(|v|v.as_slice()), object.attributes])?;
             // Replaced metadata and its pending state share the cursor transaction.
             tx.execute(
                 "DELETE FROM pending_metadata WHERE generation=?1 AND object=?2",
@@ -198,8 +228,57 @@ impl Volume {
             "UPDATE index_state SET active_generation=?1 WHERE id=1",
             [generation],
         )?;
+        tx.execute(
+            "UPDATE generations SET phase='ready',completed=?2,error=NULL WHERE id=?1",
+            params![generation, stashfinder_core::assets::now() as i64],
+        )?;
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn fail_generation(&self, generation: i64, message: &str) -> Result<()> {
+        ensure!(self.db.execute("UPDATE generations SET phase='failed',complete=0,error=?2 WHERE id=?1 AND id NOT IN (SELECT active_generation FROM index_state WHERE active_generation IS NOT NULL)",params![generation,message])? == 1,"构建代次不存在或已经发布");
+        Ok(())
+    }
+
+    pub fn index_status(&self) -> Result<stashfinder_core::index::IndexStatus> {
+        let active = self.active_generation()?;
+        let row = self
+            .db
+            .query_row(
+                "SELECT id,phase,started,completed,error FROM generations ORDER BY id DESC LIMIT 1",
+                [],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<i64>>(2)?,
+                        r.get::<_, Option<i64>>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((generation, phase, started, completed, error)) = row else {
+            return Ok(stashfinder_core::index::IndexStatus {
+                phase: "not_indexed".into(),
+                ..Default::default()
+            });
+        };
+        let records = self.db.query_row(
+            "SELECT count(*) FROM paths WHERE generation=?1 AND parent IS NOT NULL",
+            [generation],
+            |r| r.get::<_, i64>(0),
+        )?;
+        Ok(stashfinder_core::index::IndexStatus {
+            generation: Some(generation),
+            active_generation: active,
+            phase,
+            started: started.map(u64::try_from).transpose()?,
+            completed: completed.map(u64::try_from).transpose()?,
+            records: records.try_into()?,
+            error,
+        })
     }
 
     pub fn active_generation(&self) -> Result<Option<i64>> {

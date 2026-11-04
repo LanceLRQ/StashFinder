@@ -1,5 +1,6 @@
 //! Persistent catalogs and partition stores. Synthetic M0 helpers retain a separate schema.
 pub mod catalog;
+pub mod search;
 pub mod volume;
 
 use anyhow::{Result, ensure};
