@@ -211,8 +211,9 @@ impl Indexes {
                         ensure!(!job.cancel.load(Ordering::Relaxed), "搜索已取消");
                         let partition = &asset.registration.partition_id;
                         let index = (|| -> Result<Option<Arc<SearchIndex>>> {
-                            if let Some(error) = &asset.error {
-                                anyhow::bail!("{error}");
+                            if asset.error.is_some() {
+                                // Device access errors do not invalidate a healthy local snapshot.
+                                catalog.health(&asset.registration.filesystem_id)?;
                             }
                             if let Some(index) = caches
                                 .lock()

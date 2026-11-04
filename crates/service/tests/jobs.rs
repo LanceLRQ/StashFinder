@@ -104,6 +104,29 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
         assert!(!row.partial);
         assert!(row.indexed_at.is_some());
         assert!(!row.needs_validation);
+        let mut inaccessible = snapshot.clone();
+        inaccessible.assets[0].connection = "inaccessible".into();
+        inaccessible.assets[0].error = Some("device access unavailable".into());
+        let id = jobs
+            .search(
+                SearchRequest {
+                    text: "offline".into(),
+                    names_only: false,
+                    partitions: vec![],
+                },
+                &inaccessible,
+            )
+            .unwrap();
+        let page = loop {
+            let page = jobs.page(id, 0).unwrap();
+            if page.done {
+                break page;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(page.unavailable.is_empty(), "{:?}", page.unavailable);
+        assert_eq!(page.row.unwrap().connection, "inaccessible");
     }
 }
 
