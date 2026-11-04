@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod search;
 
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
