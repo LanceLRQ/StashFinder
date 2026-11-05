@@ -112,6 +112,7 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
                     text: "offline".into(),
                     names_only: false,
                     partitions: vec![],
+                    options: Default::default(),
                 },
                 &snapshot,
             )
@@ -134,6 +135,12 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
         assert!(!row.partial);
         assert!(row.indexed_at.is_some());
         assert!(!row.needs_validation);
+        let batch = jobs.batch(id, 0, 100).unwrap();
+        assert_eq!(batch.total, 1);
+        assert_eq!(batch.rows[0].file.path, "offline.txt");
+        assert!(batch.row.is_none());
+        assert!(jobs.batch(id, 0, 0).is_err());
+        assert!(jobs.batch(id, 3, 100).is_err());
         let mut inaccessible = snapshot.clone();
         inaccessible.assets[0].connection = "inaccessible".into();
         inaccessible.assets[0].error = Some("device access unavailable".into());
@@ -143,6 +150,7 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
                     text: "offline".into(),
                     names_only: false,
                     partitions: vec![],
+                    options: Default::default(),
                 },
                 &inaccessible,
             )
@@ -173,7 +181,8 @@ fn catalog_error_is_not_reported_as_an_empty_search() {
             SearchRequest {
                 text: "".into(),
                 names_only: false,
-                partitions: vec![]
+                partitions: vec![],
+                options: Default::default()
             },
             &snapshot
         )

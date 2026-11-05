@@ -18,3 +18,11 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+query-bench = []
+
+[[bin]]
+name = "query-baseline"
+path = "src/bin/query-baseline.rs"
+required-features = ["query-bench"]

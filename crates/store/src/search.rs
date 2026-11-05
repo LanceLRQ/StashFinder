@@ -1,4 +1,6 @@
 use crate::volume::Volume;
+#[path = "query.rs"]
+pub mod query;
 use anyhow::{Context, Result, ensure};
 use stashfinder_core::{
     index::{Matches, SearchRow},
@@ -15,30 +17,96 @@ pub struct SearchIndex {
     pub indexed_at: Option<u64>,
     pub needs_validation: bool,
     directories: Vec<String>,
+    folded_directories: Vec<String>,
+    directory_entries: Vec<Vec<u8>>,
     entries: Vec<CachedEntry>,
+    directory_ids: HashMap<Vec<u8>, usize>,
+    links: HashSet<Vec<u8>>,
 }
 
 struct CachedEntry {
     parent: usize,
-    row: SearchRow,
+    row: CachedRow,
+}
+struct CachedRow {
+    entry: Box<[u8]>,
+    object: Box<[u8]>,
+    name: Box<str>,
+    folded: Box<str>,
+    kind: &'static str,
+    size: Option<u64>,
+    created: Option<u64>,
+    modified: Option<u64>,
+    attributes: u32,
+}
+impl CachedRow {
+    fn record<'a>(
+        &'a self,
+        parent: &'a str,
+        folded_parent: &'a str,
+    ) -> stashfinder_core::search::Record<'a> {
+        stashfinder_core::search::Record {
+            name: &self.name,
+            folded_name: &self.folded,
+            parent,
+            folded_parent,
+            kind: self.kind,
+            size: self.size,
+            created: self.created,
+            modified: self.modified,
+        }
+    }
+    fn name_key(&self, case: bool) -> &str {
+        if case { &self.name } else { &self.folded }
+    }
+    fn materialize(&self, parent: &[u8], prefix: &str) -> SearchRow {
+        SearchRow {
+            entry: self.entry.to_vec(),
+            parent: parent.to_vec(),
+            object: self.object.to_vec(),
+            name: self.name.to_string(),
+            path: if prefix.is_empty() {
+                self.name.to_string()
+            } else {
+                format!("{prefix}\\{}", self.name)
+            },
+            kind: self.kind.into(),
+            attributes: self.attributes,
+            size: self.size.map(|n| n.to_string()),
+            created: self.created.map(|n| n.to_string()),
+            modified: self.modified.map(|n| n.to_string()),
+        }
+    }
 }
 
 impl SearchIndex {
     pub fn load(volume: &Volume) -> Result<Option<Self>> {
+        Self::load_cancelled(volume, &AtomicBool::new(false))
+    }
+    pub fn load_cancelled(volume: &Volume, cancelled: &AtomicBool) -> Result<Option<Self>> {
         let status = volume.index_status()?;
         let generation = match status.active_generation {
             Some(id) => id,
             None if status.phase == "failed" => status.generation.context("缺少部分索引代次")?,
             None => return Ok(None),
         };
-        Ok(Some(Self::load_generation(
+        Ok(Some(Self::load_generation_inner(
             volume,
             generation,
             status.active_generation.is_none(),
+            cancelled,
         )?))
     }
 
     pub fn load_generation(volume: &Volume, generation: i64, partial: bool) -> Result<Self> {
+        Self::load_generation_inner(volume, generation, partial, &AtomicBool::new(false))
+    }
+    fn load_generation_inner(
+        volume: &Volume,
+        generation: i64,
+        partial: bool,
+        cancelled: &AtomicBool,
+    ) -> Result<Self> {
         let (completed, phase): (Option<i64>, String) = volume.db.query_row(
             "SELECT completed,phase FROM generations WHERE id=?1",
             [generation],
@@ -51,6 +119,7 @@ impl SearchIndex {
         let mut stmt=volume.db.prepare("SELECT p.id,p.parent,p.name FROM paths p JOIN objects o ON o.generation=p.generation AND o.id=p.object WHERE p.generation=?1 AND o.kind='folder' ORDER BY p.id")?;
         let mut rows = stmt.query([generation])?;
         while let Some(row) = rows.next()? {
+            ensure!(!cancelled.load(Ordering::Relaxed), "搜索已取消");
             let id: Vec<u8> = row.get(0)?;
             ids.insert(id, directories.len());
             parents.push(row.get::<_, Option<Vec<u8>>>(1)?);
@@ -58,6 +127,7 @@ impl SearchIndex {
             directories.push(None::<String>);
         }
         for start in 0..directories.len() {
+            ensure!(!cancelled.load(Ordering::Relaxed), "搜索已取消");
             let mut chain = Vec::new();
             let mut seen = HashSet::new();
             let mut current = start;
@@ -92,24 +162,41 @@ impl SearchIndex {
         let mut stmt=volume.db.prepare("SELECT p.object,p.parent,p.name,o.kind,o.size,o.created,o.modified,o.attributes,p.id FROM paths p JOIN objects o ON o.generation=p.generation AND o.id=p.object WHERE p.generation=?1 AND p.parent IS NOT NULL ORDER BY p.id")?;
         let mut rows = stmt.query([generation])?;
         while let Some(row) = rows.next()? {
+            ensure!(!cancelled.load(Ordering::Relaxed), "搜索已取消");
             let parent: Vec<u8> = row.get(1)?;
+            let name = decode_name(&row.get::<_, Vec<u8>>(2)?)?;
             entries.push(CachedEntry {
                 parent: *ids.get(&parent).context("路径父目录缺失")?,
-                row: SearchRow {
-                    entry: row.get(8)?,
-                    parent: parent.clone(),
-                    object: row.get(0)?,
-                    name: decode_name(&row.get::<_, Vec<u8>>(2)?)?,
-                    path: String::new(),
-                    kind: row.get(3)?,
-                    size: row.get::<_, Option<i64>>(4)?.map(|n| n.to_string()),
-                    created: decode_time(row.get(5)?)?,
-                    modified: decode_time(row.get(6)?)?,
+                row: CachedRow {
+                    entry: row.get::<_, Vec<u8>>(8)?.into_boxed_slice(),
+                    object: row.get::<_, Vec<u8>>(0)?.into_boxed_slice(),
+                    folded: name.to_lowercase().into_boxed_str(),
+                    name: name.into_boxed_str(),
+                    kind: if row.get::<_, String>(3)? == "folder" {
+                        "folder"
+                    } else {
+                        "file"
+                    },
+                    size: row.get::<_, Option<i64>>(4)?.map(|n| n as u64),
+                    created: decode_time(row.get(5)?)?.map(|s| s.parse()).transpose()?,
+                    modified: decode_time(row.get(6)?)?.map(|s| s.parse()).transpose()?,
                     attributes: row.get(7)?,
                 },
             });
         }
+        let mut statement = volume.db.prepare("SELECT object FROM paths WHERE generation=?1 AND parent IS NOT NULL GROUP BY object HAVING count(*)>1")?;
+        let links = statement
+            .query_map([generation], |r| r.get(0))?
+            .collect::<rusqlite::Result<HashSet<Vec<u8>>>>()?;
+        let mut directory_entries = vec![vec![]; ids.len()];
+        for (id, index) in &ids {
+            directory_entries[*index] = id.clone();
+        }
         Ok(Self {
+            folded_directories: directories.iter().map(|s| s.to_lowercase()).collect(),
+            directory_entries,
+            directory_ids: ids,
+            links,
             generation,
             partial,
             indexed_at: completed.map(u64::try_from).transpose()?,
@@ -131,18 +218,20 @@ impl SearchIndex {
         for entry in &self.entries {
             ensure!(!cancelled.load(Ordering::Relaxed), "搜索已取消");
             let parent = &self.directories[entry.parent];
-            let path = if parent.is_empty() {
-                entry.row.name.clone()
-            } else {
-                format!("{parent}\\{}", entry.row.name)
-            };
-            if query.matches(&entry.row.name, &path, mounts) {
+            if query.matches_record(
+                &entry
+                    .row
+                    .record(parent, &self.folded_directories[entry.parent]),
+                mounts,
+            )? {
                 if rows.len() == limit {
                     return Ok(Matches { rows, more: true });
                 }
-                let mut row = entry.row.clone();
-                row.path = path;
-                rows.push(row);
+                rows.push(
+                    entry
+                        .row
+                        .materialize(&self.directory_entries[entry.parent], parent),
+                );
             }
         }
         Ok(Matches { rows, more: false })

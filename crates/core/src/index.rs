@@ -47,10 +47,14 @@ pub struct SearchRequest {
     pub text: String,
     pub names_only: bool,
     pub partitions: Vec<String>,
+    #[serde(default)]
+    pub options: Box<crate::search::QueryOptions>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchHit {
+    pub duplicate_group: Option<u32>,
+    pub hard_link: bool,
     pub filesystem_id: String,
     pub partition_id: String,
     pub partition_name: String,
@@ -65,6 +69,10 @@ pub struct SearchHit {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchPage {
+    pub rows: Vec<SearchHit>,
+    pub total: usize,
+    pub groups: usize,
+    pub missing: usize,
     pub id: u64,
     pub done: bool,
     pub row: Option<SearchHit>,

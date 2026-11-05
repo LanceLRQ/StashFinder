@@ -17,6 +17,9 @@ M0/M1 代码独立实现，未复制 FindX 或 goz 源码。两者是设计调�
 | serde / serde_json | [serde-rs](https://github.com/serde-rs) | MIT OR Apache-2.0 |
 | anyhow | [dtolnay/anyhow](https://github.com/dtolnay/anyhow) | MIT OR Apache-2.0 |
 | tempfile | [Stebalien/tempfile](https://github.com/Stebalien/tempfile) | MIT OR Apache-2.0 |
+| pcre2 / pcre2-sys | [BurntSushi/rust-pcre2](https://github.com/BurntSushi/rust-pcre2) | Unlicense OR MIT |
+| PCRE2 | [PCRE2Project/pcre2](https://github.com/PCRE2Project/pcre2) | BSD-3-Clause |
+| chrono | [chronotope/chrono](https://github.com/chronotope/chrono) | MIT OR Apache-2.0 |
 | uuid | [uuid-rs/uuid](https://github.com/uuid-rs/uuid) | MIT OR Apache-2.0 |
 | React / React DOM | [facebook/react](https://github.com/facebook/react) | MIT |
 | TypeScript | [microsoft/TypeScript](https://github.com/microsoft/TypeScript) | Apache-2.0 |

@@ -173,6 +173,13 @@ pub async fn serve_runtime(
                     Action::SearchPage { id, offset } => Ok(Response::SearchPage(Box::new(
                         indexes.context("索引服务未配置")?.page(id, offset)?,
                     ))),
+                    Action::SearchBatch { id, offset, limit } => {
+                        Ok(Response::SearchPage(Box::new(
+                            indexes
+                                .context("索引服务未配置")?
+                                .batch(id, offset, limit)?,
+                        )))
+                    }
                     Action::SearchCancel { id } => {
                         indexes.context("索引服务未配置")?.cancel_search(id);
                         Ok(Response::Accepted)

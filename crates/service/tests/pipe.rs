@@ -171,6 +171,7 @@ async fn rename_over_real_pipe_survives_process_termination_and_restart() {
                 text: "offline-result".into(),
                 names_only: false,
                 partitions: vec![],
+                options: Default::default(),
             }),
         )
         .await

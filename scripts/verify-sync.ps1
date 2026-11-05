@@ -20,7 +20,7 @@ function Send-Action($Action) {
     $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', 'StashFinder.M0', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification)
     try {
         $pipe.Connect(3000)
-        $bytes = [Text.Encoding]::UTF8.GetBytes((@{ version = 5; id = 1; action = $Action } | ConvertTo-Json -Depth 8 -Compress))
+        $bytes = [Text.Encoding]::UTF8.GetBytes((@{ version = 6; id = 1; action = $Action } | ConvertTo-Json -Depth 8 -Compress))
         $writer = [IO.BinaryWriter]::new($pipe)
         $writer.Write([int]$bytes.Length); $writer.Write($bytes); $writer.Flush()
         $reader = [IO.BinaryReader]::new($pipe)
@@ -46,8 +46,8 @@ function Wait-For([scriptblock]$Condition, [string]$Description) {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw "Timed out: $Description"
 }
-function Search([string]$Text, [string]$Id) {
-    $queryId = Send-Action @{ search_start = @{ text = $Text; names_only = $false; partitions = @($Id) } }
+function Search([string]$Text, [string]$Id, [bool]$IncludeHistory = $false) {
+    $queryId = Send-Action @{ search_start = @{ text = $Text; names_only = $false; partitions = @($Id); options = @{ include_history = $IncludeHistory } } }
     $rows = @(); $offset = 0
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
@@ -160,7 +160,7 @@ try {
     $partition = Get-Partition -DiskNumber $disk.Number | Where-Object {$_.Size -eq 384MB}
     $partition | Format-Volume -FileSystem NTFS -NewFileSystemLabel 'SF-M3-New' -Confirm:$false -Force | Out-Null
     Wait-For { (Snapshot).assets[0].connection -eq 'historical' } 'filesystem history'
-    if ((Search 'gap.txt' $assetId).Count -ne 1) { throw 'Historical filesystem records lost.' }
+    if ((Search 'gap.txt' $assetId $true).Count -ne 1) { throw 'Historical filesystem records lost.' }
     $s = Snapshot
     if (@($s.assets).Count -ne 1) { throw 'Formatted filesystem was registered implicitly.' }
     $candidate = @($s.candidates | Where-Object {$_.observation.disk_number -eq $disk.Number -and -not $_.blocked})[0]
