@@ -13,18 +13,23 @@ const connection: Record<string, string> = {
   offline: "离线",
   uncertain: "身份待确认",
   changed: "历史记录",
+  historical: "历史记录",
   inaccessible: "无法访问",
   unconfirmed: "状态未确认",
 };
 export default function Search({
   partitions,
   onBack,
+  includePath = true,
+  request,
 }: {
   partitions: { id: string; name: string }[];
-  onBack: () => void;
+  onBack?: () => void;
+  includePath?: boolean;
+  request?: { text: string; revision: number };
 }) {
-  const [text, setText] = useState("");
-  const [namesOnly, setNamesOnly] = useState(false);
+  const [text, setText] = useState(request?.text || "");
+  const [namesOnly, setNamesOnly] = useState(!includePath);
   const [partition, setPartition] = useState("");
   const [rows, setRows] = useState<SearchHit[]>([]);
   const [busy, setBusy] = useState(true);
@@ -32,6 +37,12 @@ export default function Search({
   const [unavailable, setUnavailable] = useState<string[]>([]);
   const [more, setMore] = useState(false);
   const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    if (request) {
+      setText(request.text);
+      setRevision((value) => value + 1);
+    }
+  }, [request]);
   useEffect(() => {
     let active = true;
     let id: number | undefined;
@@ -94,14 +105,8 @@ export default function Search({
     };
   }, [text, namesOnly, partition, revision]);
   return (
-    <main className="assets-app search-app">
-      <header>
-        <span className="wordmark">
-          StashFinder<span className="dot">.</span>
-        </span>
-        <button onClick={onBack}>硬盘管理</button>
-      </header>
-      <h1>文件搜索</h1>
+    <div className="assets-app search-app">
+      {onBack && <button onClick={onBack}>硬盘管理</button>}
       <div className="search-toolbar">
         <input
           autoFocus
@@ -132,16 +137,15 @@ export default function Search({
           仅文件名
         </label>
         <button onClick={() => setRevision((n) => n + 1)}>重新搜索</button>
-      </div>
-      <div className="search-summary" role="status">
-        {busy
-          ? "正在搜索…"
-          : error
-            ? "搜索失败"
-            : more
-              ? `显示前 ${rows.length} 条，请缩小搜索范围`
-              : `${rows.length} 条结果`}
-        <span>文件索引快照 · 只读</span>
+        <div className="search-summary" role="status">
+          {busy
+            ? "正在搜索…"
+            : error
+              ? "搜索失败"
+              : more
+                ? `显示前 ${rows.length} 条，请缩小搜索范围`
+                : `${rows.length} 条结果`}
+        </div>
       </div>
       {error && (
         <p role="alert" className="asset-error">
@@ -200,7 +204,7 @@ export default function Search({
                   {row.partial ? (
                     <small>未完成记录</small>
                   ) : row.needs_validation ? (
-                    <small>待校验扫描快照</small>
+                    <small>索引待校验</small>
                   ) : null}
                   <small>
                     {row.indexed_at == null
@@ -216,6 +220,6 @@ export default function Search({
           <p className="search-empty">没有匹配的文件</p>
         )}
       </div>
-    </main>
+    </div>
   );
 }

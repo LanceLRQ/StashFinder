@@ -2,6 +2,20 @@ use stashfinder_windows::ntfs::{decode_directory, decode_usn, read_directory};
 use std::sync::atomic::AtomicBool;
 
 #[test]
+fn journal_uses_the_stricter_valid_start_and_rejects_truncated_bounds() {
+    let mut bytes = vec![0u8; 56];
+    bytes[..8].copy_from_slice(&7u64.to_le_bytes());
+    bytes[8..16].copy_from_slice(&100i64.to_le_bytes());
+    bytes[16..24].copy_from_slice(&300i64.to_le_bytes());
+    bytes[24..32].copy_from_slice(&200i64.to_le_bytes());
+    let journal = stashfinder_windows::ntfs::decode_journal(&bytes).unwrap();
+    assert_eq!((journal.id, journal.first, journal.next), (7, 200, 300));
+    assert!(stashfinder_windows::ntfs::decode_journal(&bytes[..24]).is_err());
+    bytes[24..32].copy_from_slice(&400i64.to_le_bytes());
+    assert!(stashfinder_windows::ntfs::decode_journal(&bytes).is_err());
+}
+
+#[test]
 fn usn_keeps_full_ids_reasons_and_utf16_and_rejects_bad_records() {
     let mut bytes = vec![0u8; 80];
     bytes[..8].copy_from_slice(&200u64.to_le_bytes());

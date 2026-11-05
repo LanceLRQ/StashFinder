@@ -1,6 +1,7 @@
 pub mod assets;
 pub mod index;
 pub mod jobs;
+pub mod supervisor;
 use anyhow::{Context, Result, bail};
 use stashfinder_core::{
     Action, MAX_FRAME, PROTOCOL_VERSION, Reply, Request, Response, Status, read_frame,
@@ -55,9 +56,21 @@ pub async fn serve_runtime(
     services: Services<'_>,
 ) -> Result<()> {
     let Services { assets, indexes } = services;
+    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(2));
+    let mut refreshed = std::time::Instant::now();
     loop {
         tokio::select! {
             _ = stop.changed() => return Ok(()),
+            _ = heartbeat.tick() => {
+                if let Some(assets) = assets {
+                    if let Some(indexes) = indexes { indexes.runner.observe(assets.snapshot()); }
+                    if refreshed.elapsed() >= std::time::Duration::from_secs(5) {
+                        let _ = assets.submit(Action::Refresh);
+                        refreshed = std::time::Instant::now();
+                    }
+                }
+                continue;
+            },
             connected = pipe.connect() => connected?,
         }
         // Keep a listener alive so another first-instance server cannot claim the name.
@@ -97,8 +110,39 @@ pub async fn serve_runtime(
                         )?;
                         Ok(Response::Accepted)
                     }
-                    Action::IndexCancel => {
-                        indexes.context("索引服务未配置")?.cancel_scan();
+                    Action::TaskCancel { id } => {
+                        indexes.context("索引服务未配置")?.runner.cancel(&id)?;
+                        Ok(Response::Accepted)
+                    }
+                    Action::TaskRetry { id } => {
+                        indexes
+                            .context("索引服务未配置")?
+                            .runner
+                            .retry(&id, &assets.snapshot())?;
+                        Ok(Response::Accepted)
+                    }
+                    Action::TaskPage { version, offset } => Ok(Response::Tasks(Box::new(
+                        indexes
+                            .context("索引服务未配置")?
+                            .runner
+                            .page(version, offset)?,
+                    ))),
+                    Action::AutoUpdate { enabled } => {
+                        indexes
+                            .context("索引服务未配置")?
+                            .runner
+                            .set_enabled(enabled)?;
+                        Ok(Response::Accepted)
+                    }
+                    Action::PartitionPause {
+                        partition_id,
+                        paused,
+                    } => {
+                        indexes.context("索引服务未配置")?.runner.pause(
+                            &partition_id,
+                            paused,
+                            &assets.snapshot(),
+                        )?;
                         Ok(Response::Accepted)
                     }
                     Action::IndexState { partition_id } => {

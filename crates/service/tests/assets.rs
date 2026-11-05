@@ -43,6 +43,51 @@ fn settled(assets: &Assets) -> Snapshot {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
+
+#[test]
+fn replaced_filesystem_is_historical_and_new_instance_requires_registration() {
+    let root = tempfile::tempdir().unwrap();
+    let fixtures = Arc::new(Mutex::new(vec![observation()]));
+    let source = fixtures.clone();
+    let assets = Assets::start(root.path().into(), move || {
+        Ok(source.lock().unwrap().clone())
+    });
+    let s = settled(&assets);
+    assets
+        .submit(Action::Register {
+            version: s.version,
+            candidate_id: "volume-a".into(),
+            name: "Old".into(),
+            allow_weak: false,
+        })
+        .unwrap();
+    let old = settled(&assets).assets[0].registration.clone();
+    fixtures.lock().unwrap()[0]
+        .identity
+        .serial
+        .as_mut()
+        .unwrap()
+        .value = "2".into();
+    assets.submit(Action::Refresh).unwrap();
+    let s = settled(&assets);
+    assert_eq!(s.assets[0].connection, "historical");
+    assert_eq!(s.assets[0].registration.state, "historical");
+    assert!(s.candidates[0].blocked.is_none());
+    assets
+        .submit(Action::Register {
+            version: s.version,
+            candidate_id: "volume-a".into(),
+            name: "New".into(),
+            allow_weak: false,
+        })
+        .unwrap();
+    let s = settled(&assets);
+    assert_eq!(s.assets.len(), 2);
+    assert_eq!(s.assets[0].registration.filesystem_id, old.filesystem_id);
+    assert_eq!(s.assets[0].registration.name, "Old");
+    assert_eq!(s.assets[1].connection, "online");
+    assert_ne!(s.assets[1].registration.filesystem_id, old.filesystem_id);
+}
 #[test]
 fn registers_only_selected_partition_and_rejects_changed_candidate() {
     let root = tempfile::tempdir().unwrap();

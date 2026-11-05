@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -19,6 +20,7 @@ beforeAll(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.resetAllMocks();
 });
 const status = {
@@ -75,14 +77,39 @@ test("offline partitions cannot start scans and failed rebuild preserves publish
   );
 });
 test("running index can be cancelled", async () => {
-  mockStatus({ ...status, phase: "scanning" });
+  mockStatus({ ...status, phase: "scanning", task_id: "task-one" });
   render(<IndexControls partitionId="p" name="Movies" eligible />);
   fireEvent.click(
     await screen.findByRole("button", { name: "取消索引 Movies" }),
   );
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("index_request", {
-      action: "index_cancel",
+      action: { task_cancel: { id: "task-one" } },
     }),
   );
+});
+
+test("a failed status read is not presented as still loading", async () => {
+  vi.mocked(invoke).mockRejectedValue("服务已断开");
+  render(<IndexControls partitionId="p" name="Movies" eligible={false} />);
+  await screen.findByRole("alert");
+  expect(screen.queryByText("正在读取索引")).toBeNull();
+  expect(screen.getByText("索引状态不可用")).toBeTruthy();
+});
+
+test("recovers index status after a temporary service disconnect", async () => {
+  vi.useFakeTimers();
+  vi.mocked(invoke)
+    .mockRejectedValueOnce("服务已断开")
+    .mockResolvedValue({ kind: "index", data: status });
+  render(<IndexControls partitionId="p" name="Movies" eligible={false} />);
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(screen.getByRole("alert").textContent).toContain("服务已断开");
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1500);
+  });
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByText("尚未索引")).toBeTruthy();
 });

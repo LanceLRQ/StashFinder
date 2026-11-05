@@ -243,3 +243,53 @@ fn invalid_utf16_is_preserved_and_displayed_as_an_escape() {
         .unwrap();
     assert_eq!(found.rows[0].name, r"\u{d800}");
 }
+
+#[test]
+fn failed_incremental_transaction_preserves_paths_pending_and_cursor() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = Volume::create(&dir.path().join("v.sqlite"), "{}").unwrap();
+    let g = db.begin_generation().unwrap();
+    db.write_batch(
+        g,
+        &[object(1, true, None), object(2, false, Some(7))],
+        &[entry(1, 1, None, "\\"), entry(2, 2, Some(1), "old.txt")],
+        &[],
+        Some(&Cursor {
+            journal: vec![1],
+            next: 100,
+        }),
+    )
+    .unwrap();
+    db.complete(g).unwrap();
+    db.publish(g).unwrap();
+    assert!(
+        db.apply_incremental(
+            g,
+            Changes {
+                objects: &[object(2, false, Some(99))],
+                entries: &[entry(2, 2, Some(99), "bad.txt")],
+                removed: &[],
+                pending: &[vec![2]],
+                cursor: Some(&Cursor {
+                    journal: vec![1],
+                    next: 200
+                }),
+                replace_links: true
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(db.cursor(g).unwrap().unwrap().next, 100);
+    let hits = SearchIndex::load(&db)
+        .unwrap()
+        .unwrap()
+        .search(
+            &Query::parse("old", false).unwrap(),
+            &[],
+            200,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(hits.rows[0].size.as_deref(), Some("7"));
+    db.publish(g).unwrap();
+}

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type IndexStatus = {
+  task_id?: string | null;
   generation: number | null;
   active_generation: number | null;
   phase: string;
@@ -46,7 +47,7 @@ type Action =
         mode: "journal" | "create_journal" | "scan_only";
       };
     }
-  | "index_cancel"
+  | { task_cancel: { id: string } }
   | {
       search_start: { text: string; names_only: boolean; partitions: string[] };
     }

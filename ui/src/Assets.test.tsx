@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
@@ -23,6 +24,12 @@ afterEach(() => {
   cleanup();
   vi.resetAllMocks();
 });
+
+async function openRegistration() {
+  const button = screen.getByRole("button", { name: "登记分区" });
+  await waitFor(() => expect(button).toHaveProperty("disabled", false));
+  fireEvent.click(button);
+}
 
 function snapshot(): AssetSnapshot {
   return {
@@ -52,12 +59,71 @@ function snapshot(): AssetSnapshot {
   };
 }
 
+test("registration is a dialog and closing it preserves the overview filter", async () => {
+  vi.mocked(invoke).mockResolvedValue(snapshot());
+  render(<Assets />);
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  fireEvent.change(screen.getByLabelText("连接筛选"), {
+    target: { value: "offline" },
+  });
+  await openRegistration();
+  const dialog = await screen.findByRole("dialog", { name: "选择分区登记" });
+  expect(within(dialog).getAllByRole("checkbox")).toHaveLength(2);
+  fireEvent.click(within(dialog).getByRole("button", { name: "关闭登记" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByLabelText("连接筛选")).toHaveProperty("value", "offline");
+});
+
+test("groups partitions by disk identity and keeps the last snapshot on service failure", async () => {
+  const data = snapshot();
+  data.assets = data.candidates.map((c, i) => ({
+    registration: {
+      disk_id: "same-disk",
+      partition_id: c.observation.candidate_id,
+      filesystem_id: "fs" + i,
+      name: i ? "Backup" : "Movies",
+      revision: 1,
+      state: "ready",
+      observation: {
+        ...c.observation,
+        capacity: i ? null : c.observation.capacity,
+      },
+      last_seen: 1,
+    },
+    connection: i ? "uncertain" : "online",
+    mounts: i ? [] : ["A:\\"],
+    error: null,
+  }));
+  data.candidates = [];
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === "asset_snapshot" ? data : undefined,
+  );
+  render(<Assets />);
+  await screen.findByText("Movies");
+  expect(
+    screen.getAllByRole("heading", { name: /USB Test Disk/ }),
+  ).toHaveLength(1);
+  expect(screen.getByText("身份待确认")).toBeTruthy();
+  expect(
+    within(screen.getByText("Backup").closest("tr")!).getByText("未知 / 未知"),
+  ).toBeTruthy();
+  vi.mocked(invoke).mockRejectedValue("服务连接中断");
+  fireEvent.click(screen.getByRole("button", { name: "刷新设备" }));
+  await screen.findByText("服务连接中断");
+  expect(screen.getByText("Movies")).toBeTruthy();
+  expect(
+    within(screen.getByText("Movies").closest("tr")!).getByText("在线"),
+  ).toBeTruthy();
+  expect(screen.queryByText("尚未登记分区")).toBeNull();
+});
+
 test("starts unselected and registers only the selected partition", async () => {
   const data = snapshot();
   vi.mocked(invoke).mockImplementation(async (command) =>
     command === "asset_snapshot" ? data : undefined,
   );
   render(<Assets />);
+  await openRegistration();
   const checkboxes = await screen.findAllByRole("checkbox");
   expect(checkboxes.every((c) => !(c as HTMLInputElement).checked)).toBe(true);
   fireEvent.click(checkboxes[0]);
@@ -149,6 +215,7 @@ test("empty partition names cannot be submitted", async () => {
   const data = snapshot();
   vi.mocked(invoke).mockResolvedValue(data);
   render(<Assets />);
+  await openRegistration();
   fireEvent.click((await screen.findAllByRole("checkbox"))[0]);
   fireEvent.change(screen.getByRole("textbox", { name: "A: 自定义名称" }), {
     target: { value: "   " },
@@ -183,6 +250,13 @@ test("late initial response cannot overwrite a newer snapshot", async () => {
   });
   render(<Assets />);
   fireEvent.click(screen.getByRole("button", { name: "刷新设备" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "登记分区" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "登记分区" }));
   expect(await screen.findByRole("heading", { name: /新设备/ })).toBeTruthy();
   await act(async () => {
     resolveInitial(old);
@@ -194,6 +268,19 @@ test("partial registration keeps the failed selection and reports the failure", 
   const data = snapshot();
   vi.mocked(invoke).mockImplementation(async (command, args) => {
     if (command === "asset_snapshot") return structuredClone(data);
+    if (command === "index_request")
+      return {
+        kind: "index",
+        data: {
+          generation: null,
+          active_generation: null,
+          phase: "not_indexed",
+          started: null,
+          completed: null,
+          records: 0,
+          error: null,
+        },
+      };
     const action = (args as { action: { register: { candidate_id: string } } })
       .action.register;
     if (action.candidate_id === "B") throw new Error("设备已断开");
@@ -219,6 +306,7 @@ test("partial registration keeps the failed selection and reports the failure", 
     return undefined;
   });
   render(<Assets />);
+  await openRegistration();
   const boxes = await screen.findAllByRole("checkbox");
   boxes.forEach((box) => fireEvent.click(box));
   fireEvent.click(screen.getByRole("button", { name: "登记所选分区" }));
@@ -226,7 +314,7 @@ test("partial registration keeps the failed selection and reports the failure", 
     "textContent",
     expect.stringContaining("设备已断开"),
   );
-  expect(screen.getByText("已登记 1 个分区")).toBeTruthy();
+  expect(screen.getByLabelText("已登记 1 个分区")).toBeTruthy();
   const after = screen.getAllByRole("checkbox");
   expect(after[0]).toHaveProperty("checked", false);
   expect(after[1]).toHaveProperty("checked", true);
@@ -239,6 +327,7 @@ test("weak identity requires explicit confirmation and cancel sends nothing", as
     command === "asset_snapshot" ? data : undefined,
   );
   render(<Assets />);
+  await openRegistration();
   fireEvent.click((await screen.findAllByRole("checkbox"))[0]);
   fireEvent.click(screen.getByRole("button", { name: "登记所选分区" }));
   expect(screen.getByRole("dialog", { name: "身份信息不足" })).toBeTruthy();

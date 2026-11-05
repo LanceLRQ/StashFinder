@@ -47,6 +47,17 @@ pub struct NativeObject {
     pub links: Vec<(u64, Vec<u16>)>,
 }
 
+pub fn decode_journal(bytes: &[u8]) -> Result<Journal> {
+    let first = read_field::<i64>(bytes, 8)?.max(read_field::<i64>(bytes, 24)?);
+    let next = read_field::<i64>(bytes, 16)?;
+    ensure!(first >= 0 && first <= next, "USN 日志边界无效");
+    Ok(Journal {
+        id: read_field(bytes, 0)?,
+        first,
+        next,
+    })
+}
+
 pub fn decode_usn(bytes: &[u8]) -> Result<UsnPage> {
     let next = read_field::<u64>(bytes, 0)?;
     let mut records = Vec::new();
@@ -290,16 +301,7 @@ impl VolumeReader {
     }
     pub fn journal(&self) -> Result<Option<Journal>> {
         match self.handle.ioctl(FSCTL_QUERY_USN_JOURNAL, &[]) {
-            Ok(bytes) => {
-                let first = read_field::<i64>(&bytes, 8)?;
-                let next = read_field::<i64>(&bytes, 16)?;
-                ensure!(first >= 0 && first <= next, "USN 日志边界无效");
-                Ok(Some(Journal {
-                    id: read_field(&bytes, 0)?,
-                    first,
-                    next,
-                }))
-            }
+            Ok(bytes) => decode_journal(&bytes).map(Some),
             Err(e) if e.code() == ERROR_JOURNAL_NOT_ACTIVE.to_hresult() => Ok(None),
             Err(e) => Err(e.into()),
         }

@@ -18,7 +18,10 @@ impl Catalog {
             OpenFlags::SQLITE_OPEN_READ_ONLY,
         )?;
         ensure!(
-            db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))? == 1,
+            matches!(
+                db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
+                1 | 2
+            ),
             "资产库版本不支持"
         );
         Ok(Self {
@@ -51,7 +54,10 @@ impl Catalog {
                 PRAGMA user_version=1; COMMIT;")?;
         } else {
             ensure!(
-                db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))? == 1,
+                matches!(
+                    db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
+                    1 | 2
+                ),
                 "资产库版本不支持；需要恢复，未创建空库"
             );
             ensure!(
@@ -59,6 +65,9 @@ impl Catalog {
                 "资产库损坏，需要恢复"
             );
             configure(&db)?;
+        }
+        if db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))? == 1 {
+            db.execute_batch("BEGIN; CREATE TABLE historical(partition_id TEXT PRIMARY KEY REFERENCES partitions(id)); PRAGMA user_version=2; COMMIT;")?;
         }
         let mut catalog = Self {
             db,
@@ -76,7 +85,13 @@ impl Catalog {
     }
 
     pub fn list(&self) -> Result<Vec<Registration>> {
-        let mut stmt = self.db.prepare("SELECT p.disk_id,p.id,f.id,p.name,p.revision,f.state,f.observation,f.last_seen FROM partitions p JOIN filesystems f ON f.partition_id=p.id ORDER BY p.rowid")?;
+        let version: i64 = self.db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        let state = if version >= 2 {
+            "CASE WHEN EXISTS(SELECT 1 FROM historical h WHERE h.partition_id=p.id) THEN 'historical' ELSE f.state END"
+        } else {
+            "f.state"
+        };
+        let mut stmt = self.db.prepare(&format!("SELECT p.disk_id,p.id,f.id,p.name,p.revision,{state},f.observation,f.last_seen FROM partitions p JOIN filesystems f ON f.partition_id=p.id ORDER BY p.rowid"))?;
         let rows = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -124,11 +139,10 @@ impl Catalog {
     pub fn prepare(&mut self, observation: &Observation, name: &str) -> Result<Registration> {
         let name = validate_name(name)?;
         ensure!(observation.eligible(), "分区不可登记");
-        if let Some(existing) = self
-            .list()?
-            .into_iter()
-            .find(|r| r.observation.identity.compare(&observation.identity) == IdentityMatch::Same)
-        {
+        if let Some(existing) = self.list()?.into_iter().find(|r| {
+            r.state != "historical"
+                && r.observation.identity.compare(&observation.identity) == IdentityMatch::Same
+        }) {
             return Ok(existing);
         }
         let disk_key = observation.identity.disk_key();
@@ -174,11 +188,18 @@ impl Catalog {
             params![
                 row.filesystem_id,
                 row.partition_id,
-                row.state,
+                if row.state == "historical" {
+                    "ready"
+                } else {
+                    &row.state
+                },
                 serde_json::to_string(&row.observation)?,
                 row.last_seen.map(i64::try_from).transpose()?
             ],
         )?;
+        if row.state == "historical" {
+            tx.execute("INSERT INTO historical VALUES(?1)", [&row.partition_id])?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -232,7 +253,10 @@ impl Catalog {
             .into_iter()
             .find(|r| r.filesystem_id == filesystem)
             .context("登记不存在")?;
-        ensure!(row.state == "ready", "登记初始化未完成，可重试");
+        ensure!(
+            matches!(row.state.as_str(), "ready" | "historical"),
+            "登记初始化未完成，可重试"
+        );
         let child = self.open_owned(&row)?;
         let saved: Registration = serde_json::from_str(&child.manifest()?)?;
         ensure!(
@@ -280,6 +304,7 @@ impl Catalog {
 
     pub fn observe(&mut self, partition: &str, observation: &Observation) -> Result<()> {
         let mut row = self.get(partition)?;
+        ensure!(row.state == "ready", "历史记录不能自动更新");
         self.health(&row.filesystem_id)?;
         ensure!(
             row.observation.identity.compare(&observation.identity) == IdentityMatch::Same,
@@ -304,6 +329,14 @@ impl Catalog {
         self.sync_manifest(&row)
     }
 
+    pub fn archive(&mut self, partition: &str) -> Result<()> {
+        let row = self.get(partition)?;
+        ensure!(row.state != "preparing", "未完成登记不能归档");
+        self.db
+            .execute("INSERT OR IGNORE INTO historical VALUES(?1)", [partition])?;
+        self.sync_manifest(&self.get(partition)?)
+    }
+
     pub fn recover(source: &Path, destination: &Path) -> Result<Vec<String>> {
         ensure!(!destination.exists(), "恢复目录必须不存在");
         let mut candidate = Self::open(destination)?;
@@ -317,7 +350,10 @@ impl Catalog {
             let result = (|| -> Result<Registration> {
                 let mut row: Registration =
                     serde_json::from_str(&Volume::inspect_manifest(&path)?)?;
-                ensure!(row.state == "ready", "未发布的库不用于恢复");
+                ensure!(
+                    matches!(row.state.as_str(), "ready" | "historical"),
+                    "未发布的库不用于恢复"
+                );
                 ensure!(
                     path.file_stem().and_then(|s| s.to_str()) == Some(row.filesystem_id.as_str()),
                     "库文件名和身份不一致"
@@ -335,11 +371,13 @@ impl Catalog {
                 .iter()
                 .filter(|(_, other)| {
                     other.partition_id == row.partition_id
-                        || other
-                            .observation
-                            .identity
-                            .compare(&row.observation.identity)
-                            == IdentityMatch::Same
+                        || (other.state != "historical"
+                            && row.state != "historical"
+                            && other
+                                .observation
+                                .identity
+                                .compare(&row.observation.identity)
+                                == IdentityMatch::Same)
                 })
                 .count()
                 > 1

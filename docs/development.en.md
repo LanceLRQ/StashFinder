@@ -2,7 +2,7 @@
 
 [简体中文](development.md) | English
 
-This project provides partition registration, manual NTFS indexing and basic offline search. Registration does not start scanning; indexing starts from the partition row. The development view retains M0 file bridge tests and synthetic benchmarks, separate from real search results.
+This project provides the desktop shell, partition registration, automatic NTFS indexing and incremental updates, task management and basic offline search. Automatic updates are enabled for registered partitions; unregistered partitions are not scanned. A missing USN journal requires a scanning choice or separate creation consent. The partition indexing action still supports manual validation. The M0 file bridge view is shown only in frontend development builds, separate from real search results.
 
 NTFS volume identity queries require a read-access handle, not a zero-access device-attribute handle. VHD acceptance exercises this query; automated checks cannot replace device-level validation.
 
@@ -39,19 +39,43 @@ In a second terminal:
 npm --prefix ui run tauri -- dev
 ```
 
-The home screen manages disks. An ordinary foreground process may lack access to physical disk layouts; the UI must report this explicitly. Use the LocalSystem verification service below for complete device validation. The development view includes a connection check. Closing the GUI does not stop the backend; use Ctrl+C in its terminal. The local pipe allows the configured account, SYSTEM and administrators and rejects remote clients. IPC accepts neither database paths nor arbitrary commands.
+The default home screen is Overview, with a collapsible navigation rail. Files retains the current session's search input and results. Tasks separates current work, items needing attention and history. Cancellation targets a task ID and pauses its partition until updates are explicitly resumed. An ordinary foreground process may lack access to physical disk layouts; the UI must report this explicitly. Use the LocalSystem verification service below for complete device validation. Settings → About and diagnostics reports the actual app version, backend mode and connection state. Closing the GUI does not stop the backend; use Ctrl+C in its terminal. The local pipe allows the configured account, SYSTEM and administrators and rejects remote clients. IPC accepts neither database paths nor arbitrary commands.
+
+## Desktop and preferences acceptance
+
+- Search from Overview, switch pages or collapse the rail, then return: the query and results remain intact. The current limit of 200 results still applies.
+- Register partitions opens a dialog. Closing it preserves the overview connection filter. A service disconnect keeps the displayed asset snapshot with an error, rather than marking every device offline.
+- Settings supports the startup page, collapsed rail and default path matching. Path matching applies when a search page next opens, without overriding an existing query's selection. Restart to verify persistence.
+- Preferences live in `preferences.json` under Tauri's `app_config_dir` (usually `%APPDATA%\io.github.lancelrq.stashfinder\preferences.json` on Windows), separately from service indexes. Saving replaces the file through a temporary file in the same directory; failures preserve the old configuration and show an error. System startup entries are not changed.
+- Corrupt or unsupported configuration versions produce an explicit error. Back up and move the configuration file, then restart to restore defaults. Do not change the index databases to reset the UI.
+- Settings remains accessible without the service. UI preferences still work; About and diagnostics can reconnect and never reports a failed read as connected.
+- Check the initial 1280×800 and minimum 1000×650 window sizes, plus Windows scaling at 100%, 125%, 150% and 200%. Component tests do not replace native-window and real-backend validation.
 
 ## Partition registration acceptance
 
-- Nothing is selected on first launch. Select and name the partitions to manage; unselected partitions are neither registered nor scanned.
+- Open Register partitions from Overview; nothing is initially selected. Select and name the partitions to manage; unselected partitions are neither registered nor scanned.
 - Registered partitions are grouped by physical disk, with current mounts, filesystem, capacity and collection time. Naming changes software records only, not volume labels.
-- Refresh devices after connection, disconnection or drive-letter changes. Offline capacity is historical; unavailable values remain unknown. Automatic hotplug synchronization is not implemented.
-- Conflicting or insufficient identity evidence, filesystem changes and database errors have explicit states. Uncertain devices are not automatically associated and old records are not overwritten. Post-format history management comes later.
+- The backend checks devices approximately every 5 seconds and online NTFS changes approximately every 2 seconds; device latency and running tasks affect response time. Offline capacity is historical and unavailable values remain unknown.
+- Conflicting or insufficient identity evidence and database errors have explicit states. Uncertain devices are not automatically associated. Formatting preserves old records as historical; the new filesystem needs explicit registration. Manual removal of historical records is not available yet.
 - Registrations, IDs, names and historical capacity survive UI/service restart. A missing or corrupt ready database is not replaced by an empty one, and other partitions remain usable.
 
 Foreground development requires an explicit absolute data directory. SCM mode defaults to `%ProgramData%\StashFinder`, which must be provisioned beforehand as a direct child of ProgramData. Disable root ACL inheritance, grant only SYSTEM and Administrators inheritable full control, and disallow reparse points. The GUI reads through the service, not directly from databases. The verification script below provisions isolated protected storage. Production installation and migration are not implemented.
 
-`catalog.sqlite` stores registrations; `volumes/<filesystem-id>.sqlite` stores independent filesystem data. SQLite uses WAL/FULL: copying only a live main database is not a backup. The recovery API creates a separate candidate catalog only, not a complete backup/restore tool. Protocol version 3 has a 16 KiB frame limit and paginated assets/search results; use UI and service binaries from the same build. Existing partition databases migrate transactionally only after ownership validation; mismatched databases are not migrated.
+`catalog.sqlite` stores registrations; `volumes/<filesystem-id>.sqlite` stores independent filesystem data; `tasks.sqlite` stores tasks, automatic-update policy and paused partitions. SQLite uses WAL/FULL: copying only a live main database is not a backup. The recovery API creates a separate candidate catalog only, not a complete backup/restore tool. Protocol version 4 has a 16 KiB frame limit and paginated assets, tasks and search results; use UI and service binaries from the same build. Existing partition databases migrate transactionally only after ownership validation; mismatched databases are not migrated.
+
+## Automatic-update acceptance
+
+- Settings → Indexing and synchronization enables automatic updates by default. Disabling requires confirmation and lets running tasks finish; manual indexing remains available. Failed saves retain the previous policy.
+- Reconnection validates identity and journal bounds before replay. Gaps trigger rebuilding while the old active generation remains searchable. A failed change-page read does not advance its cursor or prove deletion.
+- One worker serializes indexing. Empty journal checks do not create tasks or reload caches. Failures back off with at most three automatic attempts; reconnection or a manual retry can resume work. Keep the latest 200 completed, cancelled or superseded tasks, plus each partition's latest attention state.
+- Pausing stops later batches and preserves committed data. Incremental work resumes from its cursor; full builds restart. Service shutdown or disconnection may wait for the current system call to return.
+- Before running this command in an administrator terminal, explicitly authorize creating, changing and formatting the new test VHD and resetting its journal. Existing directories are rejected. The script unmounts its disk and removes the temporary service, retaining reports and test data.
+
+```powershell
+.\scripts\verify-service.ps1 -OwnerSid 'S-1-5-21-your-normal-user-SID' -SyncVhdDirectory 'D:\tmp\StashFinder-M3-new-directory' -HoldSeconds 600
+```
+
+The script covers automatic builds, directory renames and hard links, incremental deletion, policy and pause controls, SCM restart, remounting with a new letter, journal replacement and post-format history. Results are in `.local/sync-verification.json`. A VHD does not replace physical USB surprise-removal or sleep/resume tests.
 
 To build and launch without a development server:
 
@@ -68,7 +92,7 @@ npm --prefix ui run tauri -- build --debug --no-bundle
 4. Open file search. Matching is case-insensitive and includes paths by default: `aaa` matches `aaa\bbb.exe`; `aaa bbb` requires both words in either order; `"aaa bbb"` matches consecutive text. Filename-only mode and partition filters are available. Drive-letter terms match current online mounts only.
 5. Detach the test disk, refresh devices, then search or restart the service. Partition names, relative paths, index timestamps and offline status must persist. Online describes partition state, not a guarantee that each snapshot entry still exists unchanged.
 
-Search returns at most the first 200 results in a deterministic order and indicates when more exist; it does not provide an exact total or global sorting. Type filters, regex, `dupe` expressions, automatic incremental synchronization, exFAT/FAT32 indexing and file operations on real results are not implemented. Reparse points are recorded without traversing targets; hard links retain multiple paths. File contents are not read. Large caches and no-match queries still need further performance work.
+Search returns at most the first 200 results in a deterministic order and indicates when more exist; it does not provide an exact total or global sorting. Type filters, regex, `dupe` expressions, exFAT/FAT32 indexing and file operations on real results are not implemented. Reparse points are recorded without traversing targets; hard links retain multiple paths. File contents are not read. Large caches and no-match queries still need further performance work.
 
 Build generations currently remain in partition databases, so repeated rebuilding increases database size; automatic reclamation is not implemented. Healthy local snapshots remain searchable when device access or identity is uncertain, with the connection issue shown instead of online status.
 

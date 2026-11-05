@@ -94,7 +94,7 @@ export default function App() {
   }
 
   return (
-    <main>
+    <div className="development-app">
       <header>
         <span className="wordmark">
           StashFinder<span className="dot">.</span>
@@ -259,6 +259,6 @@ export default function App() {
         </div>
       )}
       <footer>仅用于可丢弃样本。拖出仅复制。</footer>
-    </main>
+    </div>
   );
 }

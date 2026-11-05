@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { indexRequest, type IndexStatus } from "./index-api";
 
-const labels: Record<string, string> = {
+export const indexLabels: Record<string, string> = {
   loading: "恢复索引中",
+  building: "准备索引",
   not_indexed: "尚未索引",
   queued: "等待索引",
   enumerating: "读取 NTFS 记录",
@@ -11,6 +12,9 @@ const labels: Record<string, string> = {
   ready: "索引已建立",
   snapshot: "扫描快照 · 待校验",
   failed: "索引未完成",
+  syncing: "同步文件变更",
+  needs_validation: "索引需要校验",
+  waiting: "等待接入／恢复",
 };
 const running = new Set([
   "loading",
@@ -19,15 +23,23 @@ const running = new Set([
   "scanning",
   "replaying",
   "building",
+  "syncing",
+  "waiting",
 ]);
 export default function IndexControls({
   partitionId,
   name,
   eligible,
+  onStatus,
 }: {
   partitionId: string;
   name: string;
   eligible: boolean;
+  onStatus?: (
+    partitionId: string,
+    status: IndexStatus | null,
+    error: string,
+  ) => void;
 }) {
   const [status, setStatus] = useState<IndexStatus | null>(null);
   const [error, setError] = useState("");
@@ -38,6 +50,9 @@ export default function IndexControls({
   const [consent, setConsent] = useState(false);
   const [sending, setSending] = useState(false);
   const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    onStatus?.(partitionId, status, error);
+  }, [partitionId, status, error, onStatus]);
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     let active = true;
@@ -55,7 +70,11 @@ export default function IndexControls({
       }, 1500);
     }
     function fail(e: unknown) {
-      if (active) setError(String(e));
+      if (!active) return;
+      setError(String(e));
+      timer = window.setTimeout(() => {
+        void poll().catch(fail);
+      }, 1500);
     }
     void poll().catch(fail);
     return () => {
@@ -72,10 +91,11 @@ export default function IndexControls({
   const busy = !!status && running.has(status.phase);
   async function submit(cancel = false) {
     if (sending) return;
+    if (cancel && !status?.task_id) return;
     setSending(true);
     const success = await indexRequest(
       cancel
-        ? "index_cancel"
+        ? { task_cancel: { id: status!.task_id! } }
         : { index_start: { partition_id: partitionId, mode } },
     ).then(
       () => true,
@@ -93,7 +113,11 @@ export default function IndexControls({
   return (
     <div className="index-controls">
       <span>
-        {status ? labels[status.phase] || status.phase : "正在读取索引"}
+        {error
+          ? "索引状态不可用"
+          : status
+            ? indexLabels[status.phase] || status.phase
+            : "正在读取索引"}
       </span>
       {status?.completed != null && !busy && status.phase !== "failed" && (
         <small>
@@ -117,7 +141,7 @@ export default function IndexControls({
       )}
       {busy && status?.phase !== "loading" ? (
         <button
-          disabled={sending}
+          disabled={sending || !status?.task_id}
           aria-label={`取消索引 ${name}`}
           onClick={() => void submit(true)}
         >

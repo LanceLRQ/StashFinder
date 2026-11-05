@@ -77,7 +77,10 @@ impl Assets {
                             ensure!(!duplicate(current, &fresh), "设备身份冲突");
                             let existing = db.list()?;
                             ensure!(
-                                !existing.iter().any(|r| related(&r.observation, current)),
+                                !existing
+                                    .iter()
+                                    .any(|r| r.state != "historical"
+                                        && related(&r.observation, current)),
                                 "分区已登记或需要确认归属，请刷新"
                             );
                             let row = db.prepare(current, name)?;
@@ -236,7 +239,9 @@ fn build_snapshot(
             mounts: Vec::new(),
             error: None,
         };
-        if discovered && matches.len() > 1 {
+        if row.state == "historical" {
+            asset.connection = "historical".into();
+        } else if discovered && matches.len() > 1 {
             asset.connection = "uncertain".into();
             asset.error = Some("多个设备匹配此登记，未更新原记录".into());
         } else if discovered && let Some(current) = matches.first() {
@@ -261,9 +266,14 @@ fn build_snapshot(
                         }
                     }
                     IdentityMatch::FilesystemChanged => {
-                        asset.connection = "changed".into();
-                        asset.error =
-                            Some("文件系统已变化，保留旧记录；历史管理在后续阶段提供".into());
+                        if update && row.state == "ready" {
+                            db.archive(&row.partition_id)?;
+                            row = db.get(&row.partition_id)?;
+                            asset.connection = "historical".into();
+                        } else {
+                            asset.connection = "changed".into();
+                            asset.error = Some("文件系统已变化，旧索引保留".into());
+                        }
                     }
                     _ => {
                         asset.connection = "uncertain".into();
@@ -282,7 +292,9 @@ fn build_snapshot(
         observations
             .iter()
             .map(|o| {
-                let registered = rows.iter().any(|r| related(&r.observation, o));
+                let registered = assets.iter().any(|a| {
+                    a.registration.state != "historical" && related(&a.registration.observation, o)
+                });
                 let blocked = if duplicate(o, observations) {
                     Some("设备身份冲突".into())
                 } else if registered {

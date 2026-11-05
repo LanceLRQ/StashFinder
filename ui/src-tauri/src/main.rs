@@ -5,6 +5,36 @@ use serde::Serialize;
 use stashfinder_windows::{ipc, shell};
 use std::{path::PathBuf, sync::Mutex};
 use tauri::{AppHandle, Manager, State};
+mod preferences;
+
+#[tauri::command]
+fn preferences_get(app: AppHandle) -> Result<preferences::Preferences, String> {
+    let path = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("preferences.json");
+    preferences::read(&path).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn preferences_set(
+    app: AppHandle,
+    preferences: preferences::Preferences,
+) -> Result<preferences::Preferences, String> {
+    let path = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("preferences.json");
+    preferences::write(&path, &preferences).map_err(|e| format!("{e:#}"))?;
+    Ok(preferences)
+}
+
+#[tauri::command]
+fn app_version(app: AppHandle) -> String {
+    app.package_info().version.to_string()
+}
 
 #[derive(Clone, Serialize)]
 struct Sample {
@@ -51,7 +81,11 @@ async fn index_request(
 ) -> Result<stashfinder_core::Response, String> {
     match action {
         stashfinder_core::Action::IndexStart { .. }
-        | stashfinder_core::Action::IndexCancel
+        | stashfinder_core::Action::TaskCancel { .. }
+        | stashfinder_core::Action::TaskRetry { .. }
+        | stashfinder_core::Action::TaskPage { .. }
+        | stashfinder_core::Action::AutoUpdate { .. }
+        | stashfinder_core::Action::PartitionPause { .. }
         | stashfinder_core::Action::IndexState { .. }
         | stashfinder_core::Action::SearchStart(_)
         | stashfinder_core::Action::SearchPage { .. }
@@ -279,6 +313,9 @@ fn main() {
     tauri::Builder::default()
         .manage(Samples::default())
         .invoke_handler(tauri::generate_handler![
+            preferences_get,
+            preferences_set,
+            app_version,
             service_status,
             asset_snapshot,
             asset_command,
@@ -291,7 +328,7 @@ fn main() {
             edit_samples
         ])
         .run(tauri::generate_context!())
-        .expect("failed to run StashFinder development window");
+        .expect("failed to run StashFinder");
 }
 
 #[cfg(test)]

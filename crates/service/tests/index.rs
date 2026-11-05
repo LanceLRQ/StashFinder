@@ -4,6 +4,176 @@ use stashfinder_store::{search::SearchIndex, volume::Volume};
 use stashfinder_windows::ntfs::{DirectoryEntry, Journal, NativeObject, UsnPage, UsnRecord};
 use std::{cell::Cell, sync::atomic::AtomicBool};
 
+struct Delta {
+    first: i64,
+    next: i64,
+    journal_id: u64,
+    unreadable: bool,
+}
+impl Source for Delta {
+    fn root_id(&self) -> u64 {
+        5
+    }
+    fn journal(&self) -> anyhow::Result<Option<Journal>> {
+        Ok(Some(Journal {
+            id: self.journal_id,
+            first: self.first,
+            next: self.next,
+        }))
+    }
+    fn create_journal(&self) -> anyhow::Result<Journal> {
+        panic!("incremental must not create journals")
+    }
+    fn inventory(
+        &self,
+        _: &AtomicBool,
+        _: &mut dyn FnMut(&[UsnRecord]) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        panic!("incremental must not enumerate MFT")
+    }
+    fn directory(
+        &self,
+        _: u64,
+        _: &AtomicBool,
+        _: &mut dyn FnMut(&[DirectoryEntry]) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        panic!("incremental must not scan directories")
+    }
+    fn object(&self, id: u64) -> anyhow::Result<Option<NativeObject>> {
+        anyhow::ensure!(!self.unreadable, "device disconnected");
+        assert_eq!(id, 20);
+        Ok(Some(NativeObject {
+            entry: entry(20, "later.txt", false, 42),
+            links: vec![
+                (5, "later.txt".encode_utf16().collect()),
+                (5, "alias.txt".encode_utf16().collect()),
+            ],
+        }))
+    }
+    fn changes(&self, journal: u64, start: i64) -> anyhow::Result<UsnPage> {
+        assert_eq!((journal, start), (1, 200));
+        Ok(UsnPage {
+            next: 300,
+            records: vec![UsnRecord {
+                id: 20,
+                parent: 5,
+                usn: 250,
+                reason: 0x2000,
+                attributes: 0,
+                name: vec![65],
+            }],
+        })
+    }
+}
+
+#[test]
+fn incremental_survives_restart_and_does_not_rescan_or_replay_twice() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("v.sqlite");
+    let mut db = Volume::create(&file, "{}").unwrap();
+    build(
+        &Fixture {
+            changed: Cell::new(false),
+            journal: true,
+            broken: false,
+            cancel: false,
+        },
+        &mut db,
+        IndexMode::Journal,
+        &AtomicBool::new(false),
+        &mut |_| {},
+    )
+    .unwrap();
+    let generation = db.active_generation().unwrap();
+    drop(db);
+    let mut db = Volume::open(&file).unwrap();
+    let source = Delta {
+        first: 0,
+        next: 300,
+        journal_id: 1,
+        unreadable: false,
+    };
+    assert!(
+        stashfinder_service::index::synchronize(&source, &mut db, &AtomicBool::new(false)).unwrap()
+    );
+    assert_eq!(db.active_generation().unwrap(), generation);
+    assert_eq!(db.cursor(generation.unwrap()).unwrap().unwrap().next, 300);
+    assert!(
+        !stashfinder_service::index::synchronize(&source, &mut db, &AtomicBool::new(false))
+            .unwrap()
+    );
+    let index = SearchIndex::load(&db).unwrap().unwrap();
+    let hits = index
+        .search(
+            &Query::parse(".txt", false).unwrap(),
+            &[],
+            200,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(hits.rows.len(), 2);
+    assert!(hits.rows.iter().all(|r| r.size.as_deref() == Some("42")));
+    assert!(hits.rows.iter().any(|r| r.path == "later.txt"));
+    assert!(hits.rows.iter().any(|r| r.path == "alias.txt"));
+    assert!(!index.needs_validation);
+}
+
+#[test]
+fn incremental_rejects_gap_read_failure_and_cancel_without_advancing_cursor() {
+    for (first, next, journal_id, unreadable, cancel) in [
+        (201, 300, 1, false, false),
+        (0, 199, 1, false, false),
+        (0, 300, 2, false, false),
+        (0, 300, 1, true, false),
+        (0, 300, 1, false, true),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let mut db = Volume::create(&temp.path().join("v.sqlite"), "{}").unwrap();
+        build(
+            &Fixture {
+                changed: Cell::new(false),
+                journal: true,
+                broken: false,
+                cancel: false,
+            },
+            &mut db,
+            IndexMode::Journal,
+            &AtomicBool::new(false),
+            &mut |_| {},
+        )
+        .unwrap();
+        let generation = db.active_generation().unwrap().unwrap();
+        assert!(
+            stashfinder_service::index::synchronize(
+                &Delta {
+                    first,
+                    next,
+                    journal_id,
+                    unreadable
+                },
+                &mut db,
+                &AtomicBool::new(cancel)
+            )
+            .is_err()
+        );
+        assert_eq!(db.cursor(generation).unwrap().unwrap().next, 200);
+        let index = SearchIndex::load(&db).unwrap().unwrap();
+        assert_eq!(
+            index
+                .search(
+                    &Query::parse("after.txt", false).unwrap(),
+                    &[],
+                    200,
+                    &AtomicBool::new(false)
+                )
+                .unwrap()
+                .rows
+                .len(),
+            1
+        );
+    }
+}
+
 struct Fixture {
     changed: Cell<bool>,
     journal: bool,

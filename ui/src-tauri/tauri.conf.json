@@ -10,8 +10,21 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "StashFinder · 开发验证", "width": 920, "height": 720, "minWidth": 640, "minHeight": 500, "dragDropEnabled": false }],
-    "security": { "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-src 'none'" }
+    "windows": [
+      {
+        "title": "StashFinder",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1000,
+        "minHeight": 650,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-src 'none'"
+    }
   },
-  "bundle": { "active": false }
+  "bundle": {
+    "active": false
+  }
 }

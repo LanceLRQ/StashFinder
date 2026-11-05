@@ -1,77 +1,63 @@
-:root {
-  font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
-  color: #24302e;
-  background: #f5f5f0;
-  font-synthesis: none;
-  font-weight: 400;
-  line-height: 1.6;
-}
-* {
-  box-sizing: border-box;
-}
-body {
-  margin: 0;
-}
-main {
+.development-app {
   max-width: 1040px;
   margin: auto;
   padding: 26px 36px;
 }
-header {
+.development-app header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid #d4d9d2;
   padding-bottom: 17px;
 }
-.wordmark {
+.development-app .wordmark {
   font-size: 22px;
   font-weight: 700;
   letter-spacing: -0.7px;
 }
-.dot {
+.development-app .dot {
   color: #236856;
 }
-.badge {
+.development-app .badge {
   font-size: 12px;
   color: #53625d;
   border: 1px solid #c5cec5;
   padding: 2px 8px;
 }
-h1 {
+.development-app h1 {
   font-size: 25px;
   margin: 27px 0 4px;
   font-weight: 600;
 }
-.intro {
+.development-app .intro {
   margin: 0 0 24px;
   color: #56635e;
   font-size: 13px;
 }
-section {
+.development-app section {
   background: #fff;
   border: 1px solid #d4d9d2;
   padding: 18px 20px;
   margin: 16px 0;
 }
-.section-heading {
+.development-app .section-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
-h2 {
+.development-app h2 {
   font-size: 15px;
   margin: 0;
   font-weight: 600;
 }
-.number {
+.development-app .number {
   color: #7a8980;
   font-size: 12px;
   padding-right: 12px;
   font-family: Consolas, monospace;
 }
-button {
+.development-app button {
   border: 1px solid #bdc8c0;
   background: #fff;
   border-radius: 4px;
@@ -81,19 +67,19 @@ button {
   padding: 7px 13px;
   cursor: pointer;
 }
-button:hover:not(:disabled) {
+.development-app button:hover:not(:disabled) {
   background: #edf3ed;
 }
-button:focus-visible,
-.sample-list:focus-visible {
+.development-app button:focus-visible,
+.development-app .sample-list:focus-visible {
   outline: 2px solid #236856;
   outline-offset: 3px;
 }
-button:disabled {
+.development-app button:disabled {
   opacity: 0.45;
   cursor: default;
 }
-.connection {
+.development-app .connection {
   display: flex;
   gap: 18px;
   font-size: 13px;
@@ -102,18 +88,18 @@ button:disabled {
   border-top: 1px solid #e9ece7;
   overflow-wrap: anywhere;
 }
-.connection strong {
+.development-app .connection strong {
   white-space: nowrap;
 }
-.success {
+.development-app .success {
   color: #236856;
 }
-section > p,
-footer {
+.development-app section > p,
+.development-app footer {
   font-size: 12px;
   color: #5f6d65;
 }
-.empty {
+.development-app .empty {
   padding: 28px 10px;
   text-align: center;
   background: #f8f9f6;
@@ -121,55 +107,55 @@ footer {
   color: #657267;
   border: 1px dashed #d4d9d2;
 }
-.file-browser {
+.development-app .file-browser {
   border: 1px solid #d4d9d2;
   user-select: none;
 }
-.file-columns,
-.sample {
+.development-app .file-columns,
+.development-app .sample {
   display: grid;
   grid-template-columns: minmax(160px, 1fr) 55px minmax(120px, 1.6fr);
   align-items: center;
   gap: 12px;
   padding: 7px 10px;
 }
-.file-columns {
+.development-app .file-columns {
   background: #f5f6f3;
   border-bottom: 1px solid #d4d9d2;
   font-size: 12px;
   color: #5f6d65;
 }
-.sample {
+.development-app .sample {
   min-height: 36px;
   border: 1px solid transparent;
   cursor: default;
 }
-.sample:hover {
+.development-app .sample:hover {
   background: #f2f6f3;
 }
-.sample[aria-selected="true"] {
+.development-app .sample[aria-selected="true"] {
   background: #dfeee8;
   border-color: #c6dfd3;
 }
-.sample-list:focus .sample.current {
+.development-app .sample-list:focus .sample.current {
   outline: 1px solid #668a78;
   outline-offset: -1px;
 }
-.sample-name {
+.development-app .sample-name {
   min-width: 0;
   font-size: 13px;
 }
-.sample-name,
-.sample-path {
+.development-app .sample-name,
+.development-app .sample-path {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.sample-path {
+.development-app .sample-path {
   color: #68766c;
   font-size: 11px;
 }
-.file-menu {
+.development-app .file-menu {
   position: fixed;
   z-index: 1;
   width: 165px;
@@ -178,42 +164,42 @@ footer {
   border: 1px solid #bdc8c0;
   box-shadow: 0 3px 10px #0002;
 }
-.file-menu button {
+.development-app .file-menu button {
   display: flex;
   justify-content: space-between;
   width: 100%;
   border: 0;
 }
-.file-menu span {
+.development-app .file-menu span {
   color: #68766c;
 }
-.kind {
+.development-app .kind {
   font-size: 11px;
   color: #68766c;
 }
-.actions {
+.development-app .actions {
   display: flex;
   gap: 8px;
   align-items: center;
   margin-top: 15px;
 }
-.actions > span {
+.development-app .actions > span {
   flex: 1;
   font-size: 12px;
   color: #68766c;
 }
-.message {
+.development-app .message {
   margin: 12px 0 0;
   min-height: 20px;
   overflow-wrap: anywhere;
 }
-.error {
+.development-app .error {
   color: #a23226;
 }
-footer {
+.development-app footer {
   margin-top: 20px;
 }
-.dialog-backdrop {
+.development-app .dialog-backdrop {
   position: fixed;
   inset: 0;
   background: #0005;
@@ -221,7 +207,7 @@ footer {
   place-items: center;
   z-index: 2;
 }
-.operation-dialog {
+.development-app .operation-dialog {
   background: white;
   border: 1px solid #bdc8c0;
   padding: 24px;
@@ -230,27 +216,27 @@ footer {
   overflow: auto;
   font-size: 13px;
 }
-.operation-dialog ul {
+.development-app .operation-dialog ul {
   overflow-wrap: anywhere;
   padding-left: 20px;
 }
-.operation-dialog input {
+.development-app .operation-dialog input {
   display: block;
   width: 100%;
   margin: 8px 0 20px;
   padding: 8px;
   font: inherit;
 }
-.dialog-actions {
+.development-app .dialog-actions {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
 }
 @media (max-width: 700px) {
-  main {
+  .development-app {
     padding: 20px;
   }
-  .connection {
+  .development-app .connection {
     flex-wrap: wrap;
     gap: 5px 15px;
   }

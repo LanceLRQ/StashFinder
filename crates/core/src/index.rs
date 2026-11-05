@@ -10,6 +10,8 @@ pub enum IndexMode {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct IndexStatus {
+    #[serde(default)]
+    pub task_id: Option<String>,
     pub generation: Option<i64>,
     pub active_generation: Option<i64>,
     pub phase: String,

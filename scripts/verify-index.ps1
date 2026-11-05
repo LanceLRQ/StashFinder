@@ -20,7 +20,7 @@ function Send-Action($Action) {
     $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', 'StashFinder.M0', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification)
     try {
         $pipe.Connect(3000)
-        $bytes = [Text.Encoding]::UTF8.GetBytes((@{ version = 3; id = 1; action = $Action } | ConvertTo-Json -Depth 8 -Compress))
+        $bytes = [Text.Encoding]::UTF8.GetBytes((@{ version = 4; id = 1; action = $Action } | ConvertTo-Json -Depth 8 -Compress))
         $writer = [IO.BinaryWriter]::new($pipe)
         $writer.Write([int]$bytes.Length); $writer.Write($bytes); $writer.Flush()
         $reader = [IO.BinaryReader]::new($pipe)
@@ -97,6 +97,7 @@ function Compare-Fixture($Expected, $Actual) {
 }
 
 try {
+    Send-Action @{auto_update=@{enabled=$false}}
     $createScript = Join-Path $Directory 'create.txt'
     @("create vdisk file=`"$image`" maximum=512 type=expandable", "select vdisk file=`"$image`"", 'attach vdisk', 'exit') | Set-Content -LiteralPath $createScript -Encoding ASCII
     & diskpart.exe /s $createScript | Set-Content -LiteralPath (Join-Path $Directory 'diskpart.log')
@@ -181,9 +182,10 @@ try {
     $report.checks += 'Changes during scan replay directory rename, hard-link size, create and delete'
     $active = $state.active_generation
     Send-Action @{ index_start = @{ partition_id = $assetId; mode = 'journal' } }
-    Send-Action 'index_cancel'
+    $running = Send-Action @{ index_state = @{ partition_id = $assetId } }
+    Send-Action @{ task_cancel = @{ id = $running.task_id } }
     $state = Wait-Index $assetId
-    if ($state.phase -ne 'failed' -or $state.active_generation -ne $active) { throw 'Cancellation lost the old generation.' }
+    if ($state.phase -notin @('failed','ready') -or $state.active_generation -ne $active) { throw 'Cancellation lost the old generation.' }
     Compare-Fixture $expected (Search 'fixture' $assetId)
     $report.checks += 'Cancellation preserves the published searchable generation'
     $watch.Restart()

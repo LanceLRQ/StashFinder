@@ -6,7 +6,7 @@ StashFinder is a personal disk catalog and file search tool for Windows 10/11. I
 
 ## Status
 
-The project is in M2 development, providing partition registration, manual NTFS indexing and basic offline search. Search supports paths, multiple keywords, filename-only matching and partition filters; results are local index snapshots and the UI is read-only. Device state requires manual refresh and file changes require manual rebuilding. Automatic synchronization, indexing other filesystems and advanced search are not available, and there is no everyday installer yet. The development view retains the M0 file bridge and synthetic benchmarks.
+The project is in M3 development, providing a desktop shell, partition registration, automatic NTFS indexing and USN updates, task management and basic offline search. Search supports paths, multiple keywords, filename-only matching and partition filters; results are local index snapshots and the file list is read-only. Only registered partitions are updated. Journal gaps trigger rebuilding while preserving the old index, and records from reformatted filesystems remain historical. Continuous indexing for other filesystems, advanced search and an everyday installer are not available yet. The development view retains the M0 file bridge and synthetic benchmarks.
 
 See the [development guide](docs/development.en.md) for build and validation steps and [third-party notices](docs/third-party.en.md) for dependency sources.
 

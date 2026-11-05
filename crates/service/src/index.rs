@@ -324,3 +324,111 @@ fn collect_object(
     objects.push(object(&current.entry));
     Ok(())
 }
+
+/// Returns false when the persisted journal boundary already matches the source.
+pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool) -> Result<bool> {
+    let generation = db.active_generation()?.context("尚无活动索引")?;
+    let result = (|| -> Result<bool> {
+        ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
+        let cursor = db
+            .cursor(generation)?
+            .context("索引没有 USN 游标，需要重建")?;
+        let journal_id = u64::from_le_bytes(
+            cursor
+                .journal
+                .as_slice()
+                .try_into()
+                .context("USN 日志标识无效")?,
+        );
+        let boundary = source.journal()?.context("USN 日志不可用")?;
+        ensure!(
+            boundary.id == journal_id
+                && cursor.next >= boundary.first
+                && cursor.next <= boundary.next,
+            "USN 日志发生断档，需要重新建库"
+        );
+        source.verify()?;
+        if cursor.next == boundary.next {
+            if db.index_status()?.phase != "ready" {
+                db.finish_incremental(generation)?;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+        let mut next = cursor.next;
+        // A bounded turn yields to other partitions on a continuously busy volume.
+        for _ in 0..64 {
+            ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
+            let page = source.changes(journal_id, next)?;
+            ensure!(
+                page.next > next as u64 && page.next <= i64::MAX as u64,
+                "USN 回放未前进"
+            );
+            let mut ids = BTreeMap::new();
+            for record in page.records {
+                ensure!(
+                    record.usn >= next && record.usn < page.next as i64,
+                    "USN 记录范围无效"
+                );
+                *ids.entry(record.id).or_insert(0u32) |= record.reason;
+            }
+            let mut objects = Vec::new();
+            let mut entries = Vec::new();
+            let mut removed = Vec::new();
+            let mut added = HashSet::new();
+            for (id, reason) in ids {
+                ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
+                if id & 0x0000ffffffffffff < 16 && id != source.root_id() {
+                    continue;
+                }
+                match source
+                    .object(id)
+                    .with_context(|| format!("读取变更对象 {id:016x}"))?
+                {
+                    Some(current) => collect_object(
+                        source,
+                        db,
+                        generation,
+                        current,
+                        &mut objects,
+                        &mut entries,
+                        &mut added,
+                    )?,
+                    None if reason & 0x200 != 0 => removed.push(id.to_le_bytes().to_vec()),
+                    None => anyhow::bail!("文件 {id:016x} 未读到，但没有删除证据"),
+                }
+            }
+            let end = source.journal()?.context("USN 日志已失效")?;
+            ensure!(
+                end.id == journal_id && next >= end.first && page.next <= end.next as u64,
+                "USN 日志发生断档"
+            );
+            source.verify()?;
+            ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
+            next = page.next as i64;
+            db.apply_incremental(
+                generation,
+                Changes {
+                    objects: &objects,
+                    entries: &entries,
+                    removed: &removed,
+                    pending: &[],
+                    cursor: Some(&Cursor {
+                        journal: journal_id.to_le_bytes().to_vec(),
+                        next,
+                    }),
+                    replace_links: true,
+                },
+            )?;
+            if next == end.next {
+                db.finish_incremental(generation)?;
+                return Ok(true);
+            }
+        }
+        Ok(true)
+    })();
+    if let Err(error) = &result {
+        db.mark_stale(generation, &format!("{error:#}"))?;
+    }
+    result
+}

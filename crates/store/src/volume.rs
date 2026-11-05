@@ -194,6 +194,20 @@ impl Volume {
     }
 
     pub fn apply_changes(&mut self, generation: i64, changes: Changes<'_>) -> Result<()> {
+        self.commit_changes(generation, changes, false)
+    }
+
+    pub fn apply_incremental(&mut self, generation: i64, changes: Changes<'_>) -> Result<()> {
+        ensure!(changes.cursor.is_some(), "增量事务缺少游标");
+        self.commit_changes(generation, changes, true)
+    }
+
+    fn commit_changes(
+        &mut self,
+        generation: i64,
+        changes: Changes<'_>,
+        incremental: bool,
+    ) -> Result<()> {
         let Changes {
             objects,
             entries,
@@ -204,8 +218,8 @@ impl Volume {
         } = changes;
         let tx = self.db.transaction()?;
         let writable: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM generations WHERE id=?1) AND NOT EXISTS(SELECT 1 FROM index_state WHERE active_generation=?1)",
-            [generation], |r| r.get(0),
+            "SELECT EXISTS(SELECT 1 FROM generations WHERE id=?1) AND (EXISTS(SELECT 1 FROM index_state WHERE active_generation=?1)=?2)",
+            params![generation, incremental], |r| r.get(0),
         )?;
         ensure!(writable, "索引代次不存在或已经发布");
         tx.execute(
@@ -251,6 +265,14 @@ impl Volume {
         }
         if let Some(cursor) = cursor {
             ensure!(cursor.next >= 0, "USN 游标无效");
+            if incremental {
+                let valid: bool = tx.query_row(
+                    "SELECT journal=?2 AND next_usn<=?3 FROM generations WHERE id=?1",
+                    params![generation, cursor.journal, cursor.next],
+                    |r| r.get(0),
+                )?;
+                ensure!(valid, "增量日志或游标不连续");
+            }
             ensure!(
                 tx.execute(
                     "UPDATE generations SET journal=?1,next_usn=?2 WHERE id=?3",
@@ -259,8 +281,31 @@ impl Volume {
                 "索引代次不存在"
             );
         }
+        if incremental {
+            tx.execute(
+                "UPDATE generations SET phase='syncing',error=NULL WHERE id=?1",
+                [generation],
+            )?;
+        }
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn mark_stale(&self, generation: i64, message: &str) -> Result<()> {
+        self.db.execute(
+            "UPDATE generations SET phase='needs_validation',error=?2 WHERE id=?1",
+            params![generation, message],
+        )?;
+        Ok(())
+    }
+
+    pub fn finish_incremental(&mut self, generation: i64) -> Result<()> {
+        ensure!(
+            self.active_generation()? == Some(generation),
+            "活动代次已变化"
+        );
+        self.complete(generation)?;
+        self.publish(generation)
     }
 
     pub fn complete(&self, generation: i64) -> Result<()> {
@@ -362,6 +407,7 @@ impl Volume {
             |r| r.get::<_, i64>(0),
         )?;
         Ok(stashfinder_core::index::IndexStatus {
+            task_id: None,
             generation: Some(generation),
             active_generation: active,
             phase,

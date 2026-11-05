@@ -16,6 +16,7 @@ tauri = { version = "=2.12.5", features = [] }
 stashfinder-core = { path = "../../crates/core" }
 stashfinder-windows = { path = "../../crates/windows" }
 serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
 tempfile.workspace = true

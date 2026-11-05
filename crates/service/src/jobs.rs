@@ -1,27 +1,19 @@
-use anyhow::{Context, Result, ensure};
+use anyhow::{Result, ensure};
 use stashfinder_core::{
-    assets::{Asset, IdentityMatch, Snapshot},
+    assets::{Asset, Snapshot},
     index::*,
     search::Query,
 };
 use stashfinder_store::{catalog::Catalog, search::SearchIndex, volume::Volume};
-use stashfinder_windows::{ntfs::VolumeReader, volumes};
 use std::{
-    collections::HashMap,
     path::PathBuf,
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc::{SyncSender, sync_channel},
     },
     thread,
 };
 
-type Cache = Arc<Mutex<HashMap<String, Arc<SearchIndex>>>>;
-struct Scan {
-    asset: Asset,
-    mode: IndexMode,
-}
 struct SearchJob {
     id: u64,
     query: Query,
@@ -45,10 +37,7 @@ struct Mailbox {
 }
 
 pub struct Indexes {
-    sender: SyncSender<Scan>,
-    busy: Arc<AtomicBool>,
-    cancel: Arc<AtomicBool>,
-    states: Arc<Mutex<HashMap<String, IndexStatus>>>,
+    pub runner: crate::supervisor::Runner,
     mailbox: Arc<(Mutex<Mailbox>, Condvar)>,
     search_state: Arc<Mutex<SearchState>>,
     sequence: AtomicU64,
@@ -56,133 +45,9 @@ pub struct Indexes {
 
 impl Indexes {
     pub fn start(root: PathBuf) -> Self {
-        let states = Arc::new(Mutex::new(HashMap::new()));
-        let caches: Cache = Arc::new(Mutex::new(HashMap::new()));
-        let busy = Arc::new(AtomicBool::new(true));
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (sender, receiver) = sync_channel::<Scan>(1);
-        let worker_root = root.clone();
-        let worker_states = states.clone();
-        let worker_caches = caches.clone();
-        let worker_busy = busy.clone();
-        let worker_cancel = cancel.clone();
-        thread::spawn(move || {
-            if let Ok(catalog) = Catalog::open(&worker_root)
-                && let Ok(rows) = catalog.list()
-            {
-                for row in rows {
-                    let loaded = (|| -> Result<IndexStatus> {
-                        catalog.health(&row.filesystem_id)?;
-                        let db = Volume::open(&catalog.volume_path(&row.filesystem_id)?)?;
-                        let status = db.index_status()?;
-                        if status.phase == "building" {
-                            db.fail_generation(
-                                status.generation.context("构建代次缺失")?,
-                                "上次索引中断，请重新建立索引",
-                            )?;
-                        }
-                        if let Some(index) = SearchIndex::load(&db)? {
-                            worker_caches
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .insert(row.partition_id.clone(), Arc::new(index));
-                        }
-                        db.index_status()
-                    })();
-                    worker_states
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .insert(
-                            row.partition_id,
-                            loaded.unwrap_or_else(|e| IndexStatus {
-                                phase: "failed".into(),
-                                error: Some(format!("{e:#}")),
-                                ..Default::default()
-                            }),
-                        );
-                }
-            }
-            worker_busy.store(false, Ordering::Release);
-            while let Ok(job) = receiver.recv() {
-                let partition = job.asset.registration.partition_id.clone();
-                let mut completed_status = None;
-                let result = (|| -> Result<()> {
-                    let mut catalog = Catalog::open(&worker_root)?;
-                    let registered = catalog.get(&partition)?;
-                    ensure!(
-                        registered.filesystem_id == job.asset.registration.filesystem_id,
-                        "登记已变化"
-                    );
-                    catalog.health(&registered.filesystem_id)?;
-                    let found = volumes::discover()?;
-                    let matching = found
-                        .iter()
-                        .filter(|o| {
-                            registered.observation.identity.compare(&o.identity)
-                                == IdentityMatch::Same
-                        })
-                        .collect::<Vec<_>>();
-                    ensure!(
-                        matching.len() == 1 && matching[0].eligible(),
-                        "分区已断开、身份变化或无法唯一识别"
-                    );
-                    let current = matching[0];
-                    let source = VolumeReader::open(&current.candidate_id)?;
-                    ensure!(
-                        registered
-                            .observation
-                            .identity
-                            .serial
-                            .as_ref()
-                            .is_some_and(|s| s.source == "ntfs64"
-                                && s.value == format!("{:016x}", source.volume_serial())),
-                        "NTFS 序列号与登记不符"
-                    );
-                    let mut db = Volume::open(&catalog.volume_path(&registered.filesystem_id)?)?;
-                    let built = crate::index::build(
-                        &source,
-                        &mut db,
-                        job.mode,
-                        &worker_cancel,
-                        &mut |phase| {
-                            let mut states =
-                                worker_states.lock().unwrap_or_else(|e| e.into_inner());
-                            let state = states.entry(partition.clone()).or_default();
-                            state.phase = phase.into();
-                            state.error = None;
-                        },
-                    );
-                    completed_status = Some(db.index_status()?);
-                    if let Some(index) = SearchIndex::load(&db)? {
-                        worker_caches
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .insert(partition.clone(), Arc::new(index));
-                    }
-                    built?;
-                    let after = volumes::probe(&current.candidate_id);
-                    ensure!(
-                        after.eligible()
-                            && registered.observation.identity.compare(&after.identity)
-                                == IdentityMatch::Same,
-                        "索引后分区身份无法确认"
-                    );
-                    catalog.observe(&partition, &after)?;
-                    Ok(())
-                })();
-                let mut states = worker_states.lock().unwrap_or_else(|e| e.into_inner());
-                let status = states.entry(partition).or_default();
-                if let Some(completed) = completed_status {
-                    *status = completed;
-                }
-                if let Err(error) = result {
-                    status.phase = "failed".into();
-                    status.error = Some(format!("{error:#}"));
-                }
-                // Publish a terminal status and release the slot under the same lock.
-                worker_busy.store(false, Ordering::Release);
-            }
-        });
+        let runner = crate::supervisor::Runner::start(root.clone());
+        let caches = runner.caches();
+        let states = runner.states();
         let mailbox = Arc::new((Mutex::new(Mailbox::default()), Condvar::new()));
         let search_state = Arc::new(Mutex::new(SearchState::default()));
         let work_mailbox = mailbox.clone();
@@ -259,7 +124,12 @@ impl Indexes {
                                         generation: index.generation,
                                         partial: index.partial,
                                         indexed_at: index.indexed_at,
-                                        needs_validation: index.needs_validation,
+                                        needs_validation: index.needs_validation
+                                            || states
+                                                .lock()
+                                                .unwrap_or_else(|e| e.into_inner())
+                                                .get(partition)
+                                                .is_some_and(|s| s.phase != "ready"),
                                         file,
                                     }
                                 }));
@@ -285,10 +155,7 @@ impl Indexes {
             }
         });
         Self {
-            sender,
-            busy,
-            cancel,
-            states,
+            runner,
             mailbox,
             search_state,
             sequence: AtomicU64::new(1),
@@ -296,65 +163,10 @@ impl Indexes {
     }
 
     pub fn scan(&self, partition: &str, mode: IndexMode, snapshot: &Snapshot) -> Result<()> {
-        let asset = snapshot
-            .assets
-            .iter()
-            .find(|a| a.registration.partition_id == partition)
-            .context("分区未登记")?;
-        ensure!(
-            asset.registration.state == "ready"
-                && asset.connection == "online"
-                && asset.error.is_none(),
-            "分区未就绪或身份无法确认"
-        );
-        ensure!(
-            asset
-                .registration
-                .observation
-                .identity
-                .filesystem
-                .as_deref()
-                == Some("NTFS"),
-            "本阶段只支持 NTFS 索引"
-        );
-        ensure!(
-            !self.busy.swap(true, Ordering::AcqRel),
-            "已有索引任务或正在恢复状态"
-        );
-        self.cancel.store(false, Ordering::Release);
-        {
-            let mut states = self.states.lock().unwrap_or_else(|e| e.into_inner());
-            let status = states.entry(partition.into()).or_default();
-            status.phase = "queued".into();
-            status.error = None;
-        }
-        if let Err(error) = self.sender.try_send(Scan {
-            asset: asset.clone(),
-            mode,
-        }) {
-            self.busy.store(false, Ordering::Release);
-            return Err(error.into());
-        }
-        Ok(())
-    }
-    pub fn cancel_scan(&self) {
-        self.cancel.store(true, Ordering::Release);
+        self.runner.scan(partition, mode, snapshot).map(|_| ())
     }
     pub fn status(&self, partition: &str) -> IndexStatus {
-        self.states
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(partition)
-            .cloned()
-            .unwrap_or_else(|| IndexStatus {
-                phase: if self.busy.load(Ordering::Acquire) {
-                    "loading"
-                } else {
-                    "not_indexed"
-                }
-                .into(),
-                ..Default::default()
-            })
+        self.runner.status(partition)
     }
     pub fn search(&self, request: SearchRequest, snapshot: &Snapshot) -> Result<u64> {
         ensure!(
@@ -438,7 +250,6 @@ impl Indexes {
 }
 impl Drop for Indexes {
     fn drop(&mut self) {
-        self.cancel_scan();
         let mut mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
         mailbox.stop = true;
         if let Some(cancel) = &mailbox.cancel {

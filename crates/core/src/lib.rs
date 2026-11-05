@@ -1,12 +1,13 @@
 pub mod assets;
 pub mod index;
 pub mod search;
+pub mod tasks;
 
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 pub const MAX_FRAME: usize = 16 * 1024;
 pub const SNAPSHOT_EXPIRED: &str = "设备快照已更新，请刷新";
 
@@ -46,7 +47,23 @@ pub enum Action {
         partition_id: String,
         mode: index::IndexMode,
     },
-    IndexCancel,
+    TaskCancel {
+        id: String,
+    },
+    TaskRetry {
+        id: String,
+    },
+    TaskPage {
+        version: Option<u64>,
+        offset: usize,
+    },
+    AutoUpdate {
+        enabled: bool,
+    },
+    PartitionPause {
+        partition_id: String,
+        paused: bool,
+    },
     IndexState {
         partition_id: String,
     },
@@ -76,6 +93,7 @@ pub enum Response {
     Index(index::IndexStatus),
     SearchStarted(u64),
     SearchPage(Box<index::SearchPage>),
+    Tasks(Box<tasks::TaskPage>),
     Error(String),
 }
 
