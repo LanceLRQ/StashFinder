@@ -76,11 +76,13 @@ const connectionLabels: Record<string, string> = {
 
 export default function Assets({
   onSearch,
+  onBrowse,
   onSnapshot,
   onIndexStatus,
   activity,
 }: {
   onSearch?: (text: string) => void;
+  onBrowse?: (partition: string) => void;
   onSnapshot?: (snapshot: AssetSnapshot) => void;
   onIndexStatus?: (
     partitionId: string,
@@ -367,7 +369,16 @@ export default function Assets({
                           }
                         >
                           <td>
-                            <strong>{r.name}</strong>
+                            {onBrowse ? (
+                              <button
+                                className="task-name"
+                                onClick={() => onBrowse(r.partition_id)}
+                              >
+                                {r.name}
+                              </button>
+                            ) : (
+                              <strong>{r.name}</strong>
+                            )}
                             {asset.error && (
                               <small className="asset-error">
                                 {asset.error}

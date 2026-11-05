@@ -17,6 +17,7 @@ afterEach(() => {
 });
 const hit = {
   partition_id: "p",
+  filesystem_id: "fs",
   partition_name: "Movies",
   connection: "offline",
   mounts: [],
@@ -25,6 +26,8 @@ const hit = {
   needs_validation: false,
   indexed_at: 1700000000,
   file: {
+    entry: [2],
+    parent: [1],
     object: [1],
     name: "movie.txt",
     path: "aaa\\movie.txt",
@@ -51,6 +54,22 @@ function mockPage(value: object) {
     return { kind: "accepted" };
   });
 }
+
+test("locates an offline result by filesystem and parent identity", async () => {
+  mockPage(page);
+  const locate = vi.fn();
+  render(<Search partitions={[]} onLocate={locate} />);
+  fireEvent.contextMenu((await screen.findByText("movie.txt")).closest("tr")!);
+  fireEvent.click(
+    screen.getByRole("menuitem", { name: "在新标签页浏览所在目录" }),
+  );
+  expect(locate).toHaveBeenCalledWith(
+    expect.objectContaining({
+      filesystem_id: "fs",
+      file: expect.objectContaining({ entry: [2], parent: [1] }),
+    }),
+  );
+});
 
 test("shows offline relative paths, unknown metadata and bounded results without file operations", async () => {
   mockPage(page);

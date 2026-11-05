@@ -164,6 +164,12 @@ pub async fn serve_runtime(
                             .context("索引服务未配置")?
                             .search(request, &assets.snapshot())?,
                     )),
+                    Action::Directory(request) => Ok(Response::Directory(Box::new(
+                        indexes
+                            .context("索引服务未配置")?
+                            .runner
+                            .directory(&request)?,
+                    ))),
                     Action::SearchPage { id, offset } => Ok(Response::SearchPage(Box::new(
                         indexes.context("索引服务未配置")?.page(id, offset)?,
                     ))),

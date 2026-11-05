@@ -12,6 +12,7 @@ export type IndexStatus = {
 };
 export type SearchHit = {
   partition_id: string;
+  filesystem_id: string;
   partition_name: string;
   connection: string;
   mounts: string[];
@@ -20,6 +21,8 @@ export type SearchHit = {
   indexed_at: number | null;
   needs_validation: boolean;
   file: {
+    entry: number[];
+    parent: number[];
     object: number[];
     name: string;
     path: string;

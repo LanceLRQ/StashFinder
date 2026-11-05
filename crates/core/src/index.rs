@@ -23,6 +23,8 @@ pub struct IndexStatus {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchRow {
+    pub entry: Vec<u8>,
+    pub parent: Vec<u8>,
     pub object: Vec<u8>,
     pub name: String,
     pub path: String,
@@ -49,6 +51,7 @@ pub struct SearchRequest {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchHit {
+    pub filesystem_id: String,
     pub partition_id: String,
     pub partition_name: String,
     pub connection: String,

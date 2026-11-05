@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { indexRequest, type SearchHit } from "./index-api";
+import FileDetails from "./FileDetails";
 import "./assets.css";
 import "./search.css";
 
@@ -22,12 +23,24 @@ export default function Search({
   onBack,
   includePath = true,
   request,
+  active = true,
+  onLocate,
 }: {
   partitions: { id: string; name: string }[];
   onBack?: () => void;
   includePath?: boolean;
   request?: { text: string; revision: number };
+  active?: boolean;
+  onLocate?: (hit: SearchHit) => void;
 }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [selected, setSelected] = useState<SearchHit | null>(null);
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    row: SearchHit;
+  } | null>(null);
+  const [preview, setPreview] = useState(false);
   const [text, setText] = useState(request?.text || "");
   const [namesOnly, setNamesOnly] = useState(!includePath);
   const [partition, setPartition] = useState("");
@@ -37,6 +50,9 @@ export default function Search({
   const [unavailable, setUnavailable] = useState<string[]>([]);
   const [more, setMore] = useState(false);
   const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    if (active) input.current?.focus();
+  }, [active, request]);
   useEffect(() => {
     if (request) {
       setText(request.text);
@@ -49,6 +65,8 @@ export default function Search({
     setBusy(true);
     setError("");
     setRows([]);
+    setSelected(null);
+    setMenu(null);
     setUnavailable([]);
     setMore(false);
     async function run() {
@@ -109,6 +127,7 @@ export default function Search({
       {onBack && <button onClick={onBack}>硬盘管理</button>}
       <div className="search-toolbar">
         <input
+          ref={input}
           autoFocus
           type="search"
           aria-label="搜索文件或路径"
@@ -137,6 +156,21 @@ export default function Search({
           仅文件名
         </label>
         <button onClick={() => setRevision((n) => n + 1)}>重新搜索</button>
+        {onLocate && (
+          <details className="view-menu">
+            <summary>视图</summary>
+            <div>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={preview}
+                  onChange={(e) => setPreview(e.target.checked)}
+                />
+                预览窗格
+              </label>
+            </div>
+          </details>
+        )}
         <div className="search-summary" role="status">
           {busy
             ? "正在搜索…"
@@ -160,66 +194,116 @@ export default function Search({
           ))}
         </details>
       )}
-      <div className="asset-table-wrap search-results">
-        <table>
-          <thead>
-            <tr>
-              <th>名称</th>
-              <th>所在目录 / 路径</th>
-              <th>分区</th>
-              <th>大小</th>
-              <th>修改时间</th>
-              <th>状态 / 索引时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={`${row.partition_id}:${row.file.path}`}>
-                <td>
-                  <span
-                    className={`file-mark ${row.file.kind}`}
-                    aria-hidden="true"
-                  />
-                  {row.file.name}
-                </td>
-                <td className="result-path" title={row.file.path}>
-                  {row.connection === "online" && row.mounts[0]
-                    ? row.mounts[0]
-                    : ""}
-                  {row.file.path}
-                </td>
-                <td>{row.partition_name}</td>
-                <td className="result-size">
-                  {row.file.kind === "folder"
-                    ? "—"
-                    : row.file.size === null
-                      ? "未知"
-                      : `${BigInt(row.file.size).toLocaleString()} B`}
-                </td>
-                <td>{fileTime(row.file.modified)}</td>
-                <td>
-                  <span className={`connection ${row.connection}`}>
-                    {connection[row.connection] || "状态未确认"}
-                  </span>
-                  {row.partial ? (
-                    <small>未完成记录</small>
-                  ) : row.needs_validation ? (
-                    <small>索引待校验</small>
-                  ) : null}
-                  <small>
-                    {row.indexed_at == null
-                      ? "索引时间未知"
-                      : new Date(row.indexed_at * 1000).toLocaleString()}
-                  </small>
-                </td>
+      <div className="search-body" onClick={() => setMenu(null)}>
+        <div className="asset-table-wrap search-results">
+          <table>
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>所在目录 / 路径</th>
+                <th>分区</th>
+                <th>大小</th>
+                <th>修改时间</th>
+                <th>状态 / 索引时间</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-        {!busy && !error && !rows.length && (
-          <p className="search-empty">没有匹配的文件</p>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr
+                  key={`${row.partition_id}:${row.file.path}`}
+                  tabIndex={0}
+                  aria-selected={selected === row}
+                  onClick={() => setSelected(row)}
+                  onContextMenu={(e) => {
+                    if (!onLocate) return;
+                    e.preventDefault();
+                    setSelected(row);
+                    setMenu({
+                      x: Math.min(e.clientX, window.innerWidth - 260),
+                      y: Math.min(e.clientY, window.innerHeight - 60),
+                      row,
+                    });
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && onLocate) onLocate(row);
+                    if (e.key === "Escape") setMenu(null);
+                  }}
+                >
+                  <td>
+                    <span
+                      className={`file-mark ${row.file.kind}`}
+                      aria-hidden="true"
+                    />
+                    {row.file.name}
+                  </td>
+                  <td className="result-path" title={row.file.path}>
+                    {row.connection === "online" && row.mounts[0]
+                      ? row.mounts[0]
+                      : ""}
+                    {row.file.path}
+                  </td>
+                  <td>{row.partition_name}</td>
+                  <td className="result-size">
+                    {row.file.kind === "folder"
+                      ? "—"
+                      : row.file.size === null
+                        ? "未知"
+                        : `${BigInt(row.file.size).toLocaleString()} B`}
+                  </td>
+                  <td>{fileTime(row.file.modified)}</td>
+                  <td>
+                    <span className={`connection ${row.connection}`}>
+                      {connection[row.connection] || "状态未确认"}
+                    </span>
+                    {row.partial ? (
+                      <small>未完成记录</small>
+                    ) : row.needs_validation ? (
+                      <small>索引待校验</small>
+                    ) : null}
+                    <small>
+                      {row.indexed_at == null
+                        ? "索引时间未知"
+                        : new Date(row.indexed_at * 1000).toLocaleString()}
+                    </small>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!busy && !error && !rows.length && (
+            <p className="search-empty">没有匹配的文件</p>
+          )}
+        </div>
+        {preview && (
+          <FileDetails
+            rows={selected ? [selected.file] : []}
+            partition={selected?.partition_name || ""}
+            connection={selected?.connection || "unconfirmed"}
+            indexedAt={selected?.indexed_at ?? null}
+          />
         )}
       </div>
+      {menu && onLocate && (
+        <div
+          className="file-context-menu"
+          role="menu"
+          style={{ left: menu.x, top: menu.y }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setMenu(null);
+          }}
+        >
+          <button
+            autoFocus
+            role="menuitem"
+            onClick={() => {
+              onLocate(menu.row);
+              setMenu(null);
+            }}
+          >
+            在新标签页浏览所在目录
+          </button>
+        </div>
+      )}
     </div>
   );
 }

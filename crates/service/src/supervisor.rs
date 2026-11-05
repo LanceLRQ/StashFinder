@@ -128,6 +128,19 @@ impl Runner {
     pub fn ready(&self) -> bool {
         self.shared.ready.load(Ordering::Acquire)
     }
+    pub fn directory(
+        &self,
+        request: &stashfinder_core::browse::DirectoryRequest,
+    ) -> Result<stashfinder_core::browse::DirectoryPage> {
+        let catalog = Catalog::read(&self.shared.root)?;
+        let row = catalog.get(&request.partition_id)?;
+        ensure!(
+            row.filesystem_id == request.filesystem_id
+                && matches!(row.state.as_str(), "ready" | "historical"),
+            "目录所属文件系统已变化或登记未完成"
+        );
+        stashfinder_store::browse::read(&catalog.volume_path(&row.filesystem_id)?, request)
+    }
     pub fn observe(&self, snapshot: Snapshot) {
         let active = self.shared.active.lock().unwrap_or_else(|e| e.into_inner());
         let _ = self.shared.with_tasks(|tasks| {

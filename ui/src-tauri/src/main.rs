@@ -88,6 +88,7 @@ async fn index_request(
         | stashfinder_core::Action::PartitionPause { .. }
         | stashfinder_core::Action::IndexState { .. }
         | stashfinder_core::Action::SearchStart(_)
+        | stashfinder_core::Action::Directory(_)
         | stashfinder_core::Action::SearchPage { .. }
         | stashfinder_core::Action::SearchCancel { .. } => ipc::request(ipc::DEFAULT_PIPE, action)
             .await

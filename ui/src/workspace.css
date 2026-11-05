@@ -1,0 +1,332 @@
+.file-workspace,
+.workspace-panel,
+.browse-pane {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.workspace-panel {
+  flex: 1;
+}
+.workspace-tabs {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  overflow-x: auto;
+  background: #f3f5f7;
+  border-bottom: 1px solid #dce1e7;
+  padding: 6px 10px 0;
+  gap: 4px;
+}
+.workspace-tab {
+  display: flex;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 5px 5px 0 0;
+  min-width: 100px;
+  max-width: 230px;
+}
+.workspace-tab.is-active {
+  background: white;
+  border-color: #dce1e7;
+}
+.workspace-tab button {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+.workspace-tab [role="tab"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  text-align: left;
+  padding: 9px 12px;
+}
+.workspace-tab .tab-close {
+  padding: 4px 8px;
+  color: #647082;
+}
+.workspace-tabs .tab-new {
+  border: 0;
+  background: transparent;
+  font-size: 20px;
+  padding: 0 12px;
+}
+.browse-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #dce1e7;
+  flex-shrink: 0;
+}
+.browse-toolbar input[type="search"] {
+  min-width: 150px;
+  flex: 1;
+}
+.browse-toolbar select {
+  max-width: 150px;
+}
+.browse-count {
+  color: #647082;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.view-menu {
+  position: relative;
+  flex-shrink: 0;
+  font-size: 13px;
+}
+.view-menu summary {
+  cursor: pointer;
+  padding: 7px 10px;
+  border: 1px solid #bdc5ce;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.view-menu > div {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 155px;
+  padding: 8px;
+  background: white;
+  border: 1px solid #dce1e7;
+  border-radius: 5px;
+  box-shadow: 0 5px 16px #18283818;
+}
+.view-menu label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  white-space: nowrap;
+}
+.browse-body,
+.search-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.directory-tree {
+  flex: 0 0 auto;
+  width: 200px;
+  min-width: 150px;
+  max-width: 35%;
+  resize: horizontal;
+  overflow: auto;
+  border-right: 1px solid #dce1e7;
+  padding: 8px 4px;
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.tree-row button {
+  border: 0;
+  background: transparent;
+  padding: 5px 3px;
+  font-size: 13px;
+}
+.tree-row .tree-label {
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.tree-row .tree-expander {
+  width: 24px;
+  flex-shrink: 0;
+}
+.tree-label[aria-current="location"] {
+  background: #e7edf4;
+  border-radius: 3px;
+}
+.tree-children {
+  margin-left: 14px;
+}
+.tree-error {
+  font-size: 12px;
+  color: #a23929;
+  overflow-wrap: anywhere;
+}
+.directory-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.breadcrumbs {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  overflow: auto;
+  white-space: nowrap;
+  border-bottom: 1px solid #e4e8ed;
+  padding: 4px 10px;
+  min-height: 36px;
+}
+.breadcrumbs button {
+  border: 0;
+  background: transparent;
+  padding: 3px 6px;
+  max-width: 200px;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  vertical-align: middle;
+}
+.directory-list {
+  flex: 1;
+  overflow: auto;
+  outline-offset: -2px;
+}
+.directory-list table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  min-width: 440px;
+  font-size: 13px;
+}
+.directory-list th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f8f9fb;
+  color: #647082;
+  font-weight: 400;
+  text-align: left;
+  border-bottom: 1px solid #dce1e7;
+}
+.directory-list td,
+.directory-list th {
+  height: 34px;
+  padding: 6px 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.directory-list th:nth-child(2) {
+  width: 100px;
+  text-align: right;
+}
+.directory-list th:nth-child(3) {
+  width: 170px;
+}
+.directory-list tr:hover,
+.search-results tr:hover {
+  background: #f0f3f7;
+}
+.directory-list tr[aria-selected="true"],
+.search-results tr[aria-selected="true"] {
+  background: #e3edf8;
+}
+.directory-list tr:focus-visible {
+  outline: 1px solid #386da7;
+  outline-offset: -1px;
+}
+.file-preview {
+  flex: 0 0 auto;
+  width: 240px;
+  min-width: 180px;
+  max-width: 35%;
+  overflow: auto;
+  resize: horizontal;
+  border-left: 1px solid #dce1e7;
+  padding: 18px;
+}
+.file-preview strong {
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.file-preview dl {
+  margin: 20px 0 0;
+  font-size: 12px;
+}
+.file-preview dt {
+  margin-top: 14px;
+  color: #647082;
+}
+.file-preview dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+.browse-status {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 16px;
+  border-top: 1px solid #dce1e7;
+  font-size: 12px;
+  color: #647082;
+  min-height: 28px;
+  flex-shrink: 0;
+}
+.browse-message {
+  padding: 8px 16px;
+  margin: 0;
+  font-size: 13px;
+  border-bottom: 1px solid #e4e8ed;
+}
+.directory-list .load-more {
+  display: block;
+  margin: 12px auto;
+}
+.workspace-panel .search-toolbar {
+  flex-wrap: nowrap;
+  padding: 12px 16px;
+  gap: 8px;
+}
+.workspace-panel .search-toolbar input[type="search"] {
+  min-width: 140px;
+  padding: 7px 10px;
+}
+.workspace-panel .search-toolbar select {
+  max-width: 155px;
+  padding: 7px 8px;
+}
+.workspace-panel .search-summary {
+  margin: 0;
+  white-space: nowrap;
+}
+.workspace-panel .search-results {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  max-height: none;
+  border: 0;
+}
+.file-context-menu {
+  position: fixed;
+  z-index: 20;
+  padding: 4px;
+  background: white;
+  border: 1px solid #bdc5ce;
+  box-shadow: 0 5px 16px #18283818;
+  border-radius: 5px;
+}
+.file-context-menu button {
+  border: 0;
+  font-size: 13px;
+}
+@media (max-width: 1100px) {
+  .directory-tree {
+    width: 165px;
+  }
+  .file-preview {
+    width: 195px;
+    padding: 12px;
+  }
+  .workspace-panel .search-toolbar {
+    flex-wrap: wrap;
+  }
+}

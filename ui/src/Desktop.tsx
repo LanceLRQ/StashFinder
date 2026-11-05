@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import Assets from "./Assets";
-import Search from "./Search";
+import Workspace from "./Workspace";
 import Settings from "./Settings";
 import type { AssetSnapshot } from "./asset-api";
 import Tasks from "./Tasks";
@@ -41,6 +41,10 @@ export default function Desktop() {
   const [snapshot, setSnapshot] = useState<AssetSnapshot | null>(null);
   const [searchVisited, setSearchVisited] = useState(false);
   const [searchRequest, setSearchRequest] = useState({ text: "", revision: 0 });
+  const [browseRequest, setBrowseRequest] = useState({
+    partition: "",
+    revision: 0,
+  });
   const [development, setDevelopment] = useState(false);
   const tasks = useTasks(loaded && page !== "files");
   const [focusTask, setFocusTask] = useState("");
@@ -202,6 +206,13 @@ export default function Desktop() {
         >
           <Assets
             onSearch={search}
+            onBrowse={(partition) => {
+              setBrowseRequest((previous) => ({
+                partition,
+                revision: previous.revision + 1,
+              }));
+              navigate("files");
+            }}
             onSnapshot={setSnapshot}
             activity={activity}
           />
@@ -211,13 +222,11 @@ export default function Desktop() {
             className="desktop-page"
             hidden={page !== "files" || development}
           >
-            <Search
-              partitions={(snapshot?.assets || []).map((a) => ({
-                id: a.registration.partition_id,
-                name: a.registration.name,
-              }))}
+            <Workspace
+              assets={snapshot?.assets || []}
               includePath={preferences.include_path}
               request={searchRequest}
+              browseRequest={browseRequest}
             />
           </div>
         )}

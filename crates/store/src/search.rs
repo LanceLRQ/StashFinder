@@ -89,13 +89,15 @@ impl SearchIndex {
             .map(|d| d.context("目录路径缺失"))
             .collect::<Result<Vec<_>>>()?;
         let mut entries = Vec::new();
-        let mut stmt=volume.db.prepare("SELECT p.object,p.parent,p.name,o.kind,o.size,o.created,o.modified,o.attributes FROM paths p JOIN objects o ON o.generation=p.generation AND o.id=p.object WHERE p.generation=?1 AND p.parent IS NOT NULL ORDER BY p.id")?;
+        let mut stmt=volume.db.prepare("SELECT p.object,p.parent,p.name,o.kind,o.size,o.created,o.modified,o.attributes,p.id FROM paths p JOIN objects o ON o.generation=p.generation AND o.id=p.object WHERE p.generation=?1 AND p.parent IS NOT NULL ORDER BY p.id")?;
         let mut rows = stmt.query([generation])?;
         while let Some(row) = rows.next()? {
             let parent: Vec<u8> = row.get(1)?;
             entries.push(CachedEntry {
                 parent: *ids.get(&parent).context("路径父目录缺失")?,
                 row: SearchRow {
+                    entry: row.get(8)?,
+                    parent: parent.clone(),
                     object: row.get(0)?,
                     name: decode_name(&row.get::<_, Vec<u8>>(2)?)?,
                     path: String::new(),
@@ -147,7 +149,7 @@ impl SearchIndex {
     }
 }
 
-fn decode_name(bytes: &[u8]) -> Result<String> {
+pub(crate) fn decode_name(bytes: &[u8]) -> Result<String> {
     ensure!(bytes.len().is_multiple_of(2), "UTF-16 名称字节数无效");
     let units = bytes
         .chunks_exact(2)
@@ -163,7 +165,7 @@ fn decode_name(bytes: &[u8]) -> Result<String> {
     Ok(value)
 }
 
-fn decode_time(bytes: Option<Vec<u8>>) -> Result<Option<String>> {
+pub(crate) fn decode_time(bytes: Option<Vec<u8>>) -> Result<Option<String>> {
     bytes
         .map(|b| {
             Ok(u64::from_le_bytes(

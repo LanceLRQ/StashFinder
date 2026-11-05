@@ -117,6 +117,7 @@ impl Indexes {
                                 output.more |= matches.more;
                                 output.rows.extend(matches.rows.into_iter().map(|file| {
                                     SearchHit {
+                                        filesystem_id: asset.registration.filesystem_id.clone(),
                                         partition_id: partition.clone(),
                                         partition_name: asset.registration.name.clone(),
                                         connection: asset.connection.clone(),

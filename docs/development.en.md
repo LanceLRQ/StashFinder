@@ -51,6 +51,15 @@ The default home screen is Overview, with a collapsible navigation rail. Files r
 - Settings remains accessible without the service. UI preferences still work; About and diagnostics can reconnect and never reports a failed read as connected.
 - Check the initial 1280×800 and minimum 1000×650 window sizes, plus Windows scaling at 100%, 125%, 150% and 200%. Component tests do not replace native-window and real-backend validation.
 
+## Directory browsing and tabs acceptance
+
+- Click a partition name in Overview or select a registered partition in Files. The tree reads the local index on demand and works offline. Double-click a folder or press Enter to enter it; use breadcrumbs or Alt+Up to go up.
+- Use + or Ctrl+T for a browse tab, Ctrl+Tab to switch, and Ctrl+W to close. Each tab retains its location, scroll and multi-selection. Ctrl/Shift-click and arrow keys select entries; Ctrl+A selects loaded entries only. Renaming a partition or changing its drive letter does not change its directory identity.
+- Typing a query in a browse tab or searching from Overview opens the single search tab. Closing it returns to the previous browse tab. Ctrl+F focuses search. A result's context action, “在新标签页浏览所在目录” (browse parent in a new tab), uses filesystem and directory IDs and works offline.
+- View toggles the tree, metadata preview and breadcrumbs. Resize tree and preview panes from their bottom corners. Preview shows indexed metadata only, explicitly labels unknown values and never reads file contents. Tab and pane state lasts for the current window session only.
+- Directory pages contain at most 100 entries, also bounded by the 16 KiB frame budget. Load more fetches subsequent pages; a search target beyond the loaded page requires loading more to view it. F5 refreshes the current directory. Index changes reject old page cursors and prompt a refresh; read failures preserve visible rows instead of displaying an empty directory. A confirmed deleted directory falls back to its nearest available ancestor and clears selection.
+- With a matching ordinary-user GUI and backend build, verify online and offline partitions: nested folders, two tabs with independent selection and scrolling, search and return, parent-directory location from results, and pane toggles. Automated tests and controlled browser fixtures do not replace real IPC acceptance.
+
 ## Partition registration acceptance
 
 - Open Register partitions from Overview; nothing is initially selected. Select and name the partitions to manage; unselected partitions are neither registered nor scanned.
@@ -61,7 +70,7 @@ The default home screen is Overview, with a collapsible navigation rail. Files r
 
 Foreground development requires an explicit absolute data directory. SCM mode defaults to `%ProgramData%\StashFinder`, which must be provisioned beforehand as a direct child of ProgramData. Disable root ACL inheritance, grant only SYSTEM and Administrators inheritable full control, and disallow reparse points. The GUI reads through the service, not directly from databases. The verification script below provisions isolated protected storage. Production installation and migration are not implemented.
 
-`catalog.sqlite` stores registrations; `volumes/<filesystem-id>.sqlite` stores independent filesystem data; `tasks.sqlite` stores tasks, automatic-update policy and paused partitions. SQLite uses WAL/FULL: copying only a live main database is not a backup. The recovery API creates a separate candidate catalog only, not a complete backup/restore tool. Protocol version 4 has a 16 KiB frame limit and paginated assets, tasks and search results; use UI and service binaries from the same build. Existing partition databases migrate transactionally only after ownership validation; mismatched databases are not migrated.
+`catalog.sqlite` stores registrations; `volumes/<filesystem-id>.sqlite` stores independent filesystem data; `tasks.sqlite` stores tasks, automatic-update policy and paused partitions. SQLite uses WAL/FULL: copying only a live main database is not a backup. The recovery API creates a separate candidate catalog only, not a complete backup/restore tool. Protocol version 5 has a 16 KiB frame limit and paginated assets, tasks, directory entries and search results; use UI and service binaries from the same build. Existing partition databases migrate transactionally only after ownership validation; mismatched databases are not migrated.
 
 ## Automatic-update acceptance
 

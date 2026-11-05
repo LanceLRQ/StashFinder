@@ -72,6 +72,35 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
     drop(catalog);
     for _ in 0..2 {
         let jobs = Indexes::start(temp.path().into());
+        let request = stashfinder_core::browse::DirectoryRequest {
+            partition_id: registered.partition_id.clone(),
+            filesystem_id: registered.filesystem_id.clone(),
+            parent: None,
+            generation: None,
+            revision: None,
+            offset: 0,
+            folders_only: false,
+        };
+        let directory = jobs.runner.directory(&request).unwrap();
+        assert_eq!(directory.entries[0].name, "offline.txt");
+        assert_eq!(directory.entries[0].entry, [2]);
+        assert_eq!(directory.entries[0].parent, [1]);
+        assert!(
+            jobs.runner
+                .directory(&stashfinder_core::browse::DirectoryRequest {
+                    filesystem_id: "wrong".into(),
+                    ..request.clone()
+                })
+                .is_err()
+        );
+        assert!(
+            jobs.runner
+                .directory(&stashfinder_core::browse::DirectoryRequest {
+                    partition_id: "unregistered".into(),
+                    ..request
+                })
+                .is_err()
+        );
         assert!(jobs.scan("missing", IndexMode::Journal, &snapshot).is_err());
         assert!(
             jobs.scan(&registered.partition_id, IndexMode::Journal, &snapshot)

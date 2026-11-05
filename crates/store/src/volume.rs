@@ -48,7 +48,7 @@ impl Volume {
         ensure!(
             matches!(
                 db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
-                1 | 2
+                1..=3
             ),
             "不支持的分区库版本"
         );
@@ -87,7 +87,7 @@ impl Volume {
         ensure!(
             matches!(
                 db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
-                1 | 2
+                1..=3
             ),
             "不支持的分区库版本"
         );
@@ -117,6 +117,13 @@ impl Volume {
                 CREATE INDEX paths_parent ON paths(generation,parent);
                 PRAGMA user_version=2;")?;
             tx.commit()?;
+        }
+        if self
+            .db
+            .query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?
+            == 2
+        {
+            self.db.execute_batch("BEGIN IMMEDIATE; ALTER TABLE generations ADD COLUMN revision INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=3; COMMIT;")?;
         }
         Ok(())
     }
@@ -226,7 +233,7 @@ impl Volume {
         )?;
         ensure!(writable, "索引代次不存在或已经发布");
         tx.execute(
-            "UPDATE generations SET complete=0 WHERE id=?1",
+            "UPDATE generations SET complete=0,revision=revision+1 WHERE id=?1",
             [generation],
         )?;
         for id in removed {
@@ -350,7 +357,7 @@ impl Volume {
             [generation],
         )?;
         tx.execute(
-            "UPDATE generations SET phase=?3,completed=?2,error=NULL WHERE id=?1",
+            "UPDATE generations SET phase=?3,completed=?2,error=NULL,revision=revision+1 WHERE id=?1",
             params![generation, stashfinder_core::assets::now() as i64, phase],
         )?;
         tx.commit()?;

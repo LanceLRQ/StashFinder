@@ -90,13 +90,18 @@ test("restores startup and search preferences before mounting the first search",
   expect(
     screen.getByRole("button", { name: "文件" }).getAttribute("aria-current"),
   ).toBe("page");
+  fireEvent.change(screen.getByRole("searchbox", { name: "搜索文件或路径" }), {
+    target: { value: "test" },
+  });
   expect(screen.getByRole("checkbox", { name: "仅文件名" })).toHaveProperty(
     "checked",
     true,
   );
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("index_request", {
-      action: { search_start: { text: "", names_only: true, partitions: [] } },
+      action: {
+        search_start: { text: "test", names_only: true, partitions: [] },
+      },
     }),
   );
 });
