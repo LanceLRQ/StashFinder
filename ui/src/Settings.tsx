@@ -125,7 +125,7 @@ export default function Settings({
             )}
             <p className="stage-note">
               日志断档时自动校验；创建 USN
-              日志仍需按分区授权。无日志扫描模式的持续更新将在后续版本提供。
+              日志仍需按分区授权。扫描模式在线监控变化，重连后完整校验。
             </p>
           </>
         )}

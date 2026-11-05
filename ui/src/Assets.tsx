@@ -386,7 +386,8 @@ export default function Assets({
                             {bytes(capacity?.total)} / {bytes(capacity?.free)}
                             {capacity && (
                               <small>
-                                {asset.connection === "online"
+                                {asset.connection === "online" &&
+                                !asset.capacity_error
                                   ? "采集于"
                                   : "上次记录"}{" "}
                                 {date(capacity.sampled_at)} · 剩余{" "}
@@ -396,7 +397,17 @@ export default function Assets({
                                       100
                                     ).toFixed(1)
                                   : "—"}
-                                %
+                                {capacity.total ? "%" : ""}
+                              </small>
+                            )}
+                            {capacity && (
+                              <small>
+                                已用 {bytes(capacity.total - capacity.free)}
+                              </small>
+                            )}
+                            {asset.capacity_error && (
+                              <small className="asset-error">
+                                {asset.capacity_error}
                               </small>
                             )}
                           </td>
@@ -406,11 +417,14 @@ export default function Assets({
                                 partitionId={r.partition_id}
                                 onStatus={onIndexStatus}
                                 name={r.name}
+                                filesystem={o.identity.filesystem}
                                 eligible={
                                   !disabled &&
                                   !asset.error &&
                                   asset.connection === "online" &&
-                                  o.identity.filesystem === "NTFS"
+                                  ["NTFS", "exFAT", "FAT32"].includes(
+                                    o.identity.filesystem || "",
+                                  )
                                 }
                               />
                             ) : (

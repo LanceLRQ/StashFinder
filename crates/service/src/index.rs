@@ -114,6 +114,17 @@ pub fn build(
     cancelled: &AtomicBool,
     progress: &mut dyn FnMut(&str),
 ) -> Result<()> {
+    build_checked(source, db, mode, cancelled, progress, &mut || Ok(()))
+}
+
+pub fn build_checked(
+    source: &dyn Source,
+    db: &mut Volume,
+    mode: IndexMode,
+    cancelled: &AtomicBool,
+    progress: &mut dyn FnMut(&str),
+    validate: &mut dyn FnMut() -> Result<()>,
+) -> Result<()> {
     ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
     let journal = match mode {
         IndexMode::ScanOnly => None,
@@ -272,6 +283,7 @@ pub fn build(
         }
         ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
         db.prune_inventory(generation)?;
+        validate()?;
         db.complete(generation)?;
         stashfinder_store::search::SearchIndex::load_generation(db, generation, false)?;
         source.verify()?;

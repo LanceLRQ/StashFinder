@@ -97,6 +97,7 @@ fn automatic_worker_requires_registration_online_identity_and_enabled_policy() {
     catalog.finish(&row.partition_id).unwrap();
     let mut snapshot = Snapshot {
         assets: vec![Asset {
+            capacity_error: None,
             registration: catalog.get(&row.partition_id).unwrap(),
             connection: "offline".into(),
             mounts: vec![],
@@ -162,4 +163,117 @@ fn automatic_worker_requires_registration_online_identity_and_enabled_policy() {
             .any(|t| t.state == "needs_confirmation")
     });
     assert_eq!(worker.status(&row.partition_id).phase, "needs_validation");
+}
+
+struct ScanDisk {
+    reads: Arc<AtomicUsize>,
+    changed: Arc<AtomicBool>,
+}
+impl stashfinder_service::scan::Source for ScanDisk {
+    fn verify(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn changed(&mut self) -> anyhow::Result<bool> {
+        Ok(self.changed.swap(false, Ordering::SeqCst))
+    }
+    fn enumerate(
+        &self,
+        _: &[u16],
+        _: &AtomicBool,
+        _: &mut dyn FnMut(&[stashfinder_windows::scan::ScanEntry]) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+#[test]
+fn scanning_filesystem_watches_only_registered_online_volumes_and_rescans_on_reconnect() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut catalog = Catalog::open(dir.path()).unwrap();
+    let observed = Observation {
+        candidate_id: "fat".into(),
+        disk_number: None,
+        model: None,
+        disk_bytes: None,
+        partition_bytes: None,
+        mounts: vec![],
+        identity: Identity {
+            layout: Layout::Gpt {
+                disk: "disk".into(),
+                partition: "fat".into(),
+            },
+            filesystem: Some("exFAT".into()),
+            serial: Some(Serial {
+                source: "win32_volume32".into(),
+                value: "1".into(),
+            }),
+        },
+        capacity: None,
+        error: None,
+    };
+    let row = catalog.prepare(&observed, "FAT").unwrap();
+    catalog.finish(&row.partition_id).unwrap();
+    let mut snapshot = Snapshot {
+        assets: vec![Asset {
+            capacity_error: None,
+            registration: catalog.get(&row.partition_id).unwrap(),
+            connection: "online".into(),
+            mounts: vec![],
+            error: None,
+        }],
+        ..Default::default()
+    };
+    let reads = Arc::new(AtomicUsize::new(0));
+    let changed = Arc::new(AtomicBool::new(false));
+    let (r, c) = (reads.clone(), changed.clone());
+    let fail_open = AtomicBool::new(true);
+    let worker = Runner::start_with_sources(
+        dir.path().into(),
+        |_| panic!("FAT must not open NTFS"),
+        move |_| {
+            anyhow::ensure!(
+                !fail_open.swap(false, Ordering::SeqCst),
+                "monitor unavailable"
+            );
+            Ok(Box::new(ScanDisk {
+                reads: r.clone(),
+                changed: c.clone(),
+            }))
+        },
+    );
+    wait_until(|| worker.ready());
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+    worker.observe(snapshot.clone());
+    wait_until(|| worker.tasks().unwrap().iter().any(|t| t.state == "failed"));
+    let failed = worker
+        .tasks()
+        .unwrap()
+        .into_iter()
+        .find(|t| t.state == "failed")
+        .unwrap();
+    assert_eq!(failed.kind, "scan");
+    assert!(matches!(failed.mode, IndexMode::ScanOnly));
+    worker.retry(&failed.id, &snapshot).unwrap();
+    wait_until(|| worker.status(&row.partition_id).phase == "snapshot");
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    std::thread::sleep(Duration::from_millis(2300));
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    changed.store(true, Ordering::SeqCst);
+    wait_until(|| reads.load(Ordering::SeqCst) == 2);
+    wait_until(|| worker.status(&row.partition_id).task_id.is_none());
+    snapshot.assets[0].connection = "offline".into();
+    worker.observe(snapshot.clone());
+    std::thread::sleep(Duration::from_millis(250));
+    snapshot.assets[0].connection = "online".into();
+    worker.observe(snapshot.clone());
+    wait_until(|| reads.load(Ordering::SeqCst) == 3);
+    wait_until(|| worker.status(&row.partition_id).task_id.is_none());
+    worker.pause(&row.partition_id, true, &snapshot).unwrap();
+    std::thread::sleep(Duration::from_millis(250));
+    changed.store(true, Ordering::SeqCst);
+    std::thread::sleep(Duration::from_millis(2200));
+    assert_eq!(reads.load(Ordering::SeqCst), 3);
+    worker.pause(&row.partition_id, false, &snapshot).unwrap();
+    wait_until(|| reads.load(Ordering::SeqCst) == 4);
 }

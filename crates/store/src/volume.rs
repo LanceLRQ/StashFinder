@@ -216,7 +216,10 @@ impl Volume {
             cursor,
             replace_links,
         } = changes;
-        let tx = self.db.transaction()?;
+        // Acquire the writer before reading so a capacity update cannot invalidate the snapshot.
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let writable: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM generations WHERE id=?1) AND (EXISTS(SELECT 1 FROM index_state WHERE active_generation=?1)=?2)",
             params![generation, incremental], |r| r.get(0),
@@ -328,7 +331,9 @@ impl Volume {
     }
 
     fn publish_mode(&mut self, generation: i64, phase: &str) -> Result<()> {
-        let tx = self.db.transaction()?;
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let complete: bool = tx.query_row(
             "SELECT complete FROM generations WHERE id=?1",
             [generation],

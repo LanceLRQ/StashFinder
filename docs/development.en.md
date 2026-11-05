@@ -87,12 +87,12 @@ npm --prefix ui run tauri -- build --debug --no-bundle
 ## NTFS indexing and offline search
 
 1. Register an accessible NTFS partition and choose its index action. The default uses an existing USN journal; an absent journal produces an explicit failure without creating one.
-2. Scan-only mode creates no journal, but cannot guarantee capture of changes during the scan, so results are marked as snapshots requiring validation. Creating a journal requires a separate checkbox: a new journal has a 32 MiB maximum and an 8 MiB allocation delta; existing settings remain unchanged.
+2. Scan-only mode creates no journal and starts monitoring before enumeration. Changes during a scan trigger validation; results are marked as scan snapshots. Creating a journal requires a separate checkbox: a new journal has a 32 MiB maximum and an 8 MiB allocation delta; existing settings remain unchanged.
 3. Progress shows NTFS enumeration, metadata scanning and replay of changes during scanning. Cancellation is available. Failed/cancelled builds preserve the previous active index; readable data from a failed first build is marked incomplete. Read errors are not evidence of deletion.
 4. Open file search. Matching is case-insensitive and includes paths by default: `aaa` matches `aaa\bbb.exe`; `aaa bbb` requires both words in either order; `"aaa bbb"` matches consecutive text. Filename-only mode and partition filters are available. Drive-letter terms match current online mounts only.
 5. Detach the test disk, refresh devices, then search or restart the service. Partition names, relative paths, index timestamps and offline status must persist. Online describes partition state, not a guarantee that each snapshot entry still exists unchanged.
 
-Search returns at most the first 200 results in a deterministic order and indicates when more exist; it does not provide an exact total or global sorting. Type filters, regex, `dupe` expressions, exFAT/FAT32 indexing and file operations on real results are not implemented. Reparse points are recorded without traversing targets; hard links retain multiple paths. File contents are not read. Large caches and no-match queries still need further performance work.
+Search returns at most the first 200 results in a deterministic order and indicates when more exist; it does not provide an exact total or global sorting. Type filters, regex, `dupe` expressions and file operations on real results are not implemented. Reparse points are recorded without traversing targets; hard links retain multiple paths. File contents are not read. Large caches and no-match queries still need further performance work.
 
 Build generations currently remain in partition databases, so repeated rebuilding increases database size; automatic reclamation is not implemented. Healthy local snapshots remain searchable when device access or identity is uncertain, with the connection issue shown instead of online status.
 
@@ -103,6 +103,22 @@ For complete device validation, run this command in elevated PowerShell. It expl
 ```
 
 The script requires a nonexistent directory, creates a 512 MiB VHDX with an NTFS test partition, and compares Unicode names, zero sizes, hard links, long paths, reparse points and metadata against independent directory enumeration. It then tests changes during scanning, cancellation, detachment and search after SCM restart. `.local/index-verification.json` records sample size, build time, no-match query time and service working set. These small debug-build measurements do not represent million/ten-million-file performance. The successful hold period permits ordinary-user GUI acceptance while the test disk is already offline. Completion or failure detaches the disk and cleans up the temporary service, retaining the image and protected data.
+
+## Scan mode and capacity acceptance
+
+exFAT/FAT32 partitions scan automatically after registration. For NTFS without a journal, choose scan-only mode in the indexing dialog. The choice persists across restarts without creating a journal. NTFS retains file references and hard links; exFAT/FAT32 use relative paths within each filesystem instance, not stable object IDs across renames.
+
+Online monitoring uses [FindFirstChangeNotificationW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstchangenotificationw) to coalesce changes before enumerating metadata again. It is not a persistent change journal. Idle volumes do not repeatedly rebuild, with fallback validation every 15 minutes. Reconnection, resuming automatic updates and service restart require validation. Read or monitoring failures do not publish a new generation or confirm deletion: the old index remains searchable, while incomplete first builds are explicitly partial. Continued changes retry a bounded number of times, with failures shown in tasks. This mode rereads the registered partition; large-disk latency and retained-generation space still need optimization.
+
+Partitions display total, used and free space and the free percentage. Failed capacity reads retain the last successful values and timestamp with a separate error. They do not mark an online partition offline or block healthy indexing. Physical capacity remains separate; unallocated space is not partition free space.
+
+This administrator check operates only on the specified new VHD. It creates a 1 GiB image with three 256 MiB NTFS/exFAT/FAT32 partitions, tests Unicode, empty files, long paths, online changes, SCM restart, detach/remount and offline capacity, and never creates a USN journal.
+
+```powershell
+.\scripts\verify-service.ps1 -OwnerSid 'S-1-5-21-your-normal-user-SID' -ScanVhdDirectory 'D:\tmp\StashFinder-M4-new-directory' -HoldSeconds 600
+```
+
+Results are in `.local/scans-verification.json`. During the hold period, validate the partitions using the ordinary-user GUI. Creating `show-offline` in the test directory detaches the image for offline GUI checks; `stop-gui` ends the hold early. Cleanup detaches the image and removes the temporary service, retaining test files and catalogs. This does not replace physical USB surprise-removal, sleep/resume or large-scale performance tests.
 
 ## File bridge acceptance
 

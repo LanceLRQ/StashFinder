@@ -1,6 +1,7 @@
 pub mod assets;
 pub mod index;
 pub mod jobs;
+pub mod scan;
 pub mod supervisor;
 use anyhow::{Context, Result, bail};
 use stashfinder_core::{

@@ -85,3 +85,21 @@ fn failed_policy_write_preserves_old_setting_and_invalidates_stale_pages_only_on
     assert!(!tasks.enabled().unwrap());
     assert!(tasks.revision().unwrap() > revision);
 }
+
+#[test]
+fn scan_mode_survives_task_history_pruning_and_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut tasks = Tasks::open(dir.path()).unwrap();
+    tasks.set_scan_mode("one", true).unwrap();
+    for _ in 0..201 {
+        let task = tasks
+            .enqueue("one", "scan", IndexMode::ScanOnly, true)
+            .unwrap();
+        tasks.set_state(&task.id, "completed", None).unwrap();
+    }
+    drop(tasks);
+    let tasks = Tasks::open(dir.path()).unwrap();
+    assert!(tasks.scan_mode("one").unwrap());
+    tasks.set_scan_mode("one", false).unwrap();
+    assert!(!tasks.scan_mode("one").unwrap());
+}

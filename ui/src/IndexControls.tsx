@@ -10,7 +10,7 @@ export const indexLabels: Record<string, string> = {
   scanning: "读取文件元数据",
   replaying: "补齐扫描期间变更",
   ready: "索引已建立",
-  snapshot: "扫描快照 · 待校验",
+  snapshot: "扫描快照",
   failed: "索引未完成",
   syncing: "同步文件变更",
   needs_validation: "索引需要校验",
@@ -30,11 +30,13 @@ export default function IndexControls({
   partitionId,
   name,
   eligible,
+  filesystem = "NTFS",
   onStatus,
 }: {
   partitionId: string;
   name: string;
   eligible: boolean;
+  filesystem?: string | null;
   onStatus?: (
     partitionId: string,
     status: IndexStatus | null,
@@ -152,7 +154,7 @@ export default function IndexControls({
           disabled={!eligible || busy || sending}
           aria-label={`索引 ${name}`}
           onClick={() => {
-            setMode("journal");
+            setMode(filesystem === "NTFS" ? "journal" : "scan_only");
             setConsent(false);
             setOpen(true);
           }}
@@ -177,14 +179,16 @@ export default function IndexControls({
             </p>
           )}
           <p>重新读取这个分区。构建完成前，保留已有索引。</p>
-          <label>
-            <input
-              type="radio"
-              checked={mode === "journal"}
-              onChange={() => setMode("journal")}
-            />
-            使用已有 USN 日志
-          </label>
+          {filesystem === "NTFS" && (
+            <label>
+              <input
+                type="radio"
+                checked={mode === "journal"}
+                onChange={() => setMode("journal")}
+              />
+              使用已有 USN 日志
+            </label>
+          )}
           <label>
             <input
               type="radio"
@@ -194,16 +198,18 @@ export default function IndexControls({
             基础扫描（不创建日志）
           </label>
           {mode === "scan_only" && (
-            <p>无法补齐扫描期间的变化，结果会标记为待校验快照。</p>
+            <p>在线监控变化后重新校验；重连需完整扫描，保留上次快照供搜索。</p>
           )}
-          <label>
-            <input
-              type="radio"
-              checked={mode === "create_journal"}
-              onChange={() => setMode("create_journal")}
-            />
-            创建 USN 日志并索引
-          </label>
+          {filesystem === "NTFS" && (
+            <label>
+              <input
+                type="radio"
+                checked={mode === "create_journal"}
+                onChange={() => setMode("create_journal")}
+              />
+              创建 USN 日志并索引
+            </label>
+          )}
           {mode === "create_journal" && (
             <>
               <p>

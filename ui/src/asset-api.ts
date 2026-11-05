@@ -24,6 +24,7 @@ export type Registration = {
   last_seen: number | null;
 };
 export type Asset = {
+  capacity_error?: string | null;
   registration: Registration;
   connection: string;
   mounts: string[];

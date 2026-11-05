@@ -1,4 +1,7 @@
-use crate::index::{self, Source};
+use crate::{
+    index::{self, Source},
+    scan,
+};
 use anyhow::{Context, Result, ensure};
 use stashfinder_core::{
     assets::{Asset, IdentityMatch, Snapshot},
@@ -8,7 +11,7 @@ use stashfinder_core::{
 use stashfinder_store::{catalog::Catalog, search::SearchIndex, tasks::Tasks, volume::Volume};
 use stashfinder_windows::{ntfs::VolumeReader, volumes};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -20,6 +23,7 @@ use std::{
 
 pub(crate) type Cache = Arc<Mutex<HashMap<String, Arc<SearchIndex>>>>;
 type SourceFactory = dyn Fn(&Asset) -> Result<Box<dyn Source>> + Send + 'static;
+type ScanFactory = dyn Fn(&Asset) -> Result<Box<dyn scan::Source>> + Send + 'static;
 
 pub struct Runner {
     shared: Arc<Shared>,
@@ -40,13 +44,15 @@ fn eligible(asset: &Asset) -> bool {
     asset.registration.state == "ready"
         && asset.connection == "online"
         && asset.error.is_none()
-        && asset
-            .registration
-            .observation
-            .identity
-            .filesystem
-            .as_deref()
-            == Some("NTFS")
+        && matches!(
+            asset
+                .registration
+                .observation
+                .identity
+                .filesystem
+                .as_deref(),
+            Some("NTFS" | "exFAT" | "FAT32")
+        )
 }
 
 impl Runner {
@@ -83,6 +89,13 @@ impl Runner {
         root: PathBuf,
         source: impl Fn(&Asset) -> Result<Box<dyn Source>> + Send + 'static,
     ) -> Self {
+        Self::start_with_sources(root, source, scan::Native::open)
+    }
+    pub fn start_with_sources(
+        root: PathBuf,
+        source: impl Fn(&Asset) -> Result<Box<dyn Source>> + Send + 'static,
+        scanner: impl Fn(&Asset) -> Result<Box<dyn scan::Source>> + Send + 'static,
+    ) -> Self {
         let tasks = Tasks::open(&root)
             .and_then(|mut tasks| {
                 tasks.recover()?;
@@ -100,7 +113,7 @@ impl Runner {
             ready: AtomicBool::new(false),
         });
         let state = shared.clone();
-        let worker = thread::spawn(move || run(state, Box::new(source)));
+        let worker = thread::spawn(move || run(state, Box::new(source), Box::new(scanner)));
         Self {
             shared,
             worker: Some(worker),
@@ -230,11 +243,32 @@ impl Runner {
             .iter()
             .find(|a| a.registration.partition_id == partition)
             .context("分区未登记")?;
-        ensure!(eligible(asset), "分区未就绪、离线、身份无法确认或不是 NTFS");
+        ensure!(eligible(asset), "分区未就绪、离线或身份无法确认");
+        ensure!(
+            matches!(mode, IndexMode::ScanOnly)
+                || asset
+                    .registration
+                    .observation
+                    .identity
+                    .filesystem
+                    .as_deref()
+                    == Some("NTFS"),
+            "此文件系统只能使用扫描模式"
+        );
         self.observe(snapshot.clone());
         let task = self.shared.with_tasks(|tasks| {
             tasks.set_paused(partition, false)?;
-            tasks.enqueue(partition, "build", mode, false)
+            tasks.set_scan_mode(partition, matches!(mode, IndexMode::ScanOnly))?;
+            tasks.enqueue(
+                partition,
+                if matches!(mode, IndexMode::ScanOnly) {
+                    "scan"
+                } else {
+                    "build"
+                },
+                mode,
+                false,
+            )
         })?;
         Ok(task.id)
     }
@@ -325,7 +359,7 @@ impl Shared {
     }
 }
 
-fn run(shared: Arc<Shared>, factory: Box<SourceFactory>) {
+fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanFactory>) {
     if let Ok(catalog) = Catalog::read(&shared.root)
         && let Ok(rows) = catalog.list()
     {
@@ -361,6 +395,9 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>) {
     let mut failures: HashMap<String, (u32, Instant)> = HashMap::new();
     let mut last_check = Instant::now() - Duration::from_secs(3);
     let mut position = 0usize;
+    let mut watchers: HashMap<String, Box<dyn scan::Source>> = HashMap::new();
+    let mut dirty = HashSet::<String>::new();
+    let mut scanned = HashMap::<String, Instant>::new();
     while !shared.stop.load(Ordering::Acquire) {
         let snapshot = shared
             .snapshot
@@ -372,6 +409,16 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>) {
                 .assets
                 .iter()
                 .any(|a| a.registration.partition_id == *id && a.connection == "online")
+        });
+        watchers.retain(|id, _| {
+            snapshot.error.is_none()
+                && snapshot
+                    .assets
+                    .iter()
+                    .any(|a| a.registration.partition_id == *id && eligible(a))
+                && shared
+                    .with_tasks(|t| Ok(t.enabled()? && !t.paused(id)?))
+                    .unwrap_or(false)
         });
         let selected = shared.with_tasks(|tasks| {
             let enabled = tasks.enabled()?;
@@ -424,7 +471,44 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>) {
                 {
                     continue;
                 }
+                let mut detected_mode = IndexMode::Journal;
                 let detected = (|| -> Result<Option<Task>> {
+                    let scan_mode = asset
+                        .registration
+                        .observation
+                        .identity
+                        .filesystem
+                        .as_deref()
+                        != Some("NTFS")
+                        || shared.with_tasks(|t| t.scan_mode(id))?;
+                    if scan_mode {
+                        detected_mode = IndexMode::ScanOnly;
+                        if !watchers.contains_key(id) {
+                            watchers.insert(id.clone(), scan_factory(asset)?);
+                            dirty.insert(id.clone());
+                            scanned.remove(id);
+                        }
+                        if watchers.get_mut(id).expect("inserted").changed()? {
+                            dirty.insert(id.clone());
+                        }
+                        if scanned
+                            .get(id)
+                            .is_some_and(|at| at.elapsed() >= Duration::from_secs(900))
+                        {
+                            dirty.insert(id.clone());
+                        }
+                        if dirty.contains(id)
+                            && scanned
+                                .get(id)
+                                .is_none_or(|at| at.elapsed() >= Duration::from_secs(2))
+                        {
+                            return shared.with_tasks(|t| {
+                                t.enqueue(id, "scan", IndexMode::ScanOnly, true).map(Some)
+                            });
+                        }
+                        return Ok(None);
+                    }
+                    watchers.remove(id);
                     let source = factory(asset)?;
                     let db = shared.load(id)?;
                     let status = db.index_status()?;
@@ -503,7 +587,12 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>) {
                         let count = failures.get(id).map_or(1, |(n, _)| n + 1);
                         failures.insert(id.clone(), (count, Instant::now()));
                         let _ = shared.with_tasks(|t| {
-                            let row = t.enqueue(id, "sync", IndexMode::Journal, true)?;
+                            let kind = if matches!(detected_mode, IndexMode::ScanOnly) {
+                                "scan"
+                            } else {
+                                "sync"
+                            };
+                            let row = t.enqueue(id, kind, detected_mode, true)?;
                             t.set_state(&row.id, "failed", Some(&format!("{e:#}")))
                         });
                     }
@@ -551,9 +640,55 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>) {
                         && current.filesystem_id == asset.registration.filesystem_id,
                     "登记已变化"
                 );
-                let source = factory(&asset)?;
                 let mut db = shared.load(&task.partition_id)?;
-                let result = if task.kind == "sync" {
+                let result = if matches!(task.mode, IndexMode::ScanOnly) {
+                    let id = &task.partition_id;
+                    if !watchers.contains_key(id) {
+                        watchers.insert(id.clone(), scan_factory(&asset)?);
+                    }
+                    let watcher = watchers.get_mut(id).expect("inserted");
+                    scanned.insert(id.clone(), Instant::now());
+                    shared
+                        .states
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .entry(id.clone())
+                        .or_default()
+                        .phase = "scanning".into();
+                    let result = if asset
+                        .registration
+                        .observation
+                        .identity
+                        .filesystem
+                        .as_deref()
+                        == Some("NTFS")
+                    {
+                        let source = factory(&asset)?;
+                        watcher.changed()?;
+                        index::build_checked(
+                            source.as_ref(),
+                            &mut db,
+                            IndexMode::ScanOnly,
+                            &cancel,
+                            &mut |_| {},
+                            &mut || {
+                                watcher.verify()?;
+                                ensure!(!watcher.changed()?, "扫描期间发生变化，需要重新校验");
+                                Ok(())
+                            },
+                        )
+                    } else {
+                        scan::build(watcher.as_mut(), &mut db, &cancel)
+                    };
+                    if result.is_ok() {
+                        dirty.remove(id);
+                    } else {
+                        watchers.remove(id);
+                        dirty.insert(id.clone());
+                    }
+                    result
+                } else if task.kind == "sync" {
+                    let source = factory(&asset)?;
                     {
                         let mut states = shared.states.lock().unwrap_or_else(|e| e.into_inner());
                         states.entry(task.partition_id.clone()).or_default().phase =
@@ -561,6 +696,7 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>) {
                     }
                     index::synchronize(source.as_ref(), &mut db, &cancel).map(|_| ())
                 } else {
+                    let source = factory(&asset)?;
                     index::build(source.as_ref(), &mut db, task.mode, &cancel, &mut |phase| {
                         let mut states = shared.states.lock().unwrap_or_else(|e| e.into_inner());
                         let state = states.entry(task.partition_id.clone()).or_default();

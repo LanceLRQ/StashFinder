@@ -27,11 +27,31 @@ impl Tasks {
                 CREATE TRIGGER pause_delete AFTER DELETE ON paused BEGIN UPDATE policy SET revision=revision+1; END;
                 PRAGMA user_version=1; COMMIT;")?;
         }
+        if db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? == 1 {
+            db.execute_batch("BEGIN; CREATE TABLE scan_modes(partition_id TEXT PRIMARY KEY); PRAGMA user_version=2; COMMIT;")?;
+        }
         ensure!(
-            db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? == 1,
+            db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? == 2,
             "任务库版本不支持"
         );
         Ok(Self { db })
+    }
+    pub fn scan_mode(&self, partition: &str) -> Result<bool> {
+        Ok(self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM scan_modes WHERE partition_id=?1)",
+            [partition],
+            |r| r.get(0),
+        )?)
+    }
+    pub fn set_scan_mode(&self, partition: &str, enabled: bool) -> Result<()> {
+        if enabled {
+            self.db
+                .execute("INSERT OR IGNORE INTO scan_modes VALUES(?1)", [partition])?;
+        } else {
+            self.db
+                .execute("DELETE FROM scan_modes WHERE partition_id=?1", [partition])?;
+        }
+        Ok(())
     }
     pub fn enabled(&self) -> Result<bool> {
         Ok(self

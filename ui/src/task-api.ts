@@ -120,6 +120,7 @@ export const taskLabels: Record<string, string> = {
   superseded: "已重试",
 };
 export const taskKinds: Record<string, string> = {
+  scan: "扫描校验",
   build: "建立索引",
   rebuild: "完整校验",
   sync: "增量更新",

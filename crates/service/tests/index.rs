@@ -537,3 +537,27 @@ fn missing_object_without_delete_record_does_not_remove_persisted_path() {
         1
     );
 }
+
+#[test]
+fn scan_guard_rejects_changed_snapshot_before_publication() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut db = Volume::create(&temp.path().join("v.sqlite"), "{}").unwrap();
+    let source = Fixture {
+        changed: Cell::new(false),
+        journal: false,
+        broken: false,
+        cancel: false,
+    };
+    assert!(
+        stashfinder_service::index::build_checked(
+            &source,
+            &mut db,
+            IndexMode::ScanOnly,
+            &AtomicBool::new(false),
+            &mut |_| {},
+            &mut || anyhow::bail!("monitor changed")
+        )
+        .is_err()
+    );
+    assert_eq!(db.active_generation().unwrap(), None);
+}

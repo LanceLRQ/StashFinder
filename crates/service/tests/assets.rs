@@ -216,3 +216,50 @@ fn failed_discovery_keeps_registration_but_does_not_claim_offline_or_accept_stal
     );
     assert!(failed.candidates.is_empty());
 }
+
+#[test]
+fn capacity_failure_keeps_last_sample_without_marking_partition_inaccessible() {
+    let root = tempfile::tempdir().unwrap();
+    let fixtures = Arc::new(Mutex::new(vec![observation()]));
+    let source = fixtures.clone();
+    let assets = Assets::start(root.path().into(), move || {
+        Ok(source.lock().unwrap().clone())
+    });
+    let s = settled(&assets);
+    assets
+        .submit(Action::Register {
+            version: s.version,
+            candidate_id: "volume-a".into(),
+            name: "A".into(),
+            allow_weak: false,
+        })
+        .unwrap();
+    settled(&assets);
+    fixtures.lock().unwrap()[0].capacity = None;
+    assets.submit(Action::Refresh).unwrap();
+    let s = settled(&assets);
+    let a = &s.assets[0];
+    assert_eq!(a.connection, "online");
+    assert!(a.error.is_none());
+    assert!(a.capacity_error.is_some());
+    let c = a.registration.observation.capacity.as_ref().unwrap();
+    assert_eq!((c.free, c.sampled_at), (500, 1));
+    fixtures.lock().unwrap()[0].capacity = Some(Capacity {
+        total: 1000,
+        free: 250,
+        sampled_at: 2,
+    });
+    assets.submit(Action::Refresh).unwrap();
+    let s = settled(&assets);
+    assert!(s.assets[0].capacity_error.is_none());
+    assert_eq!(
+        s.assets[0]
+            .registration
+            .observation
+            .capacity
+            .as_ref()
+            .unwrap()
+            .free,
+        250
+    );
+}

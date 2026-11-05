@@ -173,6 +173,8 @@ pub struct Registration {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Asset {
+    #[serde(default)]
+    pub capacity_error: Option<String>,
     pub registration: Registration,
     pub connection: String,
     pub mounts: Vec<String>,

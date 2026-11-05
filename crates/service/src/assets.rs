@@ -234,6 +234,7 @@ fn build_snapshot(
             .filter(|o| related(&row.observation, o))
             .collect();
         let mut asset = Asset {
+            capacity_error: None,
             registration: row.clone(),
             connection: if discovered { "offline" } else { "unconfirmed" }.into(),
             mounts: Vec::new(),
@@ -255,6 +256,9 @@ fn build_snapshot(
                 match row.observation.identity.compare(&current.identity) {
                     IdentityMatch::Same => {
                         asset.connection = "online".into();
+                        if current.capacity.is_none() {
+                            asset.capacity_error = Some("容量读取失败，保留上次成功快照".into());
+                        }
                         asset.mounts = current.mounts.clone();
                         // Retry uses the current access path only after identity matching.
                         row.observation.candidate_id = current.candidate_id.clone();

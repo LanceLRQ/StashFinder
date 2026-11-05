@@ -369,3 +369,40 @@ test("escape dismisses the rename dialog without saving", async () => {
   );
   expect(screen.queryByRole("dialog")).toBeNull();
 });
+
+test("capacity failure shows historical values and used space without disabling scanning", async () => {
+  const data = snapshot();
+  const o = data.candidates[0].observation;
+  o.identity.filesystem = "exFAT";
+  data.assets = [
+    {
+      registration: {
+        disk_id: "d",
+        partition_id: "fat",
+        filesystem_id: "f",
+        name: "Archive",
+        revision: 1,
+        state: "ready",
+        observation: o,
+        last_seen: 2,
+      },
+      connection: "online",
+      mounts: ["X:\\"],
+      error: null,
+      capacity_error: "容量读取失败，保留上次成功快照",
+    },
+  ];
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === "asset_snapshot"
+      ? data
+      : { kind: "index", data: { phase: "not_indexed", completed: null } },
+  );
+  render(<Assets />);
+  await screen.findByText("容量读取失败，保留上次成功快照");
+  expect(screen.getByText("已用 500 B")).toBeTruthy();
+  expect(screen.getByText(/上次记录/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "索引 Archive" })).toHaveProperty(
+    "disabled",
+    false,
+  );
+});

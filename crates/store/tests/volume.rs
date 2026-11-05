@@ -1,6 +1,37 @@
 use stashfinder_store::volume::*;
 
 #[test]
+fn index_transactions_wait_for_concurrent_capacity_writer() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("volume.sqlite");
+    let mut db = Volume::create(&path, "{}").unwrap();
+    let generation = db.begin_generation().unwrap();
+    for publish in [false, true] {
+        if publish {
+            db.complete(generation).unwrap();
+        }
+        let other = rusqlite::Connection::open(&path).unwrap();
+        let (send, receive) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            other.execute_batch("BEGIN IMMEDIATE; INSERT OR REPLACE INTO capacity_snapshot VALUES(1,1000,500,1);").unwrap();
+            send.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            other.execute_batch("COMMIT").unwrap();
+        });
+        receive.recv().unwrap();
+        let result = if publish {
+            db.publish_snapshot(generation)
+        } else {
+            db.write_batch(generation, &[], &[], &[], None)
+        };
+        writer.join().unwrap();
+        result.unwrap();
+    }
+    assert_eq!(db.active_generation().unwrap(), Some(generation));
+    assert_eq!(db.capacity().unwrap().unwrap().free, 500);
+}
+
+#[test]
 fn failed_batch_does_not_advance_cursor_or_leave_objects() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("volume.sqlite");

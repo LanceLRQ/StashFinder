@@ -61,6 +61,7 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
     drop(db);
     let snapshot = Snapshot {
         assets: vec![Asset {
+            capacity_error: None,
             registration: catalog.get(&registered.partition_id).unwrap(),
             connection: "offline".into(),
             mounts: vec![],

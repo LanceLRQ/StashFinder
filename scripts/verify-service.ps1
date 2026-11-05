@@ -6,11 +6,12 @@ param(
     [int]$HoldSeconds = 0,
     [string]$VhdDirectory,
     [string]$IndexVhdDirectory,
-    [string]$SyncVhdDirectory
+    [string]$SyncVhdDirectory,
+    [string]$ScanVhdDirectory
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-if (@(@($VhdDirectory,$IndexVhdDirectory,$SyncVhdDirectory) | Where-Object {$_}).Count -gt 1) { throw 'Select one verification suite.' }
+if (@(@($VhdDirectory,$IndexVhdDirectory,$SyncVhdDirectory,$ScanVhdDirectory) | Where-Object {$_}).Count -gt 1) { throw 'Select one verification suite.' }
 $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Run this verification script as administrator, with the ordinary GUI user SID.'
@@ -45,7 +46,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'SCM service probe failed' }
     $result.probe = $probe | ConvertFrom-Json
     if ($result.probe.mode -ne 'windows_service') { throw 'Probe did not reach the SCM service' }
-    if ($SyncVhdDirectory) {
+    if ($ScanVhdDirectory) {
+        & (Join-Path $PSScriptRoot 'verify-scans.ps1') -Binary $binary -Directory $ScanVhdDirectory -HoldSeconds $HoldSeconds
+    } elseif ($SyncVhdDirectory) {
         & (Join-Path $PSScriptRoot 'verify-sync.ps1') -Binary $binary -Directory $SyncVhdDirectory -HoldSeconds $HoldSeconds
     } elseif ($IndexVhdDirectory) {
         & (Join-Path $PSScriptRoot 'verify-index.ps1') -Binary $binary -Directory $IndexVhdDirectory -HoldSeconds $HoldSeconds

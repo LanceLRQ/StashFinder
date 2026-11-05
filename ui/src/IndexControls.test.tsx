@@ -113,3 +113,27 @@ test("recovers index status after a temporary service disconnect", async () => {
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.getByText("尚未索引")).toBeTruthy();
 });
+
+test("exFAT uses scanning without offering NTFS journal actions", async () => {
+  mockStatus(status);
+  render(
+    <IndexControls
+      partitionId="fat"
+      name="Archive"
+      eligible
+      filesystem="exFAT"
+    />,
+  );
+  await screen.findByText("尚未索引");
+  fireEvent.click(screen.getByRole("button", { name: "索引 Archive" }));
+  expect(
+    screen.queryByRole("radio", { name: "创建 USN 日志并索引" }),
+  ).toBeNull();
+  expect(screen.queryByRole("radio", { name: "使用已有 USN 日志" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "开始索引" }));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("index_request", {
+      action: { index_start: { partition_id: "fat", mode: "scan_only" } },
+    }),
+  );
+});
