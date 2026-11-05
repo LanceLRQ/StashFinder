@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod browse;
+pub mod file_operations;
 pub mod index;
 pub mod search;
 pub mod tasks;
@@ -8,7 +9,7 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 pub const MAX_FRAME: usize = 16 * 1024;
 pub const SNAPSHOT_EXPIRED: &str = "设备快照已更新，请刷新";
 
@@ -82,6 +83,23 @@ pub enum Action {
         offset: usize,
         limit: usize,
     },
+    FileSelectionBegin(file_operations::SelectionOrigin),
+    FileRecordsBegin(file_operations::SelectionOrigin),
+    FileSelectionAdd {
+        id: u64,
+        chunk: file_operations::SelectionChunk,
+    },
+    FileSelectionSeal {
+        id: u64,
+    },
+    FileSelectionPage {
+        id: u64,
+        offset: usize,
+    },
+    FileSelectionCancel {
+        id: u64,
+    },
+    FileDestination(file_operations::EntryRef),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -102,6 +120,10 @@ pub enum Response {
     Directory(Box<browse::DirectoryPage>),
     SearchPage(Box<index::SearchPage>),
     Tasks(Box<tasks::TaskPage>),
+    SelectionStarted(u64),
+    SelectionCount(usize),
+    SelectionPage(Box<file_operations::SelectionPage>),
+    FileTarget(Box<file_operations::PreparedTarget>),
     Error(String),
 }
 

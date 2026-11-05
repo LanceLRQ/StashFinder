@@ -4,6 +4,7 @@ import type { SearchHit } from "./index-api";
 export type FileRow = SearchHit["file"];
 export type Ancestor = { entry: number[]; name: string };
 export type DirectoryPage = {
+  total?: number;
   filesystem_id: string;
   generation: string;
   revision: string;

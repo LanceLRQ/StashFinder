@@ -2,16 +2,18 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^S-1-[0-9-]+$')]
     [string]$OwnerSid,
-    [ValidateRange(0, 600)]
+    [ValidateRange(0, 3600)]
     [int]$HoldSeconds = 0,
     [string]$VhdDirectory,
     [string]$IndexVhdDirectory,
     [string]$SyncVhdDirectory,
-    [string]$ScanVhdDirectory
+    [string]$ScanVhdDirectory,
+    [string]$FileOperationsVhdDirectory,
+    [ValidateSet('Prepare','Resume')][string]$FileOperationsPhase='Prepare'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-if (@(@($VhdDirectory,$IndexVhdDirectory,$SyncVhdDirectory,$ScanVhdDirectory) | Where-Object {$_}).Count -gt 1) { throw 'Select one verification suite.' }
+if (@(@($VhdDirectory,$IndexVhdDirectory,$SyncVhdDirectory,$ScanVhdDirectory,$FileOperationsVhdDirectory) | Where-Object {$_}).Count -gt 1) { throw 'Select one verification suite.' }
 $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Run this verification script as administrator, with the ordinary GUI user SID.'
@@ -46,7 +48,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'SCM service probe failed' }
     $result.probe = $probe | ConvertFrom-Json
     if ($result.probe.mode -ne 'windows_service') { throw 'Probe did not reach the SCM service' }
-    if ($ScanVhdDirectory) {
+    if ($FileOperationsVhdDirectory) {
+        & (Join-Path $PSScriptRoot 'verify-file-operations.ps1') -Binary $binary -Directory $FileOperationsVhdDirectory -Phase $FileOperationsPhase -HoldSeconds $HoldSeconds
+    } elseif ($ScanVhdDirectory) {
         & (Join-Path $PSScriptRoot 'verify-scans.ps1') -Binary $binary -Directory $ScanVhdDirectory -HoldSeconds $HoldSeconds
     } elseif ($SyncVhdDirectory) {
         & (Join-Path $PSScriptRoot 'verify-sync.ps1') -Binary $binary -Directory $SyncVhdDirectory -HoldSeconds $HoldSeconds

@@ -17,7 +17,10 @@ pub fn read(path: &Path, request: &DirectoryRequest) -> Result<DirectoryPage> {
     let mut db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let tx = db.transaction()?;
     ensure!(
-        tx.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? == 3,
+        matches!(
+            tx.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
+            3..=4
+        ),
         "目录库需要升级，请等待服务初始化"
     );
     let manifest: String =
@@ -84,6 +87,7 @@ pub fn read(path: &Path, request: &DirectoryRequest) -> Result<DirectoryPage> {
         .collect::<Vec<_>>()
         .join("\\");
     let mut page = DirectoryPage {
+        total:usize::try_from(tx.query_row("SELECT count(*) FROM paths p JOIN objects o ON o.generation=p.generation AND o.id=p.object WHERE p.generation=?1 AND p.parent=?2 AND (?3=0 OR o.kind='folder')",params![generation,location,request.folders_only],|r|r.get::<_,i64>(0))?)?,
         filesystem_id: request.filesystem_id.clone(),
         generation: generation.to_string(),
         revision: revision.to_string(),

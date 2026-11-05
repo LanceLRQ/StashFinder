@@ -86,6 +86,7 @@ pub fn build(source: &mut dyn Source, db: &mut Volume, cancelled: &AtomicBool) -
             db.write_batch(
                 generation,
                 &[Object {
+                    identity: None,
                     id: root.clone(),
                     source: "path".into(),
                     kind: "folder".into(),
@@ -126,6 +127,7 @@ pub fn build(source: &mut dyn Source, db: &mut Volume, cancelled: &AtomicBool) -
                             queue.push_back(path)
                         }
                         objects.push(Object {
+                            identity: row.identity.clone(),
                             id: id.clone(),
                             source: "path".into(),
                             kind: if directory { "folder" } else { "file" }.into(),

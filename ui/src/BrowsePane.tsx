@@ -8,6 +8,15 @@ import {
 import DirectoryTree from "./DirectoryTree";
 import FileList from "./FileList";
 import FileDetails from "./FileDetails";
+import FileContextMenu, { type MenuAction } from "./FileContextMenu";
+import { useFileOperations } from "./FileOperations";
+import {
+  fileKey,
+  type FileAction,
+  type SelectionInput,
+  type EntryRef,
+} from "./file-operations";
+import type { FileRow } from "./browse-api";
 
 export default function BrowsePane({
   id,
@@ -19,6 +28,9 @@ export default function BrowsePane({
   onSearch,
   onTitle,
   onLocation,
+  onLocate,
+  indexVersion = "",
+  automatic = false,
 }: {
   id: number;
   asset?: Asset;
@@ -29,8 +41,26 @@ export default function BrowsePane({
   onSearch: (text: string) => void;
   onTitle: (id: number, title: string) => void;
   onLocation?: (id: number, page: DirectoryPage) => void;
+  onLocate?: (row: FileRow) => void;
+  indexVersion?: string;
+  automatic?: boolean;
 }) {
   const [parent, setParent] = useState(initialParent);
+  const operations = useFileOperations();
+  const [allSelected, setAllSelected] = useState(false);
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    blank: boolean;
+  } | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const lastIndex = useRef(indexVersion);
+  useEffect(() => {
+    if (lastIndex.current !== indexVersion && editing === null) {
+      lastIndex.current = indexVersion;
+      setRefresh((n) => n + 1);
+    }
+  }, [indexVersion, editing]);
   const [page, setPage] = useState<DirectoryPage | null>(null);
   const [selection, setSelection] = useState<string[]>(
     focusEntry ? [focusEntry.join(",")] : [],
@@ -92,12 +122,23 @@ export default function BrowsePane({
         setNotice("目录已不存在，已返回可用的上级目录");
       }
       if (token !== request.current) return;
+      const previous = currentPage.current;
+      if (
+        previous &&
+        (previous.generation !== result.generation ||
+          previous.revision !== result.revision)
+      ) {
+        setSelection([]);
+        setAllSelected(false);
+        setNotice("");
+      }
       setPage(result);
-      setSelection((previous) =>
-        previous.filter((key) =>
-          result.entries.some((row) => row.entry.join(",") === key),
-        ),
-      );
+      if (!previous)
+        setSelection((ids) =>
+          ids.filter((key) =>
+            result.entries.some((row) => row.entry.join(",") === key),
+          ),
+        );
       setBusy(false);
     }
     void load().catch((e) => {
@@ -119,6 +160,9 @@ export default function BrowsePane({
     );
   }, [id, page, asset?.registration.name, onTitle]);
   function navigate(next: number[] | null) {
+    setAllSelected(false);
+    setMenu(null);
+    setEditing(null);
     setSelection([]);
     setNotice("");
     setParent(next);
@@ -127,6 +171,118 @@ export default function BrowsePane({
   function reload() {
     setParent(page?.location || parent);
     setRefresh((n) => n + 1);
+  }
+  const count = allSelected
+    ? Math.max(0, (page?.total ?? page?.entries.length ?? 0) - selection.length)
+    : selection.length;
+  const selectedRows =
+    page?.entries.filter((row) =>
+      allSelected
+        ? !selection.includes(row.entry.join(","))
+        : selection.includes(row.entry.join(",")),
+    ) ?? [];
+  const online =
+    asset?.connection === "online" && asset.registration.state === "ready";
+  function context(): EntryRef | null {
+    return page && partition && filesystem
+      ? {
+          partition_id: partition,
+          filesystem_id: filesystem,
+          generation: page.generation,
+          revision: page.revision,
+          entry: page.location,
+        }
+      : null;
+  }
+  function input(override?: number[][]): SelectionInput | null {
+    const ref = context();
+    return ref
+      ? {
+          origin: {
+            kind: "directory",
+            context: ref,
+            all: override ? false : allSelected,
+          },
+          entries:
+            override ?? selection.map((key) => key.split(",").map(Number)),
+          positions: [],
+        }
+      : null;
+  }
+  function perform(action: FileAction, override?: number[][]) {
+    const selected = input(override);
+    if (selected)
+      operations.run(selected, action, () => {
+        setNotice(
+          automatic
+            ? "文件操作已结束，索引更新中"
+            : "文件操作已结束，索引待更新",
+        );
+        reload();
+      });
+  }
+  function open(row: FileRow) {
+    if (row.kind === "folder") navigate(row.entry);
+    else perform("open", [row.entry]);
+  }
+  function rename() {
+    if (online && count === 1 && selectedRows[0])
+      setEditing(selectedRows[0].entry.join(","));
+  }
+  function showMenu(x: number, y: number, blank = false) {
+    setMenu({ x, y, blank });
+  }
+  function menuAction(action: MenuAction) {
+    if (action === "open") {
+      if (selectedRows[0]) open(selectedRows[0]);
+      return;
+    }
+    if (action === "browse_parent") {
+      if (selectedRows[0]) onLocate?.(selectedRows[0]);
+      return;
+    }
+    if (action === "rename") {
+      rename();
+      return;
+    }
+    if (action === "paste") {
+      const target = context();
+      if (target)
+        operations.paste(target, () => {
+          setNotice(
+            automatic
+              ? "文件操作已结束，索引更新中"
+              : "文件操作已结束，索引待更新",
+          );
+          reload();
+        });
+      return;
+    }
+    if (action === "properties" && (!online || count !== 1)) {
+      setPreview(true);
+      return;
+    }
+    if (action === "more") {
+      if (menu) perform({ more: { x: menu.x, y: menu.y } });
+      return;
+    }
+    perform(action);
+  }
+  function fileKeys(e: React.KeyboardEvent) {
+    return fileKey(e, {
+      copy: () => perform("copy"),
+      cut: () => perform("cut"),
+      paste: () => {
+        if (online) menuAction("paste");
+      },
+      rename,
+      remove: (permanent) => perform(permanent ? "delete" : "recycle"),
+      properties: () => menuAction("properties"),
+      menu: () => {
+        const rect = (e.target as HTMLElement).getBoundingClientRect();
+        showMenu(rect.left + 20, rect.bottom, count === 0);
+      },
+    });
   }
   async function more() {
     if (!page || page.next === null || busy) return;
@@ -324,10 +480,45 @@ export default function BrowsePane({
                   key={page.location.join(",")}
                   rows={page.entries}
                   selection={selection}
-                  onSelect={setSelection}
-                  onOpen={(row) => {
-                    if (row.kind === "folder") navigate(row.entry);
+                  allSelected={allSelected}
+                  onSelect={(ids, all = false) => {
+                    setSelection(ids);
+                    setAllSelected(all);
                   }}
+                  onSelectAll={() => {
+                    setSelection([]);
+                    setAllSelected(true);
+                  }}
+                  onContext={(_row, x, y) => showMenu(x, y)}
+                  onBlankContext={(x, y) => {
+                    setSelection([]);
+                    setAllSelected(false);
+                    showMenu(x, y, true);
+                  }}
+                  onFileKey={fileKeys}
+                  onDrag={(row, current) => {
+                    if (!current) {
+                      setSelection([row.entry.join(",")]);
+                      setAllSelected(false);
+                    }
+                    perform("drag", current ? undefined : [row.entry]);
+                  }}
+                  editing={
+                    editing
+                      ? {
+                          entry: editing,
+                          onCancel: () => setEditing(null),
+                          onSubmit: (name) => {
+                            const key = editing;
+                            setEditing(null);
+                            perform({ rename: name }, [
+                              key.split(",").map(Number),
+                            ]);
+                          },
+                        }
+                      : undefined
+                  }
+                  onOpen={open}
                   next={page.next}
                   busy={busy}
                   onMore={() => void more()}
@@ -339,11 +530,8 @@ export default function BrowsePane({
             </div>
             {preview && (
               <FileDetails
-                rows={
-                  page?.entries.filter((row) =>
-                    selection.includes(row.entry.join(",")),
-                  ) || []
-                }
+                selectionCount={count}
+                rows={count === 1 ? selectedRows : []}
                 partition={asset.registration.name}
                 connection={asset.connection}
                 indexedAt={page?.indexed_at ?? null}
@@ -351,6 +539,7 @@ export default function BrowsePane({
             )}
           </div>
           <footer className="browse-status">
+            {count > 0 && <span>已选择 {count.toLocaleString()} 项</span>}
             <span>
               {connectionLabel[asset.connection] || "状态未确认"}
               {asset.connection === "online" && asset.mounts.length > 0
@@ -368,6 +557,22 @@ export default function BrowsePane({
                 : ""}
             </span>
           </footer>
+          {menu && (
+            <FileContextMenu
+              x={menu.x}
+              y={menu.y}
+              count={menu.blank ? 0 : count}
+              online={!!online}
+              singleFile={count === 1 && selectedRows[0]?.kind === "file"}
+              sameParent
+              folder={count === 1 && selectedRows[0]?.kind === "folder"}
+              paste={menu.blank && !!online}
+              onAction={menuAction}
+              onClose={() => {
+                setMenu(null);
+              }}
+            />
+          )}
         </>
       )}
     </div>

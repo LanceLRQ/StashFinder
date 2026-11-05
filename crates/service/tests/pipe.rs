@@ -91,6 +91,7 @@ async fn rename_over_real_pipe_survives_process_termination_and_restart() {
         let generation = db.begin_generation().unwrap();
         let objects = [
             Object {
+                identity: None,
                 id: vec![1],
                 source: "ntfs64".into(),
                 kind: "folder".into(),
@@ -100,6 +101,7 @@ async fn rename_over_real_pipe_survives_process_termination_and_restart() {
                 attributes: 16,
             },
             Object {
+                identity: None,
                 id: vec![2],
                 source: "ntfs64".into(),
                 kind: "file".into(),
@@ -140,8 +142,21 @@ async fn rename_over_real_pipe_survives_process_termination_and_restart() {
                 .unwrap(),
         );
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let mut connected = false;
         loop {
-            let s = snapshot(&name).await.unwrap();
+            let s = match snapshot(&name).await {
+                Ok(snapshot) => snapshot,
+                Err(error)
+                    if !connected
+                        && error.is::<tokio::time::error::Elapsed>()
+                        && std::time::Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                    continue;
+                }
+                Err(error) => panic!("{error:#}"),
+            };
+            connected = true;
             if !s.busy {
                 assert!(s.error.is_none(), "{:?}", s.error);
                 assert_eq!(s.assets[0].registration.filesystem_id, row.filesystem_id);

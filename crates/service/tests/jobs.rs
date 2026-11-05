@@ -33,6 +33,7 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
     let mut db = Volume::open(&catalog.volume_path(&registered.filesystem_id).unwrap()).unwrap();
     let g = db.begin_generation().unwrap();
     let objects = [(1, "folder", None), (2, "file", Some(7))].map(|(id, kind, size)| Object {
+        identity: None,
         id: vec![id],
         source: "ntfs64".into(),
         kind: kind.into(),

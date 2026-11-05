@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import Assets from "./Assets";
 import Workspace from "./Workspace";
+import FileOperations from "./FileOperations";
 import Settings from "./Settings";
 import type { AssetSnapshot } from "./asset-api";
 import Tasks from "./Tasks";
@@ -46,7 +47,7 @@ export default function Desktop() {
     revision: 0,
   });
   const [development, setDevelopment] = useState(false);
-  const tasks = useTasks(loaded && page !== "files");
+  const tasks = useTasks(loaded);
   const [focusTask, setFocusTask] = useState("");
   useEffect(() => {
     let active = true;
@@ -145,7 +146,7 @@ export default function Desktop() {
         正在读取设置…
       </div>
     );
-  return (
+  const content = (
     <div className={`desktop ${preferences.collapsed ? "rail-collapsed" : ""}`}>
       <aside className="function-rail">
         <div className="rail-brand">
@@ -228,6 +229,11 @@ export default function Desktop() {
               categories={preferences.categories}
               request={searchRequest}
               browseRequest={browseRequest}
+              completedTasks={tasks.data?.tasks.filter(
+                (t) => t.state === "completed",
+              )}
+              automatic={tasks.data?.automatic}
+              paused={tasks.data?.paused}
             />
           </div>
         )}
@@ -268,4 +274,5 @@ export default function Desktop() {
       </main>
     </div>
   );
+  return <FileOperations>{content}</FileOperations>;
 }

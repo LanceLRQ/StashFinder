@@ -22,6 +22,7 @@ fn fixture(path: &std::path::Path) -> Volume {
         (4, "file", None),
     ]
     .map(|(id, kind, size)| Object {
+        identity: None,
         id: vec![id],
         source: "ntfs".into(),
         kind: kind.into(),
@@ -65,6 +66,7 @@ fn reads_direct_children_and_preserves_link_identity_without_source_io() {
     let _db = fixture(&path);
     let mut req = request();
     let root = browse::read(&path, &req).unwrap();
+    assert_eq!(root.total, 2);
     assert_eq!(
         root.entries
             .iter()
@@ -148,7 +150,7 @@ fn rejects_pages_after_incremental_update_or_generation_switch_and_migrates_v2()
     );
     drop(db);
     let sql = rusqlite::Connection::open(&path).unwrap();
-    sql.execute_batch("ALTER TABLE generations DROP COLUMN revision; PRAGMA user_version=2;")
+    sql.execute_batch("DROP TABLE native_identity; ALTER TABLE generations DROP COLUMN revision; PRAGMA user_version=2;")
         .unwrap();
     drop(sql);
     let _db = Volume::open(&path).unwrap();
@@ -170,6 +172,7 @@ fn paginates_without_losing_children_and_bounds_the_wire_response() {
     let g = db.begin_generation().unwrap();
     let objects = (0u16..110)
         .map(|i| Object {
+            identity: None,
             id: i.to_le_bytes().to_vec(),
             source: "scan".into(),
             kind: if i == 0 { "folder" } else { "file" }.into(),

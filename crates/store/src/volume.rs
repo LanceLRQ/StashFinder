@@ -8,6 +8,7 @@ pub struct Volume {
 
 #[derive(Clone)]
 pub struct Object {
+    pub identity: Option<stashfinder_core::file_operations::NativeIdentity>,
     pub id: Vec<u8>,
     pub source: String,
     pub kind: String,
@@ -42,13 +43,36 @@ pub(crate) fn configure(db: &Connection) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn read_native_identity(
+    db: &Connection,
+    generation: i64,
+    object: &[u8],
+) -> Result<Option<stashfinder_core::file_operations::NativeIdentity>> {
+    let bytes: Option<Vec<u8>> = db
+        .query_row(
+            "SELECT native_id FROM native_identity WHERE generation=?1 AND object=?2",
+            params![generation, object],
+            |r| r.get(0),
+        )
+        .optional()?;
+    bytes
+        .map(|b| {
+            ensure!(b.len() == 12, "原生身份数据损坏");
+            Ok(stashfinder_core::file_operations::NativeIdentity {
+                volume: u32::from_le_bytes(b[..4].try_into()?),
+                file: u64::from_le_bytes(b[4..].try_into()?),
+            })
+        })
+        .transpose()
+}
+
 impl Volume {
     pub fn inspect_manifest(path: &Path) -> Result<String> {
         let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         ensure!(
             matches!(
                 db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
-                1..=3
+                1..=4
             ),
             "不支持的分区库版本"
         );
@@ -87,7 +111,7 @@ impl Volume {
         ensure!(
             matches!(
                 db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
-                1..=3
+                1..=4
             ),
             "不支持的分区库版本"
         );
@@ -125,7 +149,24 @@ impl Volume {
         {
             self.db.execute_batch("BEGIN IMMEDIATE; ALTER TABLE generations ADD COLUMN revision INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=3; COMMIT;")?;
         }
+        if self
+            .db
+            .query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?
+            == 3
+        {
+            let tx = self.db.transaction()?;
+            tx.execute_batch("CREATE TABLE native_identity (generation INTEGER NOT NULL, object BLOB NOT NULL, identity_kind TEXT NOT NULL CHECK(identity_kind='file_id64'), native_id BLOB NOT NULL CHECK(length(native_id)=12), PRIMARY KEY(generation,object), FOREIGN KEY(generation,object) REFERENCES objects(generation,id) ON DELETE CASCADE); PRAGMA user_version=4;")?;
+            tx.commit()?;
+        }
         Ok(())
+    }
+
+    pub fn native_identity(
+        &self,
+        generation: i64,
+        object: &[u8],
+    ) -> Result<Option<stashfinder_core::file_operations::NativeIdentity>> {
+        read_native_identity(&self.db, generation, object)
     }
 
     pub fn manifest(&self) -> Result<String> {
@@ -256,6 +297,21 @@ impl Volume {
             }
             ensure!(!object.id.is_empty(), "文件 ID 为空");
             tx.execute("INSERT INTO objects VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(generation,id) DO UPDATE SET source=excluded.source,kind=excluded.kind,size=excluded.size,created=excluded.created,modified=excluded.modified,attributes=excluded.attributes", params![generation, object.id, object.source, object.kind, object.size, object.created.as_ref().map(|v|v.as_slice()), object.modified.as_ref().map(|v|v.as_slice()), object.attributes])?;
+            tx.execute(
+                "DELETE FROM native_identity WHERE generation=?1 AND object=?2",
+                params![generation, object.id],
+            )?;
+            if let Some(identity) = &object.identity {
+                let bytes = [
+                    identity.volume.to_le_bytes().as_slice(),
+                    identity.file.to_le_bytes().as_slice(),
+                ]
+                .concat();
+                tx.execute(
+                    "INSERT INTO native_identity VALUES(?1,?2,'file_id64',?3)",
+                    params![generation, object.id, bytes],
+                )?;
+            }
             // Replaced metadata and its pending state share the cursor transaction.
             tx.execute(
                 "DELETE FROM pending_metadata WHERE generation=?1 AND object=?2",

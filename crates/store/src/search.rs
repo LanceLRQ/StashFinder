@@ -13,6 +13,7 @@ use std::{
 
 pub struct SearchIndex {
     pub generation: i64,
+    pub revision: i64,
     pub partial: bool,
     pub indexed_at: Option<u64>,
     pub needs_validation: bool,
@@ -107,10 +108,11 @@ impl SearchIndex {
         partial: bool,
         cancelled: &AtomicBool,
     ) -> Result<Self> {
-        let (completed, phase): (Option<i64>, String) = volume.db.query_row(
-            "SELECT completed,phase FROM generations WHERE id=?1",
+        let _snapshot = volume.db.unchecked_transaction()?;
+        let (completed, phase, revision): (Option<i64>, String, i64) = volume.db.query_row(
+            "SELECT completed,phase,revision FROM generations WHERE id=?1",
             [generation],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
         let mut directories = Vec::new();
         let mut ids = HashMap::new();
@@ -193,6 +195,7 @@ impl SearchIndex {
             directory_entries[*index] = id.clone();
         }
         Ok(Self {
+            revision,
             folded_directories: directories.iter().map(|s| s.to_lowercase()).collect(),
             directory_entries,
             directory_ids: ids,

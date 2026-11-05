@@ -4,6 +4,7 @@ use std::sync::atomic::AtomicBool;
 
 fn object(id: u8, folder: bool, size: Option<i64>) -> Object {
     Object {
+        identity: None,
         id: vec![id],
         source: "ntfs".into(),
         kind: if folder { "folder" } else { "file" }.into(),
@@ -206,7 +207,7 @@ fn m1_database_migrates_without_losing_manifest_capacity_or_active_records() {
     assert_eq!(
         sql.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        3
+        4
     );
     assert_eq!(
         sql.query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))

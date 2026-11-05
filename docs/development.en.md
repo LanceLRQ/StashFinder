@@ -54,11 +54,34 @@ The default home screen is Overview, with a collapsible navigation rail. Files r
 ## Directory browsing and tabs acceptance
 
 - Click a partition name in Overview or select a registered partition in Files. The tree reads the local index on demand and works offline. Double-click a folder or press Enter to enter it; use breadcrumbs or Alt+Up to go up.
-- Use + or Ctrl+T for a browse tab, Ctrl+Tab to switch, and Ctrl+W to close. Each tab retains its location, scroll and multi-selection. Ctrl/Shift-click and arrow keys select entries; Ctrl+A selects loaded entries only. Renaming a partition or changing its drive letter does not change its directory identity.
+- Use + or Ctrl+T for a browse tab, Ctrl+Tab to switch, and Ctrl+W to close. Each tab retains its location, scroll and multi-selection. Ctrl/Shift-click and arrow keys select entries; Ctrl+A selects all immediate directory children. Renaming a partition or changing its drive letter does not change its directory identity.
 - Typing a query in a browse tab or searching from Overview opens the single search tab. Closing it returns to the previous browse tab. Ctrl+F focuses search. A result's context action, “在新标签页浏览所在目录” (browse parent in a new tab), uses filesystem and directory IDs and works offline.
 - View toggles the tree, metadata preview and breadcrumbs. Resize tree and preview panes from their bottom corners. Preview shows indexed metadata only, explicitly labels unknown values and never reads file contents. Tab and pane state lasts for the current window session only.
 - Directory pages contain at most 100 entries, also bounded by the 16 KiB frame budget. Load more fetches subsequent pages; a search target beyond the loaded page requires loading more to view it. F5 refreshes the current directory. Index changes reject old page cursors and prompt a refresh; read failures preserve visible rows instead of displaying an empty directory. A confirmed deleted directory falls back to its nearest available ancestor and clears selection.
 - With a matching ordinary-user GUI and backend build, verify online and offline partitions: nested folders, two tabs with independent selection and scrolling, search and return, parent-directory location from results, and pane toggles. Automated tests and controlled browser fixtures do not replace real IPC acceptance.
+
+## Production file operation acceptance
+
+See [file operations](file-operations.en.md) for shortcuts, availability and limits. The desktop runs ordinary-user operations; service selection endpoints are read-only. Protocol 7 adds chunked selection. Partition schema 4 independently stores native scan identity. Older scan catalogs remain searchable but require an identity update before real operations.
+
+After building, obtain the ordinary GUI user's SID, then run this in administrator PowerShell with a new disposable test directory:
+
+```powershell
+target/debug/stashfinder-service.exe --sid
+.\scripts\verify-service.ps1 -OwnerSid 'S-1-5-21-REPLACE-WITH-USER-SID' -FileOperationsVhdDirectory 'D:\tmp\StashFinder-M6-new-directory' -HoldSeconds 1800
+```
+
+The temporary LocalSystem service uses an isolated catalog. A new 1 GiB VHD supplies NTFS/exFAT/FAT32 partitions and ordinary, Chinese, folder, empty-folder, long-path and collision fixtures. No USN journal is created and only test partitions are registered. Start ordinary-user GUI checks after `verification.json` reports `ready: true`. Create `stop-gui` inside the test directory to finish early. The script detaches its exact VHD; the wrapper stops/removes the temporary service, retaining the image, isolated data and evidence. Inspect reports on failure; never substitute personal disks. `-FileOperationsPhase Resume` only resumes the previously generated, label-matched fixture partitions with a new empty test catalog.
+
+Check complete multi-selection and same-parent native menus; Explorer copy/drop contents and unchanged sources; bidirectional app/Explorer cut/paste, cross-volume moves and external physical sources; conflicts, cancellation and partial results; F2 and case-only rename; recycling and restoring only the test item; default cancellation and explicit permanent-delete confirmation; offline/replaced identity rejection, letter changes and backend restart; text/IME focus and close-during-operation prompts. Never empty the whole Recycle Bin or substitute drop acceptance for destination-file checks. Test a long source file copied to a short destination separately from copying a deeply nested folder hierarchy, which can encounter Windows limits.
+
+A real IPC/native check is ignored by default. Run it only against the authorized, ready VHD above. It creates its own fixtures and checks identity, batch cross-volume copy, moves, truthful case-only rename results and permanent deletion on all three filesystems. It does not replace GUI acceptance:
+
+```powershell
+$env:SF_M6_MANIFEST = 'D:\tmp\StashFinder-M6-new-directory\verification.json'
+cargo test -p stashfinder-service --test file_operations_real registered_three --locked -- --ignored --nocapture
+Remove-Item Env:SF_M6_MANIFEST
+```
 
 ## Partition registration acceptance
 
@@ -70,7 +93,7 @@ The default home screen is Overview, with a collapsible navigation rail. Files r
 
 Foreground development requires an explicit absolute data directory. SCM mode defaults to `%ProgramData%\StashFinder`, which must be provisioned beforehand as a direct child of ProgramData. Disable root ACL inheritance, grant only SYSTEM and Administrators inheritable full control, and disallow reparse points. The GUI reads through the service, not directly from databases. The verification script below provisions isolated protected storage. Production installation and migration are not implemented.
 
-`catalog.sqlite` stores registrations; `volumes/<filesystem-id>.sqlite` stores independent filesystem data; `tasks.sqlite` stores tasks, automatic-update policy and paused partitions. SQLite uses WAL/FULL: copying only a live main database is not a backup. The recovery API creates a separate candidate catalog only, not a complete backup/restore tool. Protocol version 6 has a 16 KiB frame limit and paginated assets, tasks, directory entries and search results; use UI and service binaries from the same build. Existing partition databases migrate transactionally only after ownership validation; mismatched databases are not migrated.
+`catalog.sqlite` stores registrations; `volumes/<filesystem-id>.sqlite` stores independent filesystem data; `tasks.sqlite` stores tasks, automatic-update policy and paused partitions. SQLite uses WAL/FULL: copying only a live main database is not a backup. The recovery API creates a separate candidate catalog only, not a complete backup/restore tool. Protocol version 7 has a 16 KiB frame limit and paginated assets, tasks, directory entries and search results; use UI and service binaries from the same build. Existing partition databases migrate transactionally only after ownership validation; mismatched databases are not migrated.
 
 ## Automatic-update acceptance
 
@@ -101,7 +124,7 @@ npm --prefix ui run tauri -- build --debug --no-bundle
 4. Open file search. Matching is case-insensitive and includes paths by default: `aaa` matches `aaa\bbb.exe`; `aaa bbb` requires both words in either order; `"aaa bbb"` matches consecutive text. Filename-only mode and partition filters are available. Drive-letter terms match current online mounts only.
 5. Detach the test disk, refresh devices, then search or restart the service. Partition names, relative paths, index timestamps and offline status must persist. Online describes partition state, not a guarantee that each snapshot entry still exists unchanged.
 
-Search provides complete counts, global sorting, bounded batch pages, type/regex filters and metadata duplicate candidates; see search help. Real-result file operations remain planned. Reparse points are recorded without following targets; hard links retain multiple paths. File contents are not read. Cache and no-match performance still need optimization.
+Search provides complete counts, global sorting, bounded batch pages, type/regex filters and metadata duplicate candidates; see search help. See file operations help for actions on real results. Reparse points are recorded without following targets; hard links retain multiple paths. File contents are not read. Cache and no-match performance still need optimization.
 
 Build generations currently remain in partition databases, so repeated rebuilding increases database size; automatic reclamation is not implemented. Healthy local snapshots remain searchable when device access or identity is uncertain, with the connection issue shown instead of online status.
 
@@ -197,8 +220,8 @@ The OS file cache is still warm after import; this is not a cold-start test. It 
 
 ## Layout
 
-`crates/core` defines identity/query models and the protocol; `crates/windows` provides device and NTFS adapters; `crates/service` coordinates registration, indexing and search jobs; `crates/store` provides the asset catalog, independent partition databases, search caches and synthetic baseline; `ui` provides asset management, read-only search and development validation.
+`crates/core` defines identity/query models and the protocol; `crates/windows` provides device and NTFS adapters; `crates/service` coordinates registration, indexing and search jobs; `crates/store` provides the asset catalog, independent partition databases, search caches and synthetic baseline; `ui` provides asset management, search, file operations and development validation.
 
 ## Full search acceptance
 
-See [search help](search.en.md). Verify category persistence across restart, cross-partition joint duplicate keys, zero and unknown sizes, regex errors, global column sorting, distant scrolling and cross-page selection, and cancellation. Protocol version 6 keeps batch pages within 16 KiB. See the [query baseline](query-performance.en.md) for million/ten-million-row reproduction and limits.
+See [search help](search.en.md). Verify category persistence across restart, cross-partition joint duplicate keys, zero and unknown sizes, regex errors, global column sorting, distant scrolling and cross-page selection, and cancellation. Protocol version 7 keeps batch pages within 16 KiB. See the [query baseline](query-performance.en.md) for million/ten-million-row reproduction and limits.

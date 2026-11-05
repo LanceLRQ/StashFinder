@@ -21,12 +21,18 @@ export default function Workspace({
   request,
   browseRequest,
   categories,
+  completedTasks = [],
+  automatic,
+  paused = [],
 }: {
   assets: Asset[];
   includePath: boolean;
   request: { text: string; revision: number };
   browseRequest?: { partition: string; revision: number };
   categories?: Category[];
+  completedTasks?: { partition_id: string; id: string; updated: number }[];
+  automatic?: boolean;
+  paused?: string[];
 }) {
   const [tabs, setTabs] = useState<Tab[]>([
     { id: 1, title: "浏览", partition: null, filesystem: null, parent: null },
@@ -131,7 +137,13 @@ export default function Workspace({
         );
     }
   }
-  function locate(hit: SearchHit) {
+  function locate(
+    hit: Pick<
+      SearchHit,
+      "partition_id" | "filesystem_id" | "partition_name" | "file"
+    >,
+    folder = false,
+  ) {
     const id = ++sequence.current;
     setTabs((previous) => [
       ...previous,
@@ -140,8 +152,8 @@ export default function Workspace({
         title: hit.partition_name,
         partition: hit.partition_id,
         filesystem: hit.filesystem_id,
-        parent: hit.file.parent,
-        focusEntry: hit.file.entry,
+        parent: folder ? hit.file.entry : hit.file.parent,
+        focusEntry: folder ? undefined : hit.file.entry,
       },
     ]);
     setActive(id);
@@ -248,6 +260,23 @@ export default function Workspace({
                 initialParent={tab.parent}
                 focusEntry={tab.focusEntry}
                 onLocation={location}
+                indexVersion={completedTasks
+                  .filter((t) => t.partition_id === tab.partition)
+                  .map((t) => `${t.id}:${t.updated}`)
+                  .sort()
+                  .join("|")}
+                automatic={
+                  automatic === true && !paused.includes(tab.partition ?? "")
+                }
+                onLocate={(row) => {
+                  if (asset)
+                    locate({
+                      partition_id: asset.registration.partition_id,
+                      filesystem_id: asset.registration.filesystem_id,
+                      partition_name: asset.registration.name,
+                      file: row,
+                    });
+                }}
                 onSearch={(text) => {
                   const page = locations.current.get(tab.id);
                   setSearchContext(
@@ -304,6 +333,10 @@ export default function Workspace({
             active={active === 0}
             onLocate={locate}
             categories={categories}
+            indexVersion={completedTasks
+              .map((t) => `${t.id}:${t.updated}`)
+              .sort()
+              .join("|")}
             context={searchContext}
           />
         </section>

@@ -11,6 +11,14 @@ import {
 import FileDetails from "./FileDetails";
 import SearchFilters from "./SearchFilters";
 import VirtualResults, { virtualScale } from "./VirtualResults";
+import FileContextMenu, { type MenuAction } from "./FileContextMenu";
+import RenameInput from "./RenameInput";
+import { useFileOperations } from "./FileOperations";
+import {
+  fileKey,
+  type FileAction,
+  type SelectionInput,
+} from "./file-operations";
 import "./assets.css";
 import "./search.css";
 import "./search-advanced.css";
@@ -25,17 +33,32 @@ export default function Search({
   onLocate,
   categories = defaultCategories,
   context,
+  indexVersion = "",
 }: {
   partitions: { id: string; name: string }[];
   onBack?: () => void;
   includePath?: boolean;
   request?: { text: string; revision: number };
   active?: boolean;
-  onLocate?: (hit: SearchHit) => void;
+  onLocate?: (hit: SearchHit, folder?: boolean) => void;
   categories?: Category[];
   context?: SearchContext;
+  indexVersion?: string;
 }) {
   const input = useRef<HTMLInputElement>(null);
+  const operations = useFileOperations();
+  const [editing, setEditing] = useState<number | null>(null);
+  const lastIndex = useRef(indexVersion);
+  useEffect(() => {
+    if (lastIndex.current !== indexVersion && editing === null) {
+      lastIndex.current = indexVersion;
+      setRevision((n) => n + 1);
+    }
+  }, [indexVersion, editing]);
+  const dragging = useRef<{ x: number; y: number; started: boolean } | null>(
+    null,
+  );
+  const suppressClick = useRef(false);
   const [text, setText] = useState(request?.text || "");
   const [namesOnly, setNamesOnly] = useState(!includePath);
   const [partition, setPartition] = useState("");
@@ -116,6 +139,7 @@ export default function Search({
     setSelection(emptySelection());
     selectedSnapshot.current = null;
     setMenu(null);
+    setEditing(null);
     setUnavailable([]);
     setGroups(0);
     setMissing(0);
@@ -301,6 +325,74 @@ export default function Search({
     setBusy(false);
     setError("搜索已取消");
   }
+  const knownSelected = [...cache]
+    .filter(([i]) => selected(i))
+    .map(([, row]) => row);
+  const online =
+    count > 0 &&
+    (count === 1
+      ? selectedRow?.connection === "online"
+      : knownSelected.every((r) => r.connection === "online"));
+  const sameParent =
+    knownSelected.length < 2 ||
+    knownSelected.every(
+      (r) =>
+        r.filesystem_id === knownSelected[0].filesystem_id &&
+        r.file.parent.join(",") === knownSelected[0].file.parent.join(","),
+    );
+  function operationSelection(override?: number): SelectionInput | null {
+    return queryId.current === null
+      ? null
+      : {
+          origin: {
+            kind: "search",
+            id: queryId.current,
+            range:
+              override === undefined ? selection.range : [override, override],
+          },
+          entries: [],
+          positions: override === undefined ? [...selection.toggles] : [],
+        };
+  }
+  function perform(action: FileAction, override?: number) {
+    const selected = operationSelection(override);
+    if (selected)
+      operations.run(selected, action, () => setRevision((n) => n + 1));
+  }
+  function open(row: SearchHit, index?: number) {
+    if (row.file.kind === "folder") onLocate?.(row, true);
+    else perform("open", index);
+  }
+  function rename() {
+    if (online && count === 1) {
+      const index = [...cache].find(([i]) => selected(i))?.[0];
+      if (index !== undefined) setEditing(index);
+    }
+  }
+  function menuAction(action: MenuAction) {
+    if (action === "open") {
+      if (selectedRow) open(selectedRow);
+      return;
+    }
+    if (action === "browse_parent") {
+      if (selectedRow) onLocate?.(selectedRow);
+      return;
+    }
+    if (action === "rename") {
+      rename();
+      return;
+    }
+    if (action === "paste") return;
+    if (action === "properties" && (!online || count !== 1)) {
+      setPreview(true);
+      return;
+    }
+    if (action === "more") {
+      if (menu) perform({ more: { x: menu.x, y: menu.y } });
+      return;
+    }
+    perform(action);
+  }
   return (
     <div className="assets-app search-app">
       {onBack && <button onClick={onBack}>硬盘管理</button>}
@@ -401,6 +493,27 @@ export default function Search({
           revision={resultVersion}
           onRange={viewport}
           onKeyDown={(e) => {
+            if (
+              fileKey(e, {
+                copy: () => perform("copy"),
+                cut: () => perform("cut"),
+                rename,
+                remove: (permanent) =>
+                  perform(permanent ? "delete" : "recycle"),
+                properties: () => menuAction("properties"),
+                menu: () => {
+                  if (selectedRow) {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setMenu({
+                      x: rect.left + 20,
+                      y: rect.top + 45,
+                      row: selectedRow,
+                    });
+                  }
+                },
+              })
+            )
+              return;
             if (e.ctrlKey && e.key.toLowerCase() === "a") {
               e.preventDefault();
               setSelection({
@@ -426,8 +539,7 @@ export default function Search({
               if (i * 64 < virtualTop || i * 64 > virtualTop + height - 100)
                 e.currentTarget.scrollTop = offset;
             }
-            if (e.key === "Enter" && selectedRow && onLocate)
-              onLocate(selectedRow);
+            if (e.key === "Enter" && selectedRow) open(selectedRow);
           }}
           row={(i) => {
             const r = cache.get(i);
@@ -437,11 +549,53 @@ export default function Search({
                 aria-rowindex={i + 2}
                 aria-selected={selected(i)}
                 className="virtual-result-row"
-                onClick={(e) => choose(i, e.shiftKey, e.ctrlKey)}
-                onContextMenu={(e) => {
-                  if (!r || !onLocate) return;
+                onClick={(e) => {
+                  if (suppressClick.current) {
+                    suppressClick.current = false;
+                    return;
+                  }
+                  choose(i, e.shiftKey, e.ctrlKey);
+                }}
+                onDoubleClick={() => {
+                  if (r) open(r, i);
+                }}
+                onPointerDown={(e) => {
+                  if (e.button === 0) {
+                    suppressClick.current = false;
+                    dragging.current = {
+                      x: e.clientX,
+                      y: e.clientY,
+                      started: false,
+                    };
+                  }
+                }}
+                onPointerMove={(e) => {
+                  const start = dragging.current;
+                  if (
+                    !r ||
+                    !start ||
+                    start.started ||
+                    e.buttons !== 1 ||
+                    Math.hypot(e.clientX - start.x, e.clientY - start.y) < 8
+                  )
+                    return;
+                  start.started = true;
+                  suppressClick.current = true;
                   e.preventDefault();
-                  choose(i, false, false);
+                  const current = selected(i);
+                  if (!current) choose(i, false, false);
+                  perform("drag", current ? undefined : i);
+                }}
+                onPointerUp={() => {
+                  dragging.current = null;
+                }}
+                onDragStart={(e) => e.preventDefault()}
+                onContextMenu={(e) => {
+                  if (!r) return;
+                  e.preventDefault();
+                  e.currentTarget.tabIndex = -1;
+                  e.currentTarget.focus();
+                  if (!selected(i)) choose(i, false, false);
                   setMenu({
                     x: Math.min(e.clientX, window.innerWidth - 270),
                     y: Math.min(e.clientY, window.innerHeight - 60),
@@ -458,7 +612,19 @@ export default function Search({
                         className={`file-mark ${r.file.kind}`}
                         aria-hidden="true"
                       />
-                      {r.file.name}
+                      {editing === i ? (
+                        <RenameInput
+                          name={r.file.name}
+                          folder={r.file.kind === "folder"}
+                          onCancel={() => setEditing(null)}
+                          onSubmit={(name) => {
+                            setEditing(null);
+                            perform({ rename: name }, i);
+                          }}
+                        />
+                      ) : (
+                        r.file.name
+                      )}
                       {r.hard_link && <small>硬链接</small>}
                     </td>
                     <td title={r.file.path}>
@@ -526,23 +692,18 @@ export default function Search({
           {missing ? `${missing.toLocaleString()} 项缺少查重元数据` : ""}
         </span>
       </footer>
-      {menu && onLocate && (
-        <div
-          role="menu"
-          className="file-context-menu"
-          style={{ left: menu.x, top: menu.y }}
-        >
-          <button
-            autoFocus
-            role="menuitem"
-            onClick={() => {
-              onLocate(menu.row);
-              setMenu(null);
-            }}
-          >
-            在新标签页浏览所在目录
-          </button>
-        </div>
+      {menu && (
+        <FileContextMenu
+          x={menu.x}
+          y={menu.y}
+          count={count}
+          online={online}
+          sameParent={sameParent}
+          singleFile={count === 1 && selectedRow?.file.kind === "file"}
+          folder={count === 1 && selectedRow?.file.kind === "folder"}
+          onAction={menuAction}
+          onClose={() => setMenu(null)}
+        />
       )}
     </div>
   );

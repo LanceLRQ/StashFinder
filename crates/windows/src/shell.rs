@@ -30,9 +30,9 @@ use windows::{
     core::{BOOL, HRESULT, HSTRING, Ref, implement, w},
 };
 
-struct Apartment(PhantomData<Rc<()>>);
+pub(crate) struct Apartment(PhantomData<Rc<()>>);
 impl Apartment {
-    fn new() -> Result<Self> {
+    pub(crate) fn new() -> Result<Self> {
         // SAFETY: Each successful initialization is balanced on the same thread.
         unsafe {
             OleInitialize(None)?;
@@ -163,13 +163,14 @@ impl IDataObject_Impl for FileData_Impl {
     }
 }
 
-fn data_object(paths: &[PathBuf], effect: DROPEFFECT) -> Result<IDataObject> {
+pub(crate) fn data_object(paths: &[PathBuf], effect: DROPEFFECT) -> Result<IDataObject> {
     ensure!(
-        !paths.is_empty() && paths.len() <= 64,
-        "select between 1 and 64 samples"
+        !paths.is_empty() && paths.len() <= stashfinder_core::file_operations::MAX_SELECTED,
+        "请选择 1～10,000 项"
     );
     let mut names = Vec::new();
     for path in paths {
+        let path = crate::file_operations::shell_path(path)?;
         ensure!(
             path.is_absolute() && path.exists(),
             "sample unavailable: {}",
@@ -190,7 +191,7 @@ fn data_object(paths: &[PathBuf], effect: DROPEFFECT) -> Result<IDataObject> {
     .into())
 }
 
-/// Call from the GUI STA thread. Only generated M0 samples are exposed by the UI.
+/// Call from the GUI STA thread after the caller validates its registered targets or M0 fixtures.
 pub fn copy_samples(paths: &[PathBuf]) -> Result<()> {
     clipboard_samples(paths, DROPEFFECT_COPY)
 }
@@ -238,6 +239,103 @@ pub fn drag_samples(paths: &[PathBuf]) -> Result<bool> {
     let result = unsafe { DoDragDrop(&data, &source, DROPEFFECT_COPY, &mut effect) };
     result.ok()?;
     Ok(result == DRAGDROP_S_DROP && effect == DROPEFFECT_COPY)
+}
+
+pub fn left_button_down() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+    // SAFETY: Read-only button state on the current interactive desktop.
+    unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 }
+}
+
+pub enum OpenAction {
+    Open,
+    OpenWith,
+    Locate,
+    Properties,
+}
+
+pub fn copy_text(value: &[u16], owner: usize) -> Result<()> {
+    use windows::Win32::{
+        Foundation::{GlobalFree, HANDLE, HWND},
+        System::{DataExchange::*, Ole::CF_UNICODETEXT},
+    };
+    ensure!(!value.contains(&0), "文字中包含不可复制的空字符");
+    // SAFETY: The window belongs to this GUI thread. Allocated memory is transferred only on success.
+    unsafe {
+        OpenClipboard(Some(HWND(owner as *mut _)))?;
+        let result = (|| -> Result<()> {
+            let memory = GlobalAlloc(GMEM_MOVEABLE, (value.len() + 1) * 2)?;
+            let copied = (|| -> Result<()> {
+                let buffer = GlobalLock(memory).cast::<u16>();
+                ensure!(!buffer.is_null(), "无法分配剪贴板内存");
+                std::ptr::copy_nonoverlapping(value.as_ptr(), buffer, value.len());
+                *buffer.add(value.len()) = 0;
+                let _ = GlobalUnlock(memory);
+                EmptyClipboard()?;
+                SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(memory.0)))?;
+                Ok(())
+            })();
+            if copied.is_err() {
+                let _ = GlobalFree(Some(memory));
+            }
+            copied
+        })();
+        let closed = CloseClipboard();
+        result?;
+        closed?;
+    }
+    Ok(())
+}
+
+pub fn open_file(path: &std::path::Path, action: OpenAction, owner: usize) -> Result<()> {
+    use windows::{
+        Win32::{
+            Foundation::HWND,
+            UI::{Shell::*, WindowsAndMessaging::SW_SHOWNORMAL},
+        },
+        core::PCWSTR,
+    };
+    let _apartment = Apartment::new()?;
+    let path = HSTRING::from(path.as_os_str());
+    let owner = HWND(owner as *mut _);
+    // SAFETY: All Shell strings and PIDLs stay owned through their synchronous calls on this STA.
+    unsafe {
+        match action {
+            OpenAction::Locate => {
+                let pidl = ILCreateFromPathW(&path);
+                ensure!(!pidl.is_null(), "无法创建资源管理器定位项");
+                let result = SHOpenFolderAndSelectItems(pidl, None, 0);
+                ILFree(Some(pidl));
+                result?;
+            }
+            OpenAction::OpenWith => SHOpenWithDialog(
+                Some(owner),
+                &OPENASINFO {
+                    pcszFile: PCWSTR(path.as_ptr()),
+                    pcszClass: PCWSTR::null(),
+                    oaifInFlags: OAIF_EXEC,
+                },
+            )?,
+            OpenAction::Open | OpenAction::Properties => {
+                let verb = if matches!(action, OpenAction::Properties) {
+                    w!("properties")
+                } else {
+                    w!("open")
+                };
+                let mut info = SHELLEXECUTEINFOW {
+                    cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+                    fMask: SEE_MASK_INVOKEIDLIST,
+                    hwnd: owner,
+                    lpVerb: verb,
+                    lpFile: PCWSTR(path.as_ptr()),
+                    nShow: SW_SHOWNORMAL.0,
+                    ..Default::default()
+                };
+                ShellExecuteExW(&mut info)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub enum SampleEdit {
@@ -314,6 +412,48 @@ pub fn edit_samples(paths: &[PathBuf], edit: &SampleEdit) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn volume_guid_file_list_copies_actual_generated_contents() {
+        use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
+        use windows::Win32::{
+            Foundation::HANDLE,
+            Storage::FileSystem::{GetFinalPathNameByHandleW, VOLUME_NAME_GUID},
+        };
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let source_file = source.path().join("guid-source.txt");
+        std::fs::write(&source_file, b"guid contents").unwrap();
+        let file = std::fs::File::open(&source_file).unwrap();
+        let mut name = vec![0u16; 32768];
+        // SAFETY: The owned file handle and writable UTF-16 buffer outlive the query.
+        let len = unsafe {
+            GetFinalPathNameByHandleW(HANDLE(file.as_raw_handle()), &mut name, VOLUME_NAME_GUID)
+        } as usize;
+        assert!(len > 0 && len < name.len());
+        let path = PathBuf::from(std::ffi::OsString::from_wide(&name[..len]));
+        assert!(path.to_string_lossy().starts_with(r"\\?\Volume{"));
+        let _apartment = Apartment::new().unwrap();
+        let data = data_object(&[path], DROPEFFECT_COPY).unwrap();
+        // SAFETY: Copy generated physical files with STA-owned interfaces and suppress test UI.
+        unsafe {
+            let destination: IShellItem =
+                SHCreateItemFromParsingName(&HSTRING::from(target.path().as_os_str()), None)
+                    .unwrap();
+            let operation: IFileOperation =
+                CoCreateInstance(&FileOperation, None, CLSCTX_INPROC_SERVER).unwrap();
+            operation
+                .SetOperationFlags(FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT)
+                .unwrap();
+            operation.CopyItems(&data, &destination).unwrap();
+            operation.PerformOperations().unwrap();
+            assert!(!operation.GetAnyOperationsAborted().unwrap().as_bool());
+        }
+        assert_eq!(
+            std::fs::read(target.path().join("guid-source.txt")).unwrap(),
+            b"guid contents"
+        );
+        assert_eq!(std::fs::read(source_file).unwrap(), b"guid contents");
+    }
     use windows::{
         Win32::{
             System::{

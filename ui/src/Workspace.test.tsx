@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import Workspace from "./Workspace";
+import FileOperations from "./FileOperations";
 import DirectoryTree from "./DirectoryTree";
 import { readDirectory, type DirectoryPage } from "./browse-api";
 import type { Asset } from "./asset-api";
@@ -104,6 +105,60 @@ function setup() {
     />,
   );
 }
+test("published index changes refresh the current directory without changing its location", async () => {
+  const view = setup();
+  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
+    target: { value: "p" },
+  });
+  fireEvent.doubleClick(await screen.findByRole("row", { name: /Films/ }));
+  await screen.findByRole("row", { name: /movie.mkv/ });
+  vi.mocked(readDirectory).mockClear();
+  view.rerender(
+    <Workspace
+      assets={[asset]}
+      includePath
+      request={{ text: "", revision: 0 }}
+      completedTasks={[{ id: "completed", partition_id: "p", updated: 2 }]}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      vi
+        .mocked(readDirectory)
+        .mock.calls.some(([r]) => r.parent?.[0] === 2 && !r.folders_only),
+    ).toBe(true),
+  );
+  expect(
+    screen.getByRole("tab", { name: "Films" }).getAttribute("aria-selected"),
+  ).toBe("true");
+});
+
+test("keyboard paste keeps pending-index feedback when automatic updates are disabled", async () => {
+  vi.mocked(readDirectory).mockResolvedValue(root);
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === "file_paste" ? "完成 1 项" : undefined,
+  );
+  render(
+    <FileOperations>
+      <Workspace
+        assets={[{ ...asset, connection: "online" }]}
+        includePath
+        request={{ text: "", revision: 0 }}
+        automatic={false}
+      />
+    </FileOperations>,
+  );
+  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
+    target: { value: "p" },
+  });
+  await screen.findByRole("row", { name: /notes.txt/ });
+  fireEvent.keyDown(screen.getByLabelText("目录文件列表"), {
+    key: "v",
+    ctrlKey: true,
+  });
+  expect(await screen.findByText("文件操作已结束，索引待更新")).toBeTruthy();
+  expect(screen.getByRole("row", { name: /notes.txt/ })).toBeTruthy();
+});
 test("keeps independent directory selection and scroll while a single search tab is reused", async () => {
   setup();
   fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {

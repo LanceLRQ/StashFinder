@@ -28,6 +28,10 @@ impl Source for Fixture {
         assert!(relative.is_empty());
         consume(&[
             ScanEntry {
+                identity: Some(stashfinder_core::file_operations::NativeIdentity {
+                    volume: 10,
+                    file: 20,
+                }),
                 name: self.name.encode_utf16().collect(),
                 size: Some(0),
                 created: None,
@@ -35,6 +39,7 @@ impl Source for Fixture {
                 attributes: 0,
             },
             ScanEntry {
+                identity: None,
                 name: "junction".encode_utf16().collect(),
                 size: None,
                 created: None,
@@ -72,6 +77,14 @@ fn scan_replaces_only_after_stable_complete_enumeration_and_preserves_on_error()
     build(&mut source, &mut db, &AtomicBool::new(false)).unwrap();
     assert!(names(&db).contains(&"旧.txt".into()));
     let old = db.active_generation().unwrap();
+    let object: Vec<u8> = "旧.txt".encode_utf16().flat_map(u16::to_le_bytes).collect();
+    assert_eq!(
+        db.native_identity(old.unwrap(), &object).unwrap(),
+        Some(stashfinder_core::file_operations::NativeIdentity {
+            volume: 10,
+            file: 20
+        })
+    );
     source.name = "new.txt".into();
     source.broken = true;
     assert!(build(&mut source, &mut db, &AtomicBool::new(false)).is_err());

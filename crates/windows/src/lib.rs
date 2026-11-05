@@ -1,5 +1,7 @@
 #![cfg(windows)]
 
+pub mod context_menu;
+pub mod file_operations;
 pub mod ipc;
 pub mod ntfs;
 pub mod scan;

@@ -1,4 +1,5 @@
 pub mod assets;
+mod file_operations;
 pub mod index;
 pub mod jobs;
 pub mod scan;
@@ -184,6 +185,41 @@ pub async fn serve_runtime(
                         indexes.context("索引服务未配置")?.cancel_search(id);
                         Ok(Response::Accepted)
                     }
+                    Action::FileRecordsBegin(origin) => Ok(Response::SelectionStarted(
+                        indexes
+                            .context("索引服务未配置")?
+                            .selection_begin_records(origin, &assets.snapshot())?,
+                    )),
+                    Action::FileSelectionBegin(origin) => Ok(Response::SelectionStarted(
+                        indexes
+                            .context("索引服务未配置")?
+                            .selection_begin(origin, &assets.snapshot())?,
+                    )),
+                    Action::FileSelectionAdd { id, chunk } => {
+                        indexes
+                            .context("索引服务未配置")?
+                            .selection_add(id, chunk)?;
+                        Ok(Response::Accepted)
+                    }
+                    Action::FileSelectionSeal { id } => Ok(Response::SelectionCount(
+                        indexes.context("索引服务未配置")?.selection_seal(id)?,
+                    )),
+                    Action::FileSelectionPage { id, offset } => Ok(Response::SelectionPage(
+                        Box::new(indexes.context("索引服务未配置")?.selection_page(
+                            id,
+                            offset,
+                            &assets.snapshot(),
+                        )?),
+                    )),
+                    Action::FileSelectionCancel { id } => {
+                        indexes.context("索引服务未配置")?.selection_cancel(id);
+                        Ok(Response::Accepted)
+                    }
+                    Action::FileDestination(reference) => Ok(Response::FileTarget(Box::new(
+                        indexes
+                            .context("索引服务未配置")?
+                            .selection_destination(&reference, &assets.snapshot())?,
+                    ))),
                     action => {
                         assets.submit(action)?;
                         Ok(Response::Accepted)

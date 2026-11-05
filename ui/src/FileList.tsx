@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { fileTime, type FileRow } from "./browse-api";
+import RenameInput from "./RenameInput";
 
 export default function FileList({
   rows,
@@ -9,16 +10,42 @@ export default function FileList({
   next,
   busy,
   onMore,
+  allSelected = false,
+  onSelectAll,
+  onContext,
+  onFileKey,
+  onDrag,
+  onBlankContext,
+  editing,
 }: {
   rows: FileRow[];
   selection: string[];
-  onSelect: (ids: string[]) => void;
+  onSelect: (ids: string[], all?: boolean) => void;
   onOpen: (row: FileRow) => void;
   next: number | null;
   busy: boolean;
   onMore: () => void;
+  allSelected?: boolean;
+  onSelectAll?: () => void;
+  onContext?: (row: FileRow, x: number, y: number) => void;
+  onFileKey?: (e: React.KeyboardEvent) => boolean;
+  onDrag?: (row: FileRow, current: boolean) => void;
+  onBlankContext?: (x: number, y: number) => void;
+  editing?: {
+    entry: string;
+    onSubmit: (name: string) => void;
+    onCancel: () => void;
+  };
 }) {
   const anchor = useRef(0);
+  const dragging = useRef<{ x: number; y: number; started: boolean } | null>(
+    null,
+  );
+  const suppressClick = useRef(false);
+  const selected = (row: FileRow) =>
+    allSelected
+      ? !selection.includes(row.entry.join(","))
+      : selection.includes(row.entry.join(","));
   const [top, setTop] = useState(0);
   const start = Math.max(0, Math.floor(top / 34) - 10);
   const end = Math.min(rows.length, start + 50);
@@ -41,6 +68,7 @@ export default function FileList({
             ? selection.filter((x) => x !== id)
             : [...selection, id]
           : [id],
+        toggle ? allSelected : false,
       );
     }
   }
@@ -49,11 +77,22 @@ export default function FileList({
       className="directory-list"
       aria-label="目录文件列表"
       onScroll={(e) => setTop(e.currentTarget.scrollTop)}
+      onContextMenu={(e) => {
+        if (
+          onBlankContext &&
+          !(e.target as HTMLElement).closest("tr[data-index]")
+        ) {
+          e.preventDefault();
+          onBlankContext(e.clientX, e.clientY);
+        }
+      }}
       tabIndex={0}
       onKeyDown={(e) => {
+        if (!e.defaultPrevented && onFileKey?.(e)) return;
         if (e.ctrlKey && e.key.toLowerCase() === "a") {
           e.preventDefault();
-          onSelect(rows.map((r) => r.entry.join(",")));
+          if (onSelectAll) onSelectAll();
+          else onSelect(rows.map((r) => r.entry.join(",")));
         }
       }}
     >
@@ -78,10 +117,53 @@ export default function FileList({
                 key={row.entry.join(",")}
                 tabIndex={0}
                 data-index={index}
-                aria-selected={selection.includes(row.entry.join(","))}
-                onClick={(e) => choose(index, e.shiftKey, e.ctrlKey)}
+                aria-selected={selected(row)}
+                onClick={(e) => {
+                  if (suppressClick.current) {
+                    suppressClick.current = false;
+                    return;
+                  }
+                  choose(index, e.shiftKey, e.ctrlKey);
+                }}
+                onContextMenu={(e) => {
+                  if (!onContext) return;
+                  e.preventDefault();
+                  e.currentTarget.focus();
+                  if (!selected(row)) onSelect([row.entry.join(",")], false);
+                  onContext(row, e.clientX, e.clientY);
+                }}
+                onPointerDown={(e) => {
+                  if (e.button === 0) {
+                    suppressClick.current = false;
+                    dragging.current = {
+                      x: e.clientX,
+                      y: e.clientY,
+                      started: false,
+                    };
+                  }
+                }}
+                onPointerMove={(e) => {
+                  const start = dragging.current;
+                  if (
+                    !onDrag ||
+                    !start ||
+                    start.started ||
+                    e.buttons !== 1 ||
+                    Math.hypot(e.clientX - start.x, e.clientY - start.y) < 8
+                  )
+                    return;
+                  start.started = true;
+                  suppressClick.current = true;
+                  e.preventDefault();
+                  onDrag(row, selected(row));
+                }}
+                onPointerUp={() => {
+                  dragging.current = null;
+                }}
+                onDragStart={(e) => e.preventDefault()}
                 onDoubleClick={() => onOpen(row)}
                 onKeyDown={(e) => {
+                  if (onFileKey?.(e)) return;
                   if (e.key === "Enter") {
                     e.preventDefault();
                     onOpen(row);
@@ -127,7 +209,16 @@ export default function FileList({
                     className={`file-mark ${row.kind}`}
                     aria-hidden="true"
                   />
-                  {row.name}
+                  {editing?.entry === row.entry.join(",") ? (
+                    <RenameInput
+                      name={row.name}
+                      folder={row.kind === "folder"}
+                      onSubmit={editing.onSubmit}
+                      onCancel={editing.onCancel}
+                    />
+                  ) : (
+                    row.name
+                  )}
                 </td>
                 <td className="result-size">
                   {row.kind === "folder"

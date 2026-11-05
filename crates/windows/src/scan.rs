@@ -19,6 +19,7 @@ use windows::{
 
 #[derive(Clone, Debug)]
 pub struct ScanEntry {
+    pub identity: Option<stashfinder_core::file_operations::NativeIdentity>,
     pub name: Vec<u16>,
     pub size: Option<i64>,
     pub created: Option<u64>,
@@ -91,16 +92,26 @@ impl Scanner {
             let metadata = std::fs::symlink_metadata(entry.path())
                 .with_context(|| format!("读取元数据 {}", entry.path().display()))?;
             let attributes = metadata.file_attributes();
+            let live = crate::file_operations::inspect(&entry.path()).ok();
             batch.push(ScanEntry {
+                identity: live.as_ref().map(|m| m.identity.clone()),
                 name: entry.file_name().encode_wide().collect(),
-                size: if attributes & FILE_ATTRIBUTE_DIRECTORY.0 == 0 {
+                size: if let Some(live) = &live {
+                    live.size
+                } else if attributes & FILE_ATTRIBUTE_DIRECTORY.0 == 0 {
                     Some(metadata.file_size().try_into()?)
                 } else {
                     None
                 },
-                created: (metadata.creation_time() != 0).then_some(metadata.creation_time()),
-                modified: (metadata.last_write_time() != 0).then_some(metadata.last_write_time()),
-                attributes,
+                created: live.as_ref().map_or_else(
+                    || (metadata.creation_time() != 0).then_some(metadata.creation_time()),
+                    |m| m.created,
+                ),
+                modified: live.as_ref().map_or_else(
+                    || (metadata.last_write_time() != 0).then_some(metadata.last_write_time()),
+                    |m| m.modified,
+                ),
+                attributes: live.as_ref().map_or(attributes, |m| m.attributes),
             });
             if batch.len() == 256 {
                 consume(&batch)?;

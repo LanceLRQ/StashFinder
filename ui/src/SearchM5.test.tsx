@@ -8,13 +8,15 @@ import {
 import { afterEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import Search from "./Search";
+import FileOperations from "./FileOperations";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
 });
 function mock() {
-  vi.mocked(invoke).mockImplementation(async (_, args: any) => {
+  vi.mocked(invoke).mockImplementation(async (command, args: any) => {
+    if (command === "file_prepare") throw Error("selection rejected");
     if (args.action.search_start) return { kind: "search_started", data: 1 };
     if (args.action.search_batch) {
       const { offset, limit } = args.action.search_batch;
@@ -103,6 +105,28 @@ test("keeps DOM rows bounded and requests distant result positions", async () =>
   expect(screen.getAllByRole("row").length).toBeLessThan(70);
   fireEvent.keyDown(list, { ctrlKey: true, key: "a" });
   expect(await screen.findByText("已选择 10,000,000 项")).toBeTruthy();
+});
+test("copies the full selection descriptor instead of the visible result cache", async () => {
+  mock();
+  render(
+    <FileOperations>
+      <Search partitions={[]} />
+    </FileOperations>,
+  );
+  await screen.findByText("file-0.txt");
+  const list = screen.getByLabelText("搜索结果列表");
+  fireEvent.keyDown(list, { key: "a", ctrlKey: true });
+  fireEvent.keyDown(list, { key: "c", ctrlKey: true });
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("file_prepare", {
+      input: {
+        origin: { kind: "search", id: 1, range: [0, 9999999] },
+        entries: [],
+        positions: [],
+      },
+      recordsOnly: false,
+    }),
+  );
 });
 test("reports a failed cancellation request without an unhandled rejection", async () => {
   vi.mocked(invoke).mockImplementation(async (_, args: any) => {

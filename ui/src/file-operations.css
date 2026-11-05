@@ -1,0 +1,123 @@
+.formal-file-menu {
+  width: 260px;
+  padding: 5px;
+  z-index: 30;
+}
+.formal-file-menu button {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 9px;
+  font-size: 12px;
+  text-align: left;
+}
+.formal-file-menu kbd {
+  font: inherit;
+  color: #647082;
+  white-space: nowrap;
+}
+.formal-file-menu button:nth-child(5),
+.formal-file-menu button:last-child {
+  border-top: 1px solid #e1e5ea;
+  border-radius: 0;
+}
+.file-operation-status {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  max-width: min(640px, calc(100vw - 36px));
+  max-height: 45vh;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  border: 1px solid #c3cbd5;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 3px 16px #15233320;
+  padding: 12px 14px;
+  z-index: 50;
+  font-size: 12px;
+}
+.file-operation-status > span {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.file-operation-status.has-error {
+  border-color: #c39086;
+  color: #923c2b;
+}
+.file-operation-status button {
+  flex-shrink: 0;
+  padding: 2px 8px;
+}
+.operation-backdrop {
+  position: fixed;
+  inset: 0;
+  background: #17233438;
+  display: grid;
+  place-items: center;
+  z-index: 60;
+}
+.operation-confirm {
+  background: #fff;
+  border: 1px solid #c3cbd5;
+  border-radius: 7px;
+  padding: 22px;
+  width: 560px;
+  max-width: 90vw;
+}
+.operation-confirm h2 {
+  font-size: 16px;
+  margin: 0 0 12px;
+}
+.operation-confirm ul {
+  padding-left: 20px;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.operation-confirm > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.operation-confirm .danger {
+  color: #a23927;
+  border-color: #bd8477;
+}
+.operation-results {
+  position: fixed;
+  inset: 15% 12%;
+  z-index: 55;
+  background: #fff;
+  border: 1px solid #c3cbd5;
+  border-radius: 6px;
+  padding: 18px;
+  overflow: auto;
+  box-shadow: 0 4px 32px #15233330;
+  font-size: 12px;
+}
+.operation-results > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.operation-results table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin-top: 12px;
+}
+.operation-results td,
+.operation-results th {
+  padding: 8px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid #e4e8ed;
+}
+.operation-results th:nth-child(2) {
+  width: 70px;
+}

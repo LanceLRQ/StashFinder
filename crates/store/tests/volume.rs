@@ -38,6 +38,7 @@ fn failed_batch_does_not_advance_cursor_or_leave_objects() {
     let mut db = Volume::create(&path, "{}").unwrap();
     let generation = db.begin_generation().unwrap();
     let object = Object {
+        identity: None,
         id: vec![1; 8],
         source: "ntfs".into(),
         kind: "file".into(),
@@ -166,6 +167,7 @@ fn missing_size_is_distinct_from_an_empty_file_in_the_persisted_schema() {
         .into_iter()
         .enumerate()
         .map(|(i, size)| Object {
+            identity: None,
             id: vec![i as u8],
             source: "scan".into(),
             kind: "file".into(),

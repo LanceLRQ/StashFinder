@@ -47,6 +47,7 @@ fn synthetic_range(start: usize, count: usize) -> Source {
         needs_validation: false,
         index: Arc::new(SearchIndex {
             generation: 1,
+            revision: 0,
             partial: false,
             indexed_at: Some(1),
             needs_validation: false,
@@ -288,6 +289,17 @@ impl ResultSet {
                 }
             })
             .collect())
+    }
+    pub fn reference(&self, offset: usize) -> Result<stashfinder_core::file_operations::EntryRef> {
+        let row = self.rows.get(offset).context("所选搜索位置无效")?;
+        let source = &self.sources[row.source as usize];
+        Ok(stashfinder_core::file_operations::EntryRef {
+            partition_id: source.id.clone(),
+            filesystem_id: source.filesystem.clone(),
+            generation: source.index.generation.to_string(),
+            revision: source.index.revision.to_string(),
+            entry: source.index.entries[row.entry as usize].row.entry.to_vec(),
+        })
     }
 }
 fn text_cmp(a: &str, b: &str, case: bool) -> Cmp {

@@ -21,6 +21,7 @@ pub struct Ancestor {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DirectoryPage {
+    pub total: usize,
     pub filesystem_id: String,
     pub generation: String,
     pub revision: String,

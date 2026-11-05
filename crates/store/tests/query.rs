@@ -12,6 +12,7 @@ fn source(name: &str, files: &[(&str, Option<u64>, u8)]) -> Source {
     let mut v = Volume::create(&d.path().join("v.sqlite"), "{}").unwrap();
     let g = v.begin_generation().unwrap();
     let mut objects = vec![Object {
+        identity: None,
         id: vec![0],
         source: "test".into(),
         kind: "folder".into(),
@@ -30,6 +31,7 @@ fn source(name: &str, files: &[(&str, Option<u64>, u8)]) -> Source {
     for (i, (name, size, object)) in files.iter().enumerate() {
         if seen.insert(object) {
             objects.push(Object {
+                identity: None,
                 id: vec![*object],
                 source: "test".into(),
                 kind: "file".into(),

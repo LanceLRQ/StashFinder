@@ -73,6 +73,7 @@ fn directory_key(id: u64) -> Vec<u8> {
 }
 fn object(row: &DirectoryEntry) -> Object {
     Object {
+        identity: None,
         id: row.id.to_le_bytes().to_vec(),
         source: "ntfs64".into(),
         kind: if row.attributes & 16 != 0 {
@@ -144,6 +145,7 @@ pub fn build_checked(
                     .iter()
                     .filter(|r| r.id & 0x0000ffffffffffff >= 16)
                     .map(|r| Object {
+                        identity: None,
                         id: r.id.to_le_bytes().to_vec(),
                         source: "ntfs64".into(),
                         kind: if r.attributes & 16 != 0 {

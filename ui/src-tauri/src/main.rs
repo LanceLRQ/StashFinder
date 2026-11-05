@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use anyhow::{Context, Result, ensure};
+mod file_operations;
 use serde::Serialize;
 use stashfinder_windows::{ipc, shell};
 use std::{path::PathBuf, sync::Mutex};
@@ -314,6 +315,14 @@ async fn edit_samples(
 fn main() {
     tauri::Builder::default()
         .manage(Samples::default())
+        .manage(file_operations::Operations::default())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && file_operations::prevent_close(&window.state::<file_operations::Operations>())
+            {
+                api.prevent_close();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             preferences_get,
             preferences_set,
@@ -322,6 +331,13 @@ fn main() {
             asset_snapshot,
             asset_command,
             index_request,
+            file_operations::file_prepare,
+            file_operations::file_run,
+            file_operations::file_status,
+            file_operations::file_cancel,
+            file_operations::file_paste,
+            file_operations::file_report,
+            file_operations::file_keep_open,
             create_samples,
             copy_samples,
             drag_samples,

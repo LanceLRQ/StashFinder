@@ -43,6 +43,7 @@ struct Mailbox {
     stop: bool,
 }
 pub struct Indexes {
+    selection: Mutex<crate::file_operations::Selection>,
     pub runner: crate::supervisor::Runner,
     mailbox: Arc<(Mutex<Mailbox>, Condvar)>,
     search_state: Arc<Mutex<SearchState>>,
@@ -50,6 +51,7 @@ pub struct Indexes {
 }
 impl Indexes {
     pub fn start(root: PathBuf) -> Self {
+        let selection = Mutex::new(crate::file_operations::Selection::new(root.clone()));
         let runner = crate::supervisor::Runner::start(root.clone());
         let caches = runner.caches();
         let states = runner.states();
@@ -155,6 +157,7 @@ impl Indexes {
             }
         });
         Self {
+            selection,
             runner,
             mailbox,
             search_state,
@@ -163,6 +166,90 @@ impl Indexes {
     }
     pub fn scan(&self, partition: &str, mode: IndexMode, snapshot: &Snapshot) -> Result<()> {
         self.runner.scan(partition, mode, snapshot).map(|_| ())
+    }
+    pub fn selection_begin(
+        &self,
+        origin: stashfinder_core::file_operations::SelectionOrigin,
+        snapshot: &Snapshot,
+    ) -> Result<u64> {
+        self.begin_selection(origin, snapshot, false)
+    }
+    pub fn selection_begin_records(
+        &self,
+        origin: stashfinder_core::file_operations::SelectionOrigin,
+        snapshot: &Snapshot,
+    ) -> Result<u64> {
+        self.begin_selection(origin, snapshot, true)
+    }
+    fn begin_selection(
+        &self,
+        origin: stashfinder_core::file_operations::SelectionOrigin,
+        snapshot: &Snapshot,
+        records_only: bool,
+    ) -> Result<u64> {
+        let query = if let stashfinder_core::file_operations::SelectionOrigin::Search {
+            id, ..
+        } = &origin
+        {
+            let state = self.search_state.lock().unwrap_or_else(|e| e.into_inner());
+            ensure!(state.id == *id && state.done, "搜索尚未完成或已经过期");
+            Some(
+                state
+                    .result
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("搜索结果不可用"))?,
+            )
+        } else {
+            None
+        };
+        let id = self.sequence.fetch_add(1, Ordering::Relaxed);
+        self.selection
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .begin(id, origin, query, snapshot, records_only)
+    }
+    pub fn selection_add(
+        &self,
+        id: u64,
+        chunk: stashfinder_core::file_operations::SelectionChunk,
+    ) -> Result<()> {
+        self.selection
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .add(id, chunk)
+    }
+    pub fn selection_seal(&self, id: u64) -> Result<usize> {
+        self.selection
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .seal(id)
+    }
+    pub fn selection_page(
+        &self,
+        id: u64,
+        offset: usize,
+        snapshot: &Snapshot,
+    ) -> Result<stashfinder_core::file_operations::SelectionPage> {
+        self.selection
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .page(id, offset, snapshot)
+    }
+    pub fn selection_cancel(&self, id: u64) {
+        self.selection
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .cancel(id);
+    }
+    pub fn selection_destination(
+        &self,
+        reference: &stashfinder_core::file_operations::EntryRef,
+        snapshot: &Snapshot,
+    ) -> Result<stashfinder_core::file_operations::PreparedTarget> {
+        self.selection
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .destination(reference, snapshot)
     }
     pub fn status(&self, partition: &str) -> IndexStatus {
         self.runner.status(partition)
