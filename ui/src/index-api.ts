@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { SearchOptions } from "./search-options";
 
 export type IndexStatus = {
   task_id?: string | null;
@@ -11,6 +12,8 @@ export type IndexStatus = {
   error: string | null;
 };
 export type SearchHit = {
+  duplicate_group?: number | null;
+  hard_link?: boolean;
   partition_id: string;
   filesystem_id: string;
   partition_name: string;
@@ -34,6 +37,10 @@ export type SearchHit = {
   };
 };
 export type SearchPage = {
+  rows: SearchHit[];
+  total: number;
+  groups: number;
+  missing: number;
   id: number;
   done: boolean;
   row: SearchHit | null;
@@ -52,9 +59,15 @@ type Action =
     }
   | { task_cancel: { id: string } }
   | {
-      search_start: { text: string; names_only: boolean; partitions: string[] };
+      search_start: {
+        text: string;
+        names_only: boolean;
+        partitions: string[];
+        options?: SearchOptions;
+      };
     }
   | { search_page: { id: number; offset: number } }
+  | { search_batch: { id: number; offset: number; limit: number } }
   | { search_cancel: { id: number } };
 type Reply =
   | { kind: "accepted" }

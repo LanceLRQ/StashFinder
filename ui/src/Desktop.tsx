@@ -225,6 +225,7 @@ export default function Desktop() {
             <Workspace
               assets={snapshot?.assets || []}
               includePath={preferences.include_path}
+              categories={preferences.categories}
               request={searchRequest}
               browseRequest={browseRequest}
             />

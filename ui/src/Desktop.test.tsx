@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
@@ -31,7 +32,7 @@ beforeEach(() => {
     if (command === "service_status") throw new Error("服务未启动");
     if (command === "app_version") return "0.1.0";
     if (args?.action?.search_start) return { kind: "search_started", data: 1 };
-    if (args?.action?.search_page)
+    if (args?.action?.search_batch)
       return {
         kind: "search_page",
         data: {
@@ -42,6 +43,10 @@ beforeEach(() => {
           more: false,
           error: null,
           unavailable: [],
+          rows: [],
+          total: 0,
+          groups: 0,
+          missing: 0,
         },
       };
     return { kind: "accepted" };
@@ -93,6 +98,7 @@ test("restores startup and search preferences before mounting the first search",
   fireEvent.change(screen.getByRole("searchbox", { name: "搜索文件或路径" }), {
     target: { value: "test" },
   });
+  fireEvent.click(within(screen.getByRole("tabpanel")).getByText("视图"));
   expect(screen.getByRole("checkbox", { name: "仅文件名" })).toHaveProperty(
     "checked",
     true,
@@ -100,7 +106,11 @@ test("restores startup and search preferences before mounting the first search",
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("index_request", {
       action: {
-        search_start: { text: "test", names_only: true, partitions: [] },
+        search_start: expect.objectContaining({
+          text: "test",
+          names_only: true,
+          partitions: [],
+        }),
       },
     }),
   );

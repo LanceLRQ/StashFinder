@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { Category } from "./search-options";
 
 export type Page = "overview" | "files" | "tasks" | "settings";
 export type Preferences = {
@@ -6,6 +7,7 @@ export type Preferences = {
   collapsed: boolean;
   start_page: Page;
   include_path: boolean;
+  categories?: Category[];
 };
 export const defaultPreferences: Preferences = {
   version: 1,

@@ -5,20 +5,24 @@ export default function FileDetails({
   partition,
   connection,
   indexedAt,
+  selectionCount = rows.length,
 }: {
   rows: FileRow[];
   partition: string;
   connection: string;
   indexedAt: number | null;
+  selectionCount?: number;
 }) {
   const file = rows.length === 1 ? rows[0] : null;
   return (
     <aside className="file-preview" aria-label="预览窗格">
-      {!rows.length ? (
+      {!selectionCount ? (
         <p className="stage-note">选择文件以查看属性</p>
       ) : (
         <>
-          <strong>{file?.name || `已选择 ${rows.length} 项`}</strong>
+          <strong>
+            {file?.name || `已选择 ${selectionCount.toLocaleString()} 项`}
+          </strong>
           <dl>
             <dt>分区</dt>
             <dd>{partition}</dd>

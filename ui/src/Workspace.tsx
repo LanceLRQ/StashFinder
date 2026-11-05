@@ -4,6 +4,8 @@ import type { SearchHit } from "./index-api";
 import BrowsePane from "./BrowsePane";
 import Search from "./Search";
 import "./workspace.css";
+import type { Category, SearchContext } from "./search-options";
+import type { DirectoryPage } from "./browse-api";
 
 type Tab = {
   id: number;
@@ -18,11 +20,13 @@ export default function Workspace({
   includePath,
   request,
   browseRequest,
+  categories,
 }: {
   assets: Asset[];
   includePath: boolean;
   request: { text: string; revision: number };
   browseRequest?: { partition: string; revision: number };
+  categories?: Category[];
 }) {
   const [tabs, setTabs] = useState<Tab[]>([
     { id: 1, title: "浏览", partition: null, filesystem: null, parent: null },
@@ -33,6 +37,11 @@ export default function Workspace({
   const sequence = useRef(1);
   const root = useRef<HTMLDivElement>(null);
   const returnTo = useRef(1);
+  const locations = useRef(new Map<number, DirectoryPage>());
+  const [searchContext, setSearchContext] = useState<SearchContext>();
+  const location = useCallback((id: number, page: DirectoryPage) => {
+    locations.current.set(id, page);
+  }, []);
   const activeRef = useRef(active);
   activeRef.current = active;
   const search = useCallback((text: string) => {
@@ -85,6 +94,7 @@ export default function Workspace({
     setActive(id);
   }
   function close(id: number) {
+    locations.current.delete(id);
     if (id === 0) {
       setSearchOpen(false);
       if (active === 0)
@@ -237,7 +247,20 @@ export default function Workspace({
                 assets={assets}
                 initialParent={tab.parent}
                 focusEntry={tab.focusEntry}
-                onSearch={search}
+                onLocation={location}
+                onSearch={(text) => {
+                  const page = locations.current.get(tab.id);
+                  setSearchContext(
+                    page && tab.partition
+                      ? {
+                          partition: tab.partition,
+                          entry: page.location,
+                          name: tab.title,
+                        }
+                      : undefined,
+                  );
+                  search(text);
+                }}
                 onTitle={title}
                 onChoose={(partition) => {
                   const chosen = assets.find(
@@ -280,6 +303,8 @@ export default function Workspace({
             request={query}
             active={active === 0}
             onLocate={locate}
+            categories={categories}
+            context={searchContext}
           />
         </section>
       )}

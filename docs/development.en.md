@@ -2,7 +2,7 @@
 
 [简体中文](development.md) | English
 
-This project provides the desktop shell, partition registration, automatic NTFS indexing and incremental updates, task management and basic offline search. Automatic updates are enabled for registered partitions; unregistered partitions are not scanned. A missing USN journal requires a scanning choice or separate creation consent. The partition indexing action still supports manual validation. The M0 file bridge view is shown only in frontend development builds, separate from real search results.
+This project provides the desktop shell, partition registration, automatic NTFS indexing and incremental updates, task management and offline file search. Automatic updates are enabled for registered partitions; unregistered partitions are not scanned. A missing USN journal requires a scanning choice or separate creation consent. The partition indexing action still supports manual validation. The M0 file bridge view is shown only in frontend development builds, separate from real search results.
 
 NTFS volume identity queries require a read-access handle, not a zero-access device-attribute handle. VHD acceptance exercises this query; automated checks cannot replace device-level validation.
 
@@ -43,7 +43,7 @@ The default home screen is Overview, with a collapsible navigation rail. Files r
 
 ## Desktop and preferences acceptance
 
-- Search from Overview, switch pages or collapse the rail, then return: the query and results remain intact. The current limit of 200 results still applies.
+- Search from Overview, switch pages or collapse the rail, then return: the query and results remain intact. Complete results are loaded in bounded viewport pages.
 - Register partitions opens a dialog. Closing it preserves the overview connection filter. A service disconnect keeps the displayed asset snapshot with an error, rather than marking every device offline.
 - Settings supports the startup page, collapsed rail and default path matching. Path matching applies when a search page next opens, without overriding an existing query's selection. Restart to verify persistence.
 - Preferences live in `preferences.json` under Tauri's `app_config_dir` (usually `%APPDATA%\io.github.lancelrq.stashfinder\preferences.json` on Windows), separately from service indexes. Saving replaces the file through a temporary file in the same directory; failures preserve the old configuration and show an error. System startup entries are not changed.
@@ -70,7 +70,7 @@ The default home screen is Overview, with a collapsible navigation rail. Files r
 
 Foreground development requires an explicit absolute data directory. SCM mode defaults to `%ProgramData%\StashFinder`, which must be provisioned beforehand as a direct child of ProgramData. Disable root ACL inheritance, grant only SYSTEM and Administrators inheritable full control, and disallow reparse points. The GUI reads through the service, not directly from databases. The verification script below provisions isolated protected storage. Production installation and migration are not implemented.
 
-`catalog.sqlite` stores registrations; `volumes/<filesystem-id>.sqlite` stores independent filesystem data; `tasks.sqlite` stores tasks, automatic-update policy and paused partitions. SQLite uses WAL/FULL: copying only a live main database is not a backup. The recovery API creates a separate candidate catalog only, not a complete backup/restore tool. Protocol version 5 has a 16 KiB frame limit and paginated assets, tasks, directory entries and search results; use UI and service binaries from the same build. Existing partition databases migrate transactionally only after ownership validation; mismatched databases are not migrated.
+`catalog.sqlite` stores registrations; `volumes/<filesystem-id>.sqlite` stores independent filesystem data; `tasks.sqlite` stores tasks, automatic-update policy and paused partitions. SQLite uses WAL/FULL: copying only a live main database is not a backup. The recovery API creates a separate candidate catalog only, not a complete backup/restore tool. Protocol version 6 has a 16 KiB frame limit and paginated assets, tasks, directory entries and search results; use UI and service binaries from the same build. Existing partition databases migrate transactionally only after ownership validation; mismatched databases are not migrated.
 
 ## Automatic-update acceptance
 
@@ -101,7 +101,7 @@ npm --prefix ui run tauri -- build --debug --no-bundle
 4. Open file search. Matching is case-insensitive and includes paths by default: `aaa` matches `aaa\bbb.exe`; `aaa bbb` requires both words in either order; `"aaa bbb"` matches consecutive text. Filename-only mode and partition filters are available. Drive-letter terms match current online mounts only.
 5. Detach the test disk, refresh devices, then search or restart the service. Partition names, relative paths, index timestamps and offline status must persist. Online describes partition state, not a guarantee that each snapshot entry still exists unchanged.
 
-Search returns at most the first 200 results in a deterministic order and indicates when more exist; it does not provide an exact total or global sorting. Type filters, regex, `dupe` expressions and file operations on real results are not implemented. Reparse points are recorded without traversing targets; hard links retain multiple paths. File contents are not read. Large caches and no-match queries still need further performance work.
+Search provides complete counts, global sorting, bounded batch pages, type/regex filters and metadata duplicate candidates; see search help. Real-result file operations remain planned. Reparse points are recorded without following targets; hard links retain multiple paths. File contents are not read. Cache and no-match performance still need optimization.
 
 Build generations currently remain in partition databases, so repeated rebuilding increases database size; automatic reclamation is not implemented. Healthy local snapshots remain searchable when device access or identity is uncertain, with the connection issue shown instead of online status.
 
@@ -198,3 +198,7 @@ The OS file cache is still warm after import; this is not a cold-start test. It 
 ## Layout
 
 `crates/core` defines identity/query models and the protocol; `crates/windows` provides device and NTFS adapters; `crates/service` coordinates registration, indexing and search jobs; `crates/store` provides the asset catalog, independent partition databases, search caches and synthetic baseline; `ui` provides asset management, read-only search and development validation.
+
+## Full search acceptance
+
+See [search help](search.en.md). Verify category persistence across restart, cross-partition joint duplicate keys, zero and unknown sizes, regex errors, global column sorting, distant scrolling and cross-page selection, and cancellation. Protocol version 6 keeps batch pages within 16 KiB. See the [query baseline](query-performance.en.md) for million/ten-million-row reproduction and limits.

@@ -78,12 +78,16 @@ function setup() {
   vi.mocked(invoke).mockImplementation(async (_, args: any) =>
     args.action.search_start
       ? { kind: "search_started", data: 1 }
-      : args.action.search_page
+      : args.action.search_batch
         ? {
             kind: "search_page",
             data: {
               done: true,
               row: null,
+              rows: [],
+              total: 0,
+              groups: 0,
+              missing: 0,
               next: null,
               more: false,
               unavailable: [],

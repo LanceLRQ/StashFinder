@@ -28,7 +28,7 @@ fn preferences_set(
         .map_err(|e| e.to_string())?
         .join("preferences.json");
     preferences::write(&path, &preferences).map_err(|e| format!("{e:#}"))?;
-    Ok(preferences)
+    preferences::read(&path).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
@@ -90,6 +90,7 @@ async fn index_request(
         | stashfinder_core::Action::SearchStart(_)
         | stashfinder_core::Action::Directory(_)
         | stashfinder_core::Action::SearchPage { .. }
+        | stashfinder_core::Action::SearchBatch { .. }
         | stashfinder_core::Action::SearchCancel { .. } => ipc::request(ipc::DEFAULT_PIPE, action)
             .await
             .map_err(|error| format!("{error:#}")),

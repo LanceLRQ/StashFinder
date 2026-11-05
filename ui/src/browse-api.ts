@@ -48,6 +48,20 @@ export function fileTime(value: string | null) {
     Number(BigInt(value) / 10000n - 11644473600000n),
   ).toLocaleString();
 }
+export function fileSize(value: string | null) {
+  if (value === null) return "未知";
+  const bytes = BigInt(value);
+  let divisor = 1n;
+  let unit = 0;
+  const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
+  while (unit < units.length - 1 && bytes >= divisor * 1024n) {
+    divisor *= 1024n;
+    unit++;
+  }
+  const whole = bytes / divisor;
+  const fraction = ((bytes % divisor) * 10n) / divisor;
+  return `${whole.toLocaleString()}${fraction ? `.${fraction}` : ""} ${units[unit]}`;
+}
 export const connectionLabel: Record<string, string> = {
   online: "在线",
   offline: "离线",

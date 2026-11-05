@@ -46,11 +46,29 @@ const page = {
   more: true,
   error: null,
   unavailable: [],
+  rows: [hit],
+  total: 1,
+  groups: 0,
+  missing: 0,
 };
-function mockPage(value: object) {
+function mockPage(
+  value: Omit<typeof page, "row" | "error" | "unavailable"> & {
+    row: typeof hit | null;
+    error: string | null;
+    unavailable: string[];
+  },
+) {
   vi.mocked(invoke).mockImplementation(async (_, args: any) => {
     if (args.action.search_start) return { kind: "search_started", data: 1 };
-    if (args.action.search_page) return { kind: "search_page", data: value };
+    if (args.action.search_batch)
+      return {
+        kind: "search_page",
+        data: {
+          ...value,
+          rows: value.row ? [value.row] : [],
+          total: value.row ? 1 : 0,
+        },
+      };
     return { kind: "accepted" };
   });
 }
@@ -78,7 +96,7 @@ test("shows offline relative paths, unknown metadata and bounded results without
   expect(screen.getByText("aaa\\movie.txt")).toBeTruthy();
   expect(screen.getByText("离线")).toBeTruthy();
   expect(screen.getAllByText("未知").length).toBeGreaterThan(0);
-  expect(screen.getByText(/请缩小搜索范围/)).toBeTruthy();
+  expect(screen.getByText("1 条结果")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "打开" })).toBeNull();
 });
 
@@ -92,6 +110,7 @@ test("sends filename and partition filters, and distinguishes errors from empty 
     "索引不可用",
   );
   expect(screen.queryByText("没有匹配的文件")).toBeNull();
+  fireEvent.click(screen.getByText("视图"));
   fireEvent.click(screen.getByRole("checkbox", { name: "仅文件名" }));
   fireEvent.change(screen.getByRole("combobox", { name: "分区范围" }), {
     target: { value: "p" },
@@ -102,7 +121,11 @@ test("sends filename and partition filters, and distinguishes errors from empty 
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("index_request", {
       action: {
-        search_start: { text: "aaa bbb", names_only: true, partitions: ["p"] },
+        search_start: expect.objectContaining({
+          text: "aaa bbb",
+          names_only: true,
+          partitions: ["p"],
+        }),
       },
     }),
   );
@@ -114,21 +137,23 @@ test("late pages cannot overwrite a newer query, and previous query is cancelled
   vi.mocked(invoke).mockImplementation(async (_, args: any) => {
     if (args.action.search_start)
       return { kind: "search_started", data: ++sequence };
-    if (args.action.search_page?.id === 1)
+    if (args.action.search_batch?.id === 1)
       return new Promise((r) => {
         resolveOld = r;
       });
-    if (args.action.search_page)
+    if (args.action.search_batch)
       return {
         kind: "search_page",
         data: {
           ...page,
           id: 2,
-          row: {
-            ...hit,
-            partial: true,
-            file: { ...hit.file, name: "new.txt" },
-          },
+          rows: [
+            {
+              ...hit,
+              partial: true,
+              file: { ...hit.file, name: "new.txt" },
+            },
+          ],
         },
       };
     return { kind: "accepted" };

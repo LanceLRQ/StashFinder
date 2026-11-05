@@ -18,6 +18,7 @@ export default function BrowsePane({
   onChoose,
   onSearch,
   onTitle,
+  onLocation,
 }: {
   id: number;
   asset?: Asset;
@@ -27,6 +28,7 @@ export default function BrowsePane({
   onChoose: (partition: string) => void;
   onSearch: (text: string) => void;
   onTitle: (id: number, title: string) => void;
+  onLocation?: (id: number, page: DirectoryPage) => void;
 }) {
   const [parent, setParent] = useState(initialParent);
   const [page, setPage] = useState<DirectoryPage | null>(null);
@@ -44,6 +46,9 @@ export default function BrowsePane({
   const composing = useRef(false);
   const request = useRef(0);
   const currentPage = useRef(page);
+  useEffect(() => {
+    if (page) onLocation?.(id, page);
+  }, [id, page, onLocation]);
   currentPage.current = page;
   const partition = asset?.registration.partition_id;
   const filesystem = asset?.registration.filesystem_id;

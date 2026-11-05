@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import CategoryEditor from "./CategoryEditor";
 import type { Page, Preferences, ServiceStatus } from "./settings-api";
 import { taskCommand, type TaskSnapshot } from "./task-api";
 
@@ -164,20 +165,30 @@ export default function Settings({
           </>
         )}
         {category === "search" && (
-          <label className="setting-row">
-            <span>
-              默认包含路径<small>用于下次打开的搜索页面。</small>
-            </span>
-            <input
-              type="checkbox"
-              checked={preferences.include_path}
-              disabled={saving}
-              onChange={(e) =>
-                void onSave({ ...preferences, include_path: e.target.checked })
-              }
-              aria-label="默认包含路径"
+          <>
+            <label className="setting-row">
+              <span>
+                默认包含路径<small>用于下次打开的搜索页面。</small>
+              </span>
+              <input
+                type="checkbox"
+                checked={preferences.include_path}
+                disabled={saving}
+                onChange={(e) =>
+                  void onSave({
+                    ...preferences,
+                    include_path: e.target.checked,
+                  })
+                }
+                aria-label="默认包含路径"
+              />
+            </label>
+            <CategoryEditor
+              categories={preferences.categories}
+              saving={saving}
+              onSave={(categories) => onSave({ ...preferences, categories })}
             />
-          </label>
+          </>
         )}
         {category === "about" && (
           <>
