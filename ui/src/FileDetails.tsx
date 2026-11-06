@@ -9,11 +9,11 @@ export default function FileDetails({
 }: {
   rows: FileRow[];
   partition: string;
-  connection: string;
+  connection: string | null;
   indexedAt: number | null;
   selectionCount?: number;
 }) {
-  const file = rows.length === 1 ? rows[0] : null;
+  const file = selectionCount === 1 && rows.length === 1 ? rows[0] : null;
   return (
     <aside className="file-preview" aria-label="预览窗格">
       {!selectionCount ? (
@@ -24,10 +24,20 @@ export default function FileDetails({
             {file?.name || `已选择 ${selectionCount.toLocaleString()} 项`}
           </strong>
           <dl>
-            <dt>分区</dt>
-            <dd>{partition}</dd>
-            <dt>状态</dt>
-            <dd>{connectionLabel[connection] || "状态未确认"}</dd>
+            {partition && (
+              <>
+                <dt>分区</dt>
+                <dd>{partition}</dd>
+              </>
+            )}
+            {(selectionCount === 1 || connection) && (
+              <>
+                <dt>状态</dt>
+                <dd>
+                  {connectionLabel[connection || "unconfirmed"] || "状态未确认"}
+                </dd>
+              </>
+            )}
             {file && (
               <>
                 <dt>路径</dt>
@@ -48,12 +58,16 @@ export default function FileDetails({
                 <dd>{fileTime(file.modified)}</dd>
               </>
             )}
-            <dt>索引时间</dt>
-            <dd>
-              {indexedAt == null
-                ? "未知"
-                : new Date(indexedAt * 1000).toLocaleString()}
-            </dd>
+            {(selectionCount === 1 || indexedAt != null) && (
+              <>
+                <dt>索引时间</dt>
+                <dd>
+                  {indexedAt == null
+                    ? "未知"
+                    : new Date(indexedAt * 1000).toLocaleString()}
+                </dd>
+              </>
+            )}
           </dl>
         </>
       )}

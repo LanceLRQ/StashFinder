@@ -169,6 +169,104 @@ struct ScanDisk {
     reads: Arc<AtomicUsize>,
     changed: Arc<AtomicBool>,
 }
+
+struct MountSession {
+    epoch: Arc<AtomicUsize>,
+    opened: usize,
+    reads: Arc<AtomicUsize>,
+}
+impl stashfinder_service::scan::Source for MountSession {
+    fn verify(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.opened == self.epoch.load(Ordering::SeqCst),
+            "old mount session"
+        );
+        Ok(())
+    }
+    fn changed(&mut self) -> anyhow::Result<bool> {
+        self.verify()?;
+        Ok(false)
+    }
+    fn enumerate(
+        &self,
+        _: &[u16],
+        _: &AtomicBool,
+        _: &mut dyn FnMut(&[stashfinder_windows::scan::ScanEntry]) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        self.verify()?;
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[test]
+fn an_invalid_scan_session_is_reopened_without_an_offline_observation() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut catalog = Catalog::open(dir.path()).unwrap();
+    let observed = Observation {
+        candidate_id: "fat".into(),
+        disk_number: None,
+        model: None,
+        disk_bytes: None,
+        partition_bytes: None,
+        mounts: vec![],
+        identity: Identity {
+            layout: Layout::Gpt {
+                disk: "disk".into(),
+                partition: "fat".into(),
+            },
+            filesystem: Some("exFAT".into()),
+            serial: Some(Serial {
+                source: "win32_volume32".into(),
+                value: "1".into(),
+            }),
+        },
+        capacity: None,
+        error: None,
+    };
+    let registered = catalog.prepare(&observed, "FAT").unwrap();
+    catalog.finish(&registered.partition_id).unwrap();
+    let snapshot = Snapshot {
+        assets: vec![Asset {
+            registration: catalog.get(&registered.partition_id).unwrap(),
+            connection: "online".into(),
+            mounts: vec![],
+            error: None,
+            capacity_error: None,
+        }],
+        ..Default::default()
+    };
+    let epoch = Arc::new(AtomicUsize::new(0));
+    let reads = Arc::new(AtomicUsize::new(0));
+    let opens = Arc::new(AtomicUsize::new(0));
+    let (e, r, o) = (epoch.clone(), reads.clone(), opens.clone());
+    let worker = Runner::start_with_sources(
+        dir.path().into(),
+        |_| panic!("not NTFS"),
+        move |_| {
+            o.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(MountSession {
+                opened: e.load(Ordering::SeqCst),
+                epoch: e.clone(),
+                reads: r.clone(),
+            }))
+        },
+    );
+    wait_until(|| worker.ready());
+    worker.observe(snapshot);
+    wait_until(|| {
+        reads.load(Ordering::SeqCst) >= 1
+            && worker.status(&registered.partition_id).phase == "snapshot"
+    });
+    assert_eq!(opens.load(Ordering::SeqCst), 1);
+    // Keep the snapshot online: the detach/reattach happened between device polls.
+    epoch.store(1, Ordering::SeqCst);
+    wait_until(|| {
+        reads.load(Ordering::SeqCst) >= 2
+            && worker.status(&registered.partition_id).phase == "snapshot"
+    });
+    assert!(opens.load(Ordering::SeqCst) >= 2);
+}
 impl stashfinder_service::scan::Source for ScanDisk {
     fn verify(&self) -> anyhow::Result<()> {
         Ok(())

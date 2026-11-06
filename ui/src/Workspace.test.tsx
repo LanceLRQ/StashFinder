@@ -136,7 +136,26 @@ test("published index changes refresh the current directory without changing its
 test("keyboard paste keeps pending-index feedback when automatic updates are disabled", async () => {
   vi.mocked(readDirectory).mockResolvedValue(root);
   vi.mocked(invoke).mockImplementation(async (command) =>
-    command === "file_paste" ? "完成 1 项" : undefined,
+    command === "file_paste"
+      ? "完成 1 项"
+      : command === "file_report"
+        ? {
+            id: 1,
+            total: 1,
+            completed: 1,
+            rows: [
+              {
+                index: 0,
+                source: "new.txt",
+                state: "completed",
+                destination: "Movies\\new.txt",
+                error: null,
+                note: null,
+              },
+            ],
+            next: null,
+          }
+        : undefined,
   );
   render(
     <FileOperations>

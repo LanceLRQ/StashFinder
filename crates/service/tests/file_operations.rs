@@ -103,6 +103,36 @@ fn fixture_with(count: u32, long: bool) -> (tempfile::TempDir, Indexes, Snapshot
     (dir, jobs, snapshot, context)
 }
 #[test]
+fn an_existing_snapshot_remains_usable_during_background_asset_refresh() {
+    let (_dir, jobs, mut snapshot, context) = fixture();
+    snapshot.busy = true;
+    let id = jobs
+        .selection_begin(
+            SelectionOrigin::Directory {
+                context: context.clone(),
+                all: true,
+            },
+            &snapshot,
+        )
+        .unwrap();
+    assert_eq!(jobs.selection_seal(id).unwrap(), 3);
+    assert_eq!(jobs.selection_page(id, 0, &snapshot).unwrap().rows.len(), 3);
+    assert!(
+        jobs.selection_destination(&context, &snapshot)
+            .unwrap()
+            .file
+            .folder
+    );
+    snapshot.assets.clear();
+    assert!(jobs.selection_page(id, 0, &snapshot).is_err());
+    assert!(jobs.selection_destination(&context, &snapshot).is_err());
+    assert!(
+        jobs.selection_begin(SelectionOrigin::Directory { context, all: true }, &snapshot)
+            .is_err()
+    );
+}
+
+#[test]
 fn directory_selection_includes_unloaded_rows_and_preparation_can_be_cancelled() {
     let (_dir, jobs, snapshot, context) = fixture();
     let id = jobs

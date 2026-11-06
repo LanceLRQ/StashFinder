@@ -13,6 +13,186 @@ use std::{
 fn request(rt: &tokio::runtime::Runtime, action: Action) -> Result<Response> {
     rt.block_on(ipc::request(ipc::DEFAULT_PIPE, action))
 }
+
+#[test]
+#[ignore = "writes only new samples on the explicitly authorized M6 NTFS VHD"]
+fn registered_failures_preserve_replacements_and_report_partial_results() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let manifest = PathBuf::from(std::env::var_os("SF_M6_MANIFEST").unwrap());
+    assert!(manifest.starts_with(r"D:\tmp"));
+    assert_eq!(manifest.file_name().unwrap(), "verification.json");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_str(text.trim_start_matches('\u{feff}')).unwrap();
+    let image = PathBuf::from(saved["image"].as_str().unwrap());
+    assert_eq!(image.parent(), manifest.parent());
+    assert_eq!(image.file_name().unwrap(), "file-operations.vhdx");
+    assert_eq!(saved["cleaned"], false);
+    let fixture = saved["fixtures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["filesystem"] == "NTFS")
+        .unwrap();
+    let partition = fixture["id"].as_str().unwrap();
+    let root = PathBuf::from(fixture["root"].as_str().unwrap());
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let snapshot = rt.block_on(ipc::snapshot(ipc::DEFAULT_PIPE)).unwrap();
+    let asset = snapshot
+        .assets
+        .iter()
+        .find(|a| a.registration.partition_id == partition)
+        .unwrap();
+    assert_eq!(asset.registration.name, "M6 NTFS");
+    assert_eq!(asset.connection, "online");
+    assert_eq!(asset.mounts, vec![root.to_string_lossy().to_string()]);
+    let fs = &asset.registration.filesystem_id;
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let source = format!("failures-source-{suffix}");
+    let destination = format!("failures-target-{suffix}");
+    let from = root.join("F1").join(&source);
+    let to = root.join("F1").join(&destination);
+    std::fs::create_dir(&from).unwrap();
+    std::fs::create_dir(&to).unwrap();
+    for name in [
+        "copy1.txt",
+        "copy2.txt",
+        "move.txt",
+        "case.txt",
+        "delete.txt",
+    ] {
+        std::fs::write(from.join(name), format!("Original {name}")).unwrap();
+    }
+    let deadline = Instant::now() + Duration::from_secs(45);
+    let (rows, target) = loop {
+        match prepare(&rt, partition, fs, &source, &destination) {
+            Ok(value) => break value,
+            Err(error) => {
+                assert!(Instant::now() < deadline, "{error:#}");
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+    };
+    let selected = |name: &str| {
+        rows.iter()
+            .find(|r| String::from_utf16_lossy(&r.file.relative).ends_with(name))
+            .unwrap()
+            .clone()
+    };
+    let copy = selected("copy1.txt");
+    let path = verify(&copy, false).unwrap();
+    let cancelled = execute(
+        std::slice::from_ref(&path),
+        &[Some(copy.clone())],
+        Some(target.clone()),
+        &Edit::Paste {
+            folder: verify(&target, true).unwrap(),
+            move_files: false,
+        },
+        0,
+        Arc::new(AtomicBool::new(true)),
+    )
+    .unwrap();
+    assert!(
+        cancelled.cancelled
+            && cancelled
+                .items
+                .iter()
+                .all(|r| r.state == OutcomeState::NotRun)
+    );
+    assert!(!to.join("copy1.txt").exists());
+    let case = selected("case.txt");
+    assert!(
+        execute(
+            &[verify(&case, false).unwrap()],
+            &[Some(case)],
+            None,
+            &Edit::Rename("delete.txt".into()),
+            0,
+            Arc::new(AtomicBool::new(false))
+        )
+        .is_err()
+    );
+    assert_eq!(
+        std::fs::read_to_string(from.join("case.txt")).unwrap(),
+        "Original case.txt"
+    );
+    assert_eq!(
+        std::fs::read_to_string(from.join("delete.txt")).unwrap(),
+        "Original delete.txt"
+    );
+    let locked = selected("copy2.txt");
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(from.join("copy2.txt"))
+        .unwrap();
+    let locked_result = execute(
+        &[verify(&locked, false).unwrap()],
+        &[Some(locked.clone())],
+        Some(target.clone()),
+        &Edit::Paste {
+            folder: verify(&target, true).unwrap(),
+            move_files: false,
+        },
+        0,
+        Arc::new(AtomicBool::new(false)),
+    );
+    if let Ok(report) = locked_result {
+        assert!(
+            !report.success(),
+            "locked data was reported copied: {report:?}"
+        );
+    }
+    assert!(!to.join("copy2.txt").exists());
+    drop(held);
+    assert!(verify(&locked, false).is_ok());
+    let replaced = selected("move.txt");
+    std::fs::rename(from.join("move.txt"), from.join("preserved.txt")).unwrap();
+    std::fs::write(from.join("move.txt"), "Replacement must survive").unwrap();
+    assert!(verify(&replaced, false).is_err());
+    let partial = execute(
+        &[path, from.join("move.txt")],
+        &[Some(copy), Some(replaced)],
+        Some(target.clone()),
+        &Edit::Paste {
+            folder: verify(&target, true).unwrap(),
+            move_files: false,
+        },
+        0,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    assert!(!partial.success(), "{partial:?}");
+    assert_eq!(partial.completed(), 1, "{partial:?}");
+    assert_eq!(
+        std::fs::read_to_string(to.join("copy1.txt")).unwrap(),
+        "Original copy1.txt"
+    );
+    assert!(!to.join("move.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(from.join("move.txt")).unwrap(),
+        "Replacement must survive"
+    );
+    assert_eq!(
+        std::fs::read_to_string(from.join("preserved.txt")).unwrap(),
+        "Original move.txt"
+    );
+    std::fs::write(
+        manifest
+            .parent()
+            .unwrap()
+            .join("file-operation-failures.json"),
+        serde_json::to_vec_pretty(&partial).unwrap(),
+    )
+    .unwrap();
+    println!(
+        "cancel-before-start, rename collision, sharing denial, source replacement and actual partial copy verified"
+    );
+}
 fn directory(
     rt: &tokio::runtime::Runtime,
     partition: &str,

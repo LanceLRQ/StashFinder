@@ -83,6 +83,16 @@ cargo test -p stashfinder-service --test file_operations_real registered_three -
 Remove-Item Env:SF_M6_MANIFEST
 ```
 
+三分区测试后台和 VHD 就绪后，可在管理员 PowerShell 中复验快速重挂的监控恢复。下面的命令仅复用该清单对应的已授权测试盘，不安装或重启服务，不创建日志；会短暂以只读方式重挂，再恢复读写，并仅对新生成的样本执行新建、改名和删除。每一步必须在 45 秒内自动反映到索引，且服务 PID 和登记身份保持不变：
+
+```powershell
+.\scripts\verify-scan-remount.ps1 -Manifest 'D:\tmp\StashFinder-M6-new-directory\verification.json'
+```
+
+结果保存为测试目录下的 `remount-verification.json`；清理仍由原验证后台包装器负责。该验证不替代真实 USB 硬件异常拔出验收。
+
+`file_operations_real` 中的 `registered_failures` 用例默认忽略，只能在同一已授权测试环境中显式运行。它检查取消、改名冲突、文件占用、路径替换和实际部分复制；遇“文件正在使用”对话框时需要选择取消，因此不能无人值守运行全部 ignored 用例。
+
 ## 分区登记验收
 
 - 在概览点击“登记分区”，弹窗首次打开不勾选任何分区。选择需要管理的分区并命名；没有选择的分区不登记，也不扫描文件。

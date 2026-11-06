@@ -13,6 +13,7 @@ import SearchFilters from "./SearchFilters";
 import VirtualResults, { virtualScale } from "./VirtualResults";
 import FileContextMenu, { type MenuAction } from "./FileContextMenu";
 import RenameInput from "./RenameInput";
+import type { Asset } from "./asset-api";
 import { useFileOperations } from "./FileOperations";
 import {
   fileKey,
@@ -26,6 +27,7 @@ type Selection = { range: [number, number] | null; toggles: Set<number> };
 const emptySelection = (): Selection => ({ range: null, toggles: new Set() });
 export default function Search({
   partitions,
+  assets,
   onBack,
   includePath = true,
   request,
@@ -36,6 +38,7 @@ export default function Search({
   indexVersion = "",
 }: {
   partitions: { id: string; name: string }[];
+  assets?: Asset[];
   onBack?: () => void;
   includePath?: boolean;
   request?: { text: string; revision: number };
@@ -45,6 +48,27 @@ export default function Search({
   context?: SearchContext;
   indexVersion?: string;
 }) {
+  function currentHit(hit: SearchHit): SearchHit {
+    if (assets === undefined) return hit;
+    const asset = assets.find(
+      (a) => a.registration.partition_id === hit.partition_id,
+    );
+    const sameFilesystem =
+      asset?.registration.filesystem_id === hit.filesystem_id;
+    const connection = !asset
+      ? "unconfirmed"
+      : !sameFilesystem
+        ? "historical"
+        : asset.connection === "online" && asset.registration.state !== "ready"
+          ? "unconfirmed"
+          : asset.connection;
+    return {
+      ...hit,
+      partition_name: asset?.registration.name ?? hit.partition_name,
+      connection,
+      mounts: connection === "online" ? asset!.mounts : [],
+    };
+  }
   const input = useRef<HTMLInputElement>(null);
   const operations = useFileOperations();
   const [editing, setEditing] = useState<number | null>(null);
@@ -285,13 +309,14 @@ export default function Search({
     const index = [...cache].find(([, hit]) => hit === loadedSelected)![0];
     selectedSnapshot.current = { index, hit: loadedSelected };
   }
-  const selectedRow =
+  const selectedHit =
     loadedSelected ||
     (count === 1 &&
     selectedSnapshot.current &&
     selected(selectedSnapshot.current.index)
       ? selectedSnapshot.current.hit
       : undefined);
+  const selectedRow = selectedHit ? currentHit(selectedHit) : undefined;
   function choose(i: number, shift: boolean, ctrl: boolean) {
     cursor.current = i;
     if (shift) {
@@ -327,7 +352,14 @@ export default function Search({
   }
   const knownSelected = [...cache]
     .filter(([i]) => selected(i))
-    .map(([, row]) => row);
+    .map(([, row]) => currentHit(row));
+  const previewRows =
+    count === 1 && selectedRow
+      ? [selectedRow]
+      : knownSelected.length === count
+        ? knownSelected
+        : [];
+  const previewFirst = previewRows[0];
   const online =
     count > 0 &&
     (count === 1
@@ -542,7 +574,8 @@ export default function Search({
             if (e.key === "Enter" && selectedRow) open(selectedRow);
           }}
           row={(i) => {
-            const r = cache.get(i);
+            const cached = cache.get(i);
+            const r = cached ? currentHit(cached) : undefined;
             return (
               <tr
                 key={i}
@@ -670,10 +703,27 @@ export default function Search({
         {preview && (
           <FileDetails
             selectionCount={count}
-            rows={selectedRow ? [selectedRow.file] : []}
-            partition={selectedRow?.partition_name || ""}
-            connection={selectedRow?.connection || "unconfirmed"}
-            indexedAt={selectedRow?.indexed_at ?? null}
+            rows={previewRows.map((r) => r.file)}
+            partition={
+              previewFirst &&
+              previewRows.every(
+                (r) => r.partition_id === previewFirst.partition_id,
+              )
+                ? previewFirst.partition_name
+                : ""
+            }
+            connection={
+              previewFirst &&
+              previewRows.every((r) => r.connection === previewFirst.connection)
+                ? previewFirst.connection
+                : null
+            }
+            indexedAt={
+              previewFirst &&
+              previewRows.every((r) => r.indexed_at === previewFirst.indexed_at)
+                ? previewFirst.indexed_at
+                : null
+            }
           />
         )}
       </div>

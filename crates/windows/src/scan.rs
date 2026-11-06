@@ -1,9 +1,10 @@
 use anyhow::{Context, Result, bail, ensure};
 use std::{
     ffi::OsString,
+    fs::{File, OpenOptions},
     os::windows::{
         ffi::{OsStrExt, OsStringExt},
-        fs::MetadataExt,
+        fs::{MetadataExt, OpenOptionsExt},
     },
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
@@ -29,6 +30,7 @@ pub struct ScanEntry {
 
 pub struct Scanner {
     root: PathBuf,
+    session: File,
     notification: HANDLE,
 }
 impl Scanner {
@@ -38,6 +40,12 @@ impl Scanner {
         } else {
             std::fs::canonicalize(path).context("无法打开扫描目录")?
         };
+        let session = OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES.0)
+            .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0)
+            .open(&root)
+            .context("无法打开目录监控会话")?;
         let flags = FILE_NOTIFY_CHANGE_FILE_NAME
             | FILE_NOTIFY_CHANGE_DIR_NAME
             | FILE_NOTIFY_CHANGE_SIZE
@@ -48,9 +56,17 @@ impl Scanner {
         let notification =
             unsafe { FindFirstChangeNotificationW(&HSTRING::from(root.as_os_str()), true, flags) }
                 .context("无法建立目录监控")?;
-        Ok(Self { root, notification })
+        Ok(Self {
+            root,
+            session,
+            notification,
+        })
     }
     pub fn changed(&mut self) -> Result<bool> {
+        // A remount can leave an old notification timing out forever, even at the same path.
+        self.session
+            .metadata()
+            .context("目录监控会话已失效，需要重新建立监控")?;
         // SAFETY: The owned notification remains open; a zero timeout never blocks the worker.
         match unsafe { WaitForSingleObject(self.notification, 0) } {
             WAIT_TIMEOUT => Ok(false),

@@ -26,6 +26,10 @@ pub enum Edit {
     Paste { folder: PathBuf, move_files: bool },
 }
 
+fn is_cancelled(hr: HRESULT) -> bool {
+    hr == E_ABORT || hr == COPYENGINE_E_USER_CANCELLED || hr == ERROR_CANCELLED.to_hresult()
+}
+
 fn shell_path(item: &IShellItem) -> Option<String> {
     // SAFETY: The returned Shell string is read before freeing its COM task allocation.
     unsafe {
@@ -109,8 +113,15 @@ impl Sink_Impl {
     ) -> windows::core::Result<()> {
         if let Some(index) = self.index {
             let mut report = self.report.lock().unwrap_or_else(|e| e.into_inner());
+            let cancelled = is_cancelled(hr);
+            report.cancelled |= cancelled;
             let row = &mut report.items[index];
-            if hr.is_err() {
+            if cancelled {
+                if !matches!(row.state, OutcomeState::Completed | OutcomeState::Failed) {
+                    row.state = OutcomeState::Skipped;
+                    row.note = Some("用户已取消，未完成".into());
+                }
+            } else if hr.is_err() {
                 row.state = OutcomeState::Failed;
                 if row.error.is_none() {
                     row.error = Some(windows::core::Error::from_hresult(hr).to_string());
@@ -150,7 +161,7 @@ impl IFileOperationProgressSink_Impl for Sink_Impl {
         self.check(None)
     }
     fn FinishOperations(&self, hr: HRESULT) -> windows::core::Result<()> {
-        if self.index.is_none() && matches!(hr, E_ABORT | COPYENGINE_E_USER_CANCELLED) {
+        if self.index.is_none() && is_cancelled(hr) {
             self.report
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -407,22 +418,19 @@ pub fn execute(
         let _ = operation.Unadvise(cookie);
         let mut report = report.lock().unwrap_or_else(|e| e.into_inner());
         report.cancelled |= cancel.load(Ordering::Acquire);
+        if let Err(error) = performed {
+            if is_cancelled(error.code()) {
+                report.cancelled = true;
+            } else {
+                report.error = Some(error.to_string());
+            }
+        }
         if aborted.map(|v| v.as_bool()).unwrap_or(true)
             && report.completed() != report.items.len()
             && !report.cancelled
             && report.error.is_none()
         {
             report.error = Some("Windows 报告存在未完成的操作".into());
-        }
-        if let Err(error) = performed {
-            if error.code() == E_ABORT
-                || error.code() == COPYENGINE_E_USER_CANCELLED
-                || error.code() == ERROR_CANCELLED.to_hresult()
-            {
-                report.cancelled = true;
-            } else {
-                report.error = Some(error.to_string());
-            }
         }
         if let Edit::Rename(name) = edit
             && report.items[0].state == OutcomeState::Completed
@@ -475,6 +483,49 @@ pub fn execute(
 mod tests {
     use super::*;
     use std::os::windows::ffi::OsStrExt;
+    #[test]
+    fn a_cancelled_shell_item_is_not_reported_as_a_failed_copy() {
+        for code in [
+            COPYENGINE_E_USER_CANCELLED,
+            E_ABORT,
+            ERROR_CANCELLED.to_hresult(),
+        ] {
+            let report = Arc::new(Mutex::new(OperationReport {
+                items: vec![ItemOutcome {
+                    index: 0,
+                    source: "test sample".into(),
+                    state: OutcomeState::NotRun,
+                    destination: None,
+                    error: None,
+                    note: None,
+                }],
+                cancelled: false,
+                error: None,
+            }));
+            let sink: IFileOperationProgressSink = Sink {
+                index: Some(0),
+                root: None,
+                source: None,
+                destination: None,
+                destination_path: None,
+                initial: None,
+                checked: AtomicBool::new(false),
+                cancel: Arc::new(AtomicBool::new(false)),
+                report: report.clone(),
+                recycle: false,
+            }
+            .into();
+            // SAFETY: This invokes only the report callback; no Shell item or file is operated on.
+            unsafe {
+                sink.PostCopyItem(0, None, None, PCWSTR::null(), code, None)
+                    .unwrap()
+            };
+            let result = report.lock().unwrap();
+            assert!(result.cancelled);
+            assert_eq!(result.items[0].state, OutcomeState::Skipped);
+            assert!(result.items[0].error.is_none() && result.error.is_none());
+        }
+    }
     #[test]
     fn a_queued_alias_must_not_replace_the_registered_source() {
         let directory = tempfile::tempdir().unwrap();

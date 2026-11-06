@@ -29,6 +29,7 @@ export const useFileOperations = () => useContext(Context);
 export default function FileOperations({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<OperationStatus | null>(null);
   const [message, setMessage] = useState("");
+  const [quietMenu, setQuietMenu] = useState(false);
   const [error, setError] = useState("");
   const [report, setReport] = useState<ReportPage | null>(null);
   const [showReport, setShowReport] = useState(false);
@@ -73,6 +74,7 @@ export default function FileOperations({ children }: { children: ReactNode }) {
           ? { ...page, rows: [...previous.rows, ...page.rows] }
           : page,
       );
+    return page;
   }
   async function execute(
     summary: PreparedSummary,
@@ -97,16 +99,18 @@ export default function FileOperations({ children }: { children: ReactNode }) {
     } finally {
       if (token === sequence.current) {
         setStatus(null);
-        if (
-          action === "recycle" ||
-          action === "delete" ||
-          (typeof action === "object" && "rename" in action)
-        )
-          changed?.();
-        await readReport(token, summary.id).catch((e) => {
+        const page = await readReport(token, summary.id).catch((e) => {
           if (token === sequence.current)
             setError((previous) => previous || String(e));
         });
+        if (
+          token === sequence.current &&
+          page?.completed &&
+          (action === "recycle" ||
+            action === "delete" ||
+            (typeof action === "object" && "rename" in action))
+        )
+          changed?.();
       }
     }
   }
@@ -126,6 +130,7 @@ export default function FileOperations({ children }: { children: ReactNode }) {
     if (running.current) return;
     running.current = true;
     const token = ++sequence.current;
+    setQuietMenu(typeof action === "object" && "more" in action);
     setMessage("");
     setError("");
     setReport(null);
@@ -198,6 +203,7 @@ export default function FileOperations({ children }: { children: ReactNode }) {
       if (running.current) return;
       running.current = true;
       const token = ++sequence.current;
+      setQuietMenu(false);
       setError("");
       setReport(null);
       setShowReport(false);
@@ -217,21 +223,22 @@ export default function FileOperations({ children }: { children: ReactNode }) {
           }
         })
         .catch((e) => fail(e, token))
-        .finally(() => {
+        .finally(async () => {
           if (token === sequence.current) {
-            changed?.();
-            void readReport(token).catch((e) =>
-              setError((previous) => previous || String(e)),
-            );
+            const page = await readReport(token).catch((e) => {
+              if (token === sequence.current)
+                setError((previous) => previous || String(e));
+            });
+            if (token === sequence.current && page?.completed) changed?.();
           }
-          running.current = false;
+          if (token === sequence.current) running.current = false;
         });
     },
   };
   return (
     <Context.Provider value={api}>
       {children}
-      {(status || message || error) && (
+      {(error || (!quietMenu && (status || message))) && (
         <div
           className={`file-operation-status ${error ? "has-error" : ""}`}
           aria-label="文件操作状态"

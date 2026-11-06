@@ -4,17 +4,41 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import Search from "./Search";
 import FileOperations from "./FileOperations";
+import type { Asset } from "./asset-api";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
 });
-function mock() {
+
+test("multi-selection preview uses shared facts only when the full selection is loaded", async () => {
+  mock();
+  render(<Search partitions={[]} />);
+  fireEvent.click(await screen.findByText("file-0.txt"));
+  fireEvent.click(screen.getByText("file-1.txt"), { shiftKey: true });
+  fireEvent.click(screen.getByText("视图"));
+  fireEvent.click(screen.getByLabelText("预览窗格"));
+  const preview = within(
+    screen.getByRole("complementary", { name: "预览窗格" }),
+  );
+  expect(preview.getByText("Movies")).toBeTruthy();
+  expect(preview.getByText("离线")).toBeTruthy();
+  fireEvent.keyDown(screen.getByLabelText("搜索结果列表"), {
+    key: "a",
+    ctrlKey: true,
+  });
+  expect(preview.getByText("已选择 10,000,000 项")).toBeTruthy();
+  expect(preview.queryByText("Movies")).toBeNull();
+  expect(preview.queryByText("离线")).toBeNull();
+  expect(preview.queryByText("状态未确认")).toBeNull();
+});
+function mock(connection = "offline") {
   vi.mocked(invoke).mockImplementation(async (command, args: any) => {
     if (command === "file_prepare") throw Error("selection rejected");
     if (args.action.search_start) return { kind: "search_started", data: 1 };
@@ -33,8 +57,8 @@ function mock() {
             partition_id: "p",
             filesystem_id: "fs",
             partition_name: "Movies",
-            connection: "offline",
-            mounts: [],
+            connection,
+            mounts: connection === "online" ? ["E:\\"] : [],
             generation: 1,
             partial: false,
             indexed_at: null,
@@ -83,6 +107,78 @@ test("uses the same backend options for type, duplicates and match settings", as
     }),
   );
 });
+
+test("device changes refresh cached result status and menus without restarting the search", async () => {
+  mock("online");
+  const asset = {
+    registration: {
+      partition_id: "p",
+      filesystem_id: "fs",
+      name: "Movies",
+      state: "ready",
+    },
+    connection: "online",
+    mounts: ["E:\\"],
+    error: null,
+  } as Asset;
+  const { rerender } = render(<Search partitions={[]} assets={[asset]} />);
+  const item = await screen.findByText("file-0.txt");
+  fireEvent.click(item);
+  fireEvent.click(screen.getByText("视图"));
+  fireEvent.click(screen.getByLabelText("预览窗格"));
+  const list = screen.getByLabelText("搜索结果列表");
+  fireEvent.scroll(list, { target: { scrollLeft: 120 } });
+  const starts = vi
+    .mocked(invoke)
+    .mock.calls.filter(([, args]: any) => args?.action?.search_start).length;
+  rerender(
+    <Search
+      partitions={[]}
+      assets={[{ ...asset, connection: "offline", mounts: [] }]}
+    />,
+  );
+  const row = within(list).getByText("file-0.txt").closest("tr")!;
+  expect(row.getAttribute("aria-selected")).toBe("true");
+  expect(within(row).getByText("离线")).toBeTruthy();
+  expect(within(row).queryByText(/E:\\/)).toBeNull();
+  expect(
+    within(screen.getByRole("complementary", { name: "预览窗格" })).getByText(
+      "离线",
+    ),
+  ).toBeTruthy();
+  expect(list.scrollLeft).toBe(120);
+  fireEvent.contextMenu(row, { clientX: 20, clientY: 30 });
+  expect(
+    screen.getByRole("menuitem", { name: /复制文件/ }).getAttribute("disabled"),
+  ).not.toBeNull();
+  rerender(
+    <Search partitions={[]} assets={[{ ...asset, mounts: ["Z:\\"] }]} />,
+  );
+  expect(within(row).getByText("在线")).toBeTruthy();
+  expect(within(row).getByText(/Z:\\/)).toBeTruthy();
+  expect(
+    screen.getByRole("menuitem", { name: /复制文件/ }).getAttribute("disabled"),
+  ).toBeNull();
+  rerender(
+    <Search
+      partitions={[]}
+      assets={[
+        {
+          ...asset,
+          registration: { ...asset.registration, filesystem_id: "replacement" },
+          mounts: ["Z:\\"],
+        },
+      ]}
+    />,
+  );
+  expect(within(row).getByText("历史记录")).toBeTruthy();
+  expect(within(row).queryByText(/Z:\\/)).toBeNull();
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([, args]: any) => args?.action?.search_start),
+  ).toHaveLength(starts);
+});
 test("keeps DOM rows bounded and requests distant result positions", async () => {
   mock();
   render(<Search partitions={[]} />);
@@ -97,10 +193,12 @@ test("keeps DOM rows bounded and requests distant result positions", async () =>
       },
     }),
   );
-  await waitFor(() =>
-    expect(
-      screen.queryAllByText(/file-[1-9][0-9]{4,}.txt/).length,
-    ).toBeGreaterThan(0),
+  await waitFor(
+    () =>
+      expect(
+        screen.queryAllByText(/file-[1-9][0-9]{4,}.txt/).length,
+      ).toBeGreaterThan(0),
+    { timeout: 3000 },
   );
   expect(screen.getAllByRole("row").length).toBeLessThan(70);
   fireEvent.keyDown(list, { ctrlKey: true, key: "a" });

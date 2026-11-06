@@ -324,6 +324,7 @@ export default function Workspace({
           hidden={active !== 0}
         >
           <Search
+            assets={assets}
             partitions={assets.map((a) => ({
               id: a.registration.partition_id,
               name: a.registration.name,

@@ -45,6 +45,7 @@ export type OperationStatus = {
 export type ReportPage = {
   id: number;
   total: number;
+  completed: number;
   rows: {
     index: number;
     source: string;

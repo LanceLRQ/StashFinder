@@ -313,10 +313,12 @@ fn finish(
 ) -> Result<String, String> {
     let mut work = shared.lock().unwrap_or_else(|e| e.into_inner());
     if work.status.id == id {
-        work.status.phase = if result.is_ok() {
-            "completed"
-        } else if work.cancel.load(Ordering::Acquire) {
+        work.status.phase = if work.cancel.load(Ordering::Acquire)
+            || work.report.as_ref().is_some_and(|report| report.cancelled)
+        {
             "cancelled"
+        } else if result.is_ok() {
+            "completed"
         } else {
             "failed"
         }
@@ -340,7 +342,13 @@ async fn operation_worker(
             let result = job()
                 .and_then(|report| {
                     let summary = report.summary();
-                    let success = report.success();
+                    let success = report.success()
+                        || (report.cancelled
+                            && report.error.is_none()
+                            && report
+                                .items
+                                .iter()
+                                .all(|row| row.state != OutcomeState::Failed));
                     let mut details = report
                         .items
                         .iter()
@@ -374,6 +382,7 @@ async fn operation_worker(
 pub struct ReportPage {
     pub id: u64,
     pub total: usize,
+    pub completed: usize,
     pub rows: Vec<ItemOutcome>,
     pub next: Option<usize>,
 }
@@ -404,6 +413,7 @@ pub fn file_report(
     Ok(Some(ReportPage {
         id: work.status.id,
         total: report.items.len(),
+        completed: report.completed(),
         rows,
         next,
     }))
@@ -623,6 +633,31 @@ mod tests {
         }
         assert_eq!(actual, entries);
         assert!(entry_chunks(vec![vec![255; stashfinder_core::MAX_FRAME]]).is_err());
+    }
+    #[tokio::test]
+    async fn cancelling_a_windows_dialog_returns_a_cancelled_report_without_a_false_error() {
+        let shared = Arc::new(Mutex::new(Work::default()));
+        shared.lock().unwrap().status.id = 7;
+        let result = operation_worker(shared.clone(), 7, || {
+            Ok(OperationReport {
+                items: vec![ItemOutcome {
+                    index: 0,
+                    source: "sample".into(),
+                    state: OutcomeState::Skipped,
+                    destination: None,
+                    error: None,
+                    note: Some("用户已取消，未完成".into()),
+                }],
+                cancelled: true,
+                error: None,
+            })
+        })
+        .await;
+        assert!(result.unwrap().contains("操作已取消"));
+        let work = shared.lock().unwrap();
+        assert_eq!(work.status.phase, "cancelled");
+        assert!(work.status.error.is_none());
+        assert!(work.report.as_ref().unwrap().cancelled);
     }
     #[tokio::test]
     async fn partial_worker_results_are_retained_instead_of_reported_as_full_success() {

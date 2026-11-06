@@ -590,6 +590,11 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                     }
                     Ok(None) => (),
                     Err(e) => {
+                        if matches!(detected_mode, IndexMode::ScanOnly) {
+                            watchers.remove(id);
+                            dirty.insert(id.clone());
+                            scanned.remove(id);
+                        }
                         {
                             let mut states =
                                 shared.states.lock().unwrap_or_else(|e| e.into_inner());

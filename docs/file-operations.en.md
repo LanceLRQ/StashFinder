@@ -26,15 +26,19 @@ Use Ctrl/Shift to select. Ctrl+A selects all immediate directory children or all
 
 Preflight checks the registered partition, filesystem instance, catalog version and actual native file identity. Drive letters are not identity. Offline, historical, unknown or replaced objects and reparse points block real file operations. Update older scan catalogs lacking native identity first. Text copying does not access the source disk; offline paths use the partition nickname and are not currently openable paths.
 
+Open search results update their connection markers, mount paths and menu availability from current device state without another search. A connection-state change alone preserves selection and scroll position. Results from a different filesystem instance remain historical records.
+
 Paste requires an online registered browse directory. Explicit pastes may use external physical files from Explorer or another app. Plain text, virtual attachments and ambiguous move flags are rejected. Permissions match the ordinary user; there is no automatic elevation. A successful copy/cut command only publishes the clipboard. A drop accepted by the receiver does not prove copying has completed.
 
 Other apps receive standard Windows file paths on the clipboard and own the subsequent operation. If source files, drive letters or mount locations change after publication, copy or cut again before pasting.
 
 App-executed paste, rename and delete retain per-item completed, failed, skipped and not-run outcomes. Cancellation stops subsequent work without rolling back completed items. Closing during execution offers waiting or cancellation. Windows may present conflict, permission or non-recyclable-item prompts. A recycle failure is never silently retried as permanent deletion. Recycle support depends on the filesystem, device and Windows settings.
 
+Cancelling a Windows conflict or similar dialog marks unfinished items as cancelled/skipped rather than failed copies. Earlier completed items and genuine failures retain their outcomes.
+
 Changes appear through the normal background indexing process. Disabled automatic updates or paused partitions remain pending; the app does not fake synchronization by changing React rows. Browsing location stays in place, and an index version change clears the old selection to avoid targeting another object.
 
-Basic scanning has a known limitation: a very quick detach and reattach may occur between device polls, leaving an old watcher unable to detect subsequent changes immediately. The existing catalog remains readable; periodic validation (about 15 minutes) or manual reindexing reconciles it. Immediate watcher recovery is not fixed in this batch.
+Basic scanning binds its watcher to the current mount session. A quick detach and reattach invalidates the old session even if device polling misses the offline interval. The background worker then recreates the watcher and reconciles changes while keeping the existing catalog searchable. Monitor or read failures are not evidence of deletion; periodic validation remains a supplement.
 
 ## Windows and long paths
 

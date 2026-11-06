@@ -31,7 +31,7 @@ struct Slot {
 impl Selection {
     pub fn destination(&self, reference: &EntryRef, snapshot: &Snapshot) -> Result<PreparedTarget> {
         ensure!(
-            snapshot.error.is_none() && !snapshot.busy,
+            snapshot.error.is_none() && (!snapshot.busy || !snapshot.assets.is_empty()),
             "资产状态不可用，请刷新"
         );
         let asset = snapshot
@@ -79,7 +79,7 @@ impl Selection {
     ) -> Result<u64> {
         self.slot = None;
         ensure!(
-            snapshot.error.is_none() && !snapshot.busy,
+            snapshot.error.is_none() && (!snapshot.busy || !snapshot.assets.is_empty()),
             "资产状态不可用，请刷新"
         );
         let catalog = Catalog::read(&self.root)?;
@@ -233,7 +233,7 @@ impl Selection {
         let root = self.root.clone();
         let slot = self.slot(id)?;
         ensure!(
-            snapshot.error.is_none() && !snapshot.busy,
+            snapshot.error.is_none() && (!snapshot.busy || !snapshot.assets.is_empty()),
             "资产状态不可用，请刷新"
         );
         let rows = slot.sealed.as_ref().context("选择尚未固定")?;

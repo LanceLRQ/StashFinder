@@ -1,3 +1,14 @@
+.directory-list table,
+.directory-list th,
+.directory-list td,
+.virtual-results table,
+.virtual-results th,
+.virtual-results td {
+  user-select: none;
+}
+.file-rename-input {
+  user-select: text;
+}
 .formal-file-menu {
   width: 260px;
   padding: 5px;

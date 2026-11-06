@@ -83,6 +83,16 @@ cargo test -p stashfinder-service --test file_operations_real registered_three -
 Remove-Item Env:SF_M6_MANIFEST
 ```
 
+With the three-partition test backend and VHD ready, verify fast-remount recovery from elevated PowerShell. The command reuses only the authorized test image in the manifest. It neither installs nor restarts the service or creates journals. It briefly remounts read-only, restores read/write access, and creates, renames and deletes only new fixtures. Each change must reach the catalog automatically within 45 seconds while the service PID and registration identities stay unchanged:
+
+```powershell
+.\scripts\verify-scan-remount.ps1 -Manifest 'D:\tmp\StashFinder-M6-new-directory\verification.json'
+```
+
+Results are saved as `remount-verification.json` in the test directory. The original backend wrapper retains cleanup ownership. This does not replace unexpected-disconnect testing on real USB hardware.
+
+The `registered_failures` case in `file_operations_real` is ignored by default and may only be explicitly run in the same authorized test environment. It checks cancellation, rename collisions, sharing denial, path replacement and actual partial copying. Select Cancel if Windows displays its file-in-use dialog; do not run every ignored case unattended.
+
 ## Partition registration acceptance
 
 - Open Register partitions from Overview; nothing is initially selected. Select and name the partitions to manage; unselected partitions are neither registered nor scanned.
