@@ -7,6 +7,8 @@ use stashfinder_windows::{ipc, shell};
 use std::{path::PathBuf, sync::Mutex};
 use tauri::{AppHandle, Manager, State};
 mod preferences;
+mod visual_cache;
+mod visuals;
 
 #[tauri::command]
 fn preferences_get(app: AppHandle) -> Result<preferences::Preferences, String> {
@@ -316,6 +318,7 @@ fn main() {
     tauri::Builder::default()
         .manage(Samples::default())
         .manage(file_operations::Operations::default())
+        .manage(visuals::Visuals::default())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event
                 && file_operations::prevent_close(&window.state::<file_operations::Operations>())
@@ -338,6 +341,12 @@ fn main() {
             file_operations::file_paste,
             file_operations::file_report,
             file_operations::file_keep_open,
+            visuals::visual_icon,
+            visuals::visual_preview,
+            visuals::visual_cancel,
+            visuals::visual_cache_status,
+            visuals::visual_cache_limit,
+            visuals::visual_cache_clear,
             create_samples,
             copy_samples,
             drag_samples,

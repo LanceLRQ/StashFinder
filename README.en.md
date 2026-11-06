@@ -10,6 +10,8 @@ The project provides a desktop shell, partition registration, automatic NTFS ind
 
 Online lists support copying, copy-only drag-out, cut/paste, F2 rename, recycling, permanent deletion and a Windows native menu entry. Offline records retain text copying and catalog browsing. See [file operations](docs/file-operations.en.md) for availability and receiver limitations.
 
+File lists use Windows system icons, and single-item previews request system thumbnails on demand. Images use a separate cache with a default 2 GB limit that can be changed or cleared in settings. Cached historical previews remain available offline. See [system icons and thumbnails](docs/system-visuals.en.md).
+
 See [search help](docs/search.en.md) for syntax and boundaries and the [query baseline](docs/query-performance.en.md) for measured resource use. See the [development guide](docs/development.en.md) for build and validation steps and [third-party notices](docs/third-party.en.md) for dependency sources.
 
 ## Development goals

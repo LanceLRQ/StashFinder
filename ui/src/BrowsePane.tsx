@@ -31,6 +31,7 @@ export default function BrowsePane({
   onLocate,
   indexVersion = "",
   automatic = false,
+  active = true,
 }: {
   id: number;
   asset?: Asset;
@@ -44,6 +45,7 @@ export default function BrowsePane({
   onLocate?: (row: FileRow) => void;
   indexVersion?: string;
   automatic?: boolean;
+  active?: boolean;
 }) {
   const [parent, setParent] = useState(initialParent);
   const operations = useFileOperations();
@@ -477,8 +479,11 @@ export default function BrowsePane({
               )}
               {page && (
                 <FileList
+                  active={active}
                   key={page.location.join(",")}
                   rows={page.entries}
+                  context={context() || undefined}
+                  connection={asset.connection}
                   selection={selection}
                   allSelected={allSelected}
                   onSelect={(ids, all = false) => {
@@ -530,11 +535,23 @@ export default function BrowsePane({
             </div>
             {preview && (
               <FileDetails
+                active={active}
                 selectionCount={count}
                 rows={count === 1 ? selectedRows : []}
                 partition={asset.registration.name}
                 connection={asset.connection}
                 indexedAt={page?.indexed_at ?? null}
+                reference={
+                  page && count === 1 && selectedRows[0]
+                    ? {
+                        partition_id: asset.registration.partition_id,
+                        filesystem_id: asset.registration.filesystem_id,
+                        generation: page.generation,
+                        revision: page.revision,
+                        entry: selectedRows[0].entry,
+                      }
+                    : undefined
+                }
               />
             )}
           </div>

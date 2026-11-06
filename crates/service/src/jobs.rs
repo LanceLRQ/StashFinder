@@ -251,6 +251,16 @@ impl Indexes {
             .unwrap_or_else(|e| e.into_inner())
             .destination(reference, snapshot)
     }
+    pub fn selection_inspect(
+        &self,
+        reference: &stashfinder_core::file_operations::EntryRef,
+        snapshot: &Snapshot,
+    ) -> Result<stashfinder_core::file_operations::VisualRecord> {
+        self.selection
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .inspect(reference, snapshot)
+    }
     pub fn status(&self, partition: &str) -> IndexStatus {
         self.runner.status(partition)
     }

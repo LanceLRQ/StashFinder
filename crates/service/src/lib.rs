@@ -220,6 +220,11 @@ pub async fn serve_runtime(
                             .context("索引服务未配置")?
                             .selection_destination(&reference, &assets.snapshot())?,
                     ))),
+                    Action::FileInspect(reference) => Ok(Response::VisualRecord(Box::new(
+                        indexes
+                            .context("索引服务未配置")?
+                            .selection_inspect(&reference, &assets.snapshot())?,
+                    ))),
                     action => {
                         assets.submit(action)?;
                         Ok(Response::Accepted)

@@ -1,0 +1,95 @@
+.file-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  vertical-align: -3px;
+  flex-shrink: 0;
+}
+.file-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.file-icon .file-mark {
+  margin: 0;
+}
+.large-file-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0;
+}
+.large-file-icon .file-mark {
+  width: 28px;
+  height: 36px;
+}
+.large-file-icon .file-mark.folder {
+  width: 44px;
+  height: 32px;
+}
+.thumbnail-preview {
+  margin: 18px 0;
+}
+.thumbnail-image {
+  min-height: 82px;
+  display: grid;
+  place-items: center;
+}
+.thumbnail-image > img {
+  display: block;
+  max-width: 100%;
+  max-height: 200px;
+  object-fit: contain;
+}
+.thumbnail-preview p {
+  margin: 10px 0 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  color: #647082;
+}
+.thumbnail-preview [role="alert"] {
+  color: #923c2b;
+}
+.cache-controls {
+  max-width: 960px;
+}
+.cache-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+.cache-limit-row,
+.cache-usage-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 0;
+}
+.cache-limit-row input {
+  width: 100px;
+  padding: 6px 8px;
+  border: 1px solid #bfc8d0;
+  border-radius: 4px;
+  font: inherit;
+}
+.cache-usage-row > span {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.cache-usage-row {
+  flex: 1;
+  min-width: 260px;
+}
+.cache-usage-row progress {
+  flex: 1;
+  min-width: 140px;
+  height: 8px;
+  accent-color: #236b58;
+}
+.cache-activity {
+  font-size: 12px;
+  color: #647082;
+}

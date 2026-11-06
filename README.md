@@ -10,6 +10,8 @@ StashFinder 是面向 Windows 10/11 的个人硬盘文件目录管理与搜索�
 
 在线列表支持复制、复制拖出、剪切粘贴、F2 改名、回收与永久删除，以及 Windows 原生菜单入口；离线记录保留文字复制和目录浏览。操作条件和接收端限制见[文件操作](docs/file-operations.md)。
 
+文件列表使用 Windows 系统图标，单项预览按需获取系统缩略图；图片保存在独立缓存中，默认上限 2 GB，可在设置中调整或清空。离线时可查看已缓存的历史预览，详见[系统图标与缩略图](docs/system-visuals.md)。
+
 搜索语法与边界见[搜索帮助](docs/search.md)，实测资源占用见[查询基线](docs/query-performance.md)。开发与验证步骤见[开发指南](docs/development.md)，依赖来源见[第三方说明](docs/third-party.md)。
 
 ## 开发目标

@@ -9,7 +9,7 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 pub const MAX_FRAME: usize = 16 * 1024;
 pub const SNAPSHOT_EXPIRED: &str = "设备快照已更新，请刷新";
 
@@ -100,6 +100,7 @@ pub enum Action {
         id: u64,
     },
     FileDestination(file_operations::EntryRef),
+    FileInspect(file_operations::EntryRef),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -124,6 +125,7 @@ pub enum Response {
     SelectionCount(usize),
     SelectionPage(Box<file_operations::SelectionPage>),
     FileTarget(Box<file_operations::PreparedTarget>),
+    VisualRecord(Box<file_operations::VisualRecord>),
     Error(String),
 }
 

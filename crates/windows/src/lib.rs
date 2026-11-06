@@ -7,4 +7,5 @@ pub mod ntfs;
 pub mod scan;
 pub mod shell;
 pub mod storage;
+pub mod visuals;
 pub mod volumes;

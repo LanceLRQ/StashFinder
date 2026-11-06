@@ -62,6 +62,24 @@ fn source(name: &str, files: &[(&str, Option<u64>, u8)]) -> Source {
     }
 }
 #[test]
+fn result_visual_references_keep_the_query_snapshot_revision() {
+    let options = QueryOptions::default();
+    let query = Query::compile("image", false, &options).unwrap();
+    let result = ResultSet::run(
+        vec![source("photos", &[("image.png", Some(10), 1)])],
+        &query,
+        &options,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let reference = result.reference(0).unwrap();
+    let hit = result.page(0, 1).unwrap().remove(0);
+    assert_eq!(hit.revision.to_string(), reference.revision);
+    assert_eq!(hit.generation.to_string(), reference.generation);
+    assert_eq!(hit.file.entry, reference.entry);
+}
+
+#[test]
 fn duplicates_are_filtered_globally_before_pagination_and_sorting() {
     let sources = vec![
         source(

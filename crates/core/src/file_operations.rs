@@ -60,6 +60,11 @@ pub struct PreparedTarget {
     pub identity: crate::assets::Identity,
     pub partition_name: String,
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VisualRecord {
+    pub target: PreparedTarget,
+    pub online: bool,
+}
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SelectionPage {
     pub id: u64,

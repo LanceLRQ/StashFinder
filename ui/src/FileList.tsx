@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 import { fileTime, type FileRow } from "./browse-api";
 import RenameInput from "./RenameInput";
+import FileIcon from "./FileIcon";
+import type { EntryRef } from "./file-operations";
 
 export default function FileList({
   rows,
@@ -17,6 +19,9 @@ export default function FileList({
   onDrag,
   onBlankContext,
   editing,
+  context,
+  connection,
+  active = true,
 }: {
   rows: FileRow[];
   selection: string[];
@@ -36,6 +41,9 @@ export default function FileList({
     onSubmit: (name: string) => void;
     onCancel: () => void;
   };
+  context?: EntryRef;
+  connection?: string;
+  active?: boolean;
 }) {
   const anchor = useRef(0);
   const dragging = useRef<{ x: number; y: number; started: boolean } | null>(
@@ -205,9 +213,14 @@ export default function FileList({
                 }}
               >
                 <td title={row.name}>
-                  <span
-                    className={`file-mark ${row.kind}`}
-                    aria-hidden="true"
+                  <FileIcon
+                    active={active}
+                    name={row.name}
+                    folder={row.kind === "folder"}
+                    reference={
+                      context ? { ...context, entry: row.entry } : undefined
+                    }
+                    connection={connection}
                   />
                   {editing?.entry === row.entry.join(",") ? (
                     <RenameInput

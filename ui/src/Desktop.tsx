@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import Assets from "./Assets";
 import Workspace from "./Workspace";
 import FileOperations from "./FileOperations";
+import Visuals from "./Visuals";
 import Settings from "./Settings";
 import type { AssetSnapshot } from "./asset-api";
 import Tasks from "./Tasks";
@@ -224,6 +225,7 @@ export default function Desktop() {
             hidden={page !== "files" || development}
           >
             <Workspace
+              visible={page === "files" && !development}
               assets={snapshot?.assets || []}
               includePath={preferences.include_path}
               categories={preferences.categories}
@@ -274,5 +276,9 @@ export default function Desktop() {
       </main>
     </div>
   );
-  return <FileOperations>{content}</FileOperations>;
+  return (
+    <Visuals>
+      <FileOperations>{content}</FileOperations>
+    </Visuals>
+  );
 }

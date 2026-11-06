@@ -1,4 +1,6 @@
 import { connectionLabel, fileTime, type FileRow } from "./browse-api";
+import type { EntryRef } from "./file-operations";
+import ThumbnailPreview from "./ThumbnailPreview";
 
 export default function FileDetails({
   rows,
@@ -6,12 +8,16 @@ export default function FileDetails({
   connection,
   indexedAt,
   selectionCount = rows.length,
+  reference,
+  active = true,
 }: {
   rows: FileRow[];
   partition: string;
   connection: string | null;
   indexedAt: number | null;
   selectionCount?: number;
+  reference?: EntryRef;
+  active?: boolean;
 }) {
   const file = selectionCount === 1 && rows.length === 1 ? rows[0] : null;
   return (
@@ -23,6 +29,13 @@ export default function FileDetails({
           <strong>
             {file?.name || `已选择 ${selectionCount.toLocaleString()} 项`}
           </strong>
+          {file && reference && active && (
+            <ThumbnailPreview
+              file={file}
+              reference={reference}
+              connection={connection}
+            />
+          )}
           <dl>
             {partition && (
               <>

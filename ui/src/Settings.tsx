@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import CategoryEditor from "./CategoryEditor";
+import CacheSettings from "./CacheSettings";
 import type { Page, Preferences, ServiceStatus } from "./settings-api";
 import { taskCommand, type TaskSnapshot } from "./task-api";
 
@@ -87,6 +88,7 @@ export default function Settings({
           ["general", "常规"],
           ["search", "搜索"],
           ["sync", "索引与同步"],
+          ["cache", "缓存"],
           ["about", "关于与诊断"],
         ].map(([id, label]) => (
           <button
@@ -99,6 +101,7 @@ export default function Settings({
         ))}
       </nav>
       <div className="settings-content">
+        {category === "cache" && <CacheSettings />}
         {category === "sync" && (
           <>
             <label className="setting-row">

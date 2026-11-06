@@ -109,7 +109,7 @@ test("groups partitions by disk identity and keeps the last snapshot on service 
   ).toBeTruthy();
   vi.mocked(invoke).mockRejectedValue("服务连接中断");
   fireEvent.click(screen.getByRole("button", { name: "刷新设备" }));
-  await screen.findByText("服务连接中断");
+  await screen.findAllByText("服务连接中断");
   expect(screen.getByText("Movies")).toBeTruthy();
   expect(
     within(screen.getByText("Movies").closest("tr")!).getByText("在线"),

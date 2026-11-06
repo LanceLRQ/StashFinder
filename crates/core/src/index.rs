@@ -61,6 +61,7 @@ pub struct SearchHit {
     pub connection: String,
     pub mounts: Vec<String>,
     pub generation: i64,
+    pub revision: i64,
     pub partial: bool,
     pub indexed_at: Option<u64>,
     pub needs_validation: bool,

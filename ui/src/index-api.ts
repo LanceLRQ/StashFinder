@@ -20,6 +20,7 @@ export type SearchHit = {
   connection: string;
   mounts: string[];
   generation: number;
+  revision: number;
   partial: boolean;
   indexed_at: number | null;
   needs_validation: boolean;

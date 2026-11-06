@@ -282,6 +282,7 @@ impl ResultSet {
                     connection: s.connection.clone(),
                     mounts: s.mounts.clone(),
                     generation: s.index.generation,
+                    revision: s.index.revision,
                     partial: s.index.partial,
                     indexed_at: s.index.indexed_at,
                     needs_validation: s.index.needs_validation || s.needs_validation,

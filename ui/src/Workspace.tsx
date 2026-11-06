@@ -24,6 +24,7 @@ export default function Workspace({
   completedTasks = [],
   automatic,
   paused = [],
+  visible = true,
 }: {
   assets: Asset[];
   includePath: boolean;
@@ -33,6 +34,7 @@ export default function Workspace({
   completedTasks?: { partition_id: string; id: string; updated: number }[];
   automatic?: boolean;
   paused?: string[];
+  visible?: boolean;
 }) {
   const [tabs, setTabs] = useState<Tab[]>([
     { id: 1, title: "浏览", partition: null, filesystem: null, parent: null },
@@ -253,6 +255,7 @@ export default function Workspace({
               </p>
             ) : (
               <BrowsePane
+                active={visible && active === tab.id}
                 key={`${tab.id}:${tab.filesystem}`}
                 id={tab.id}
                 asset={asset}
@@ -331,7 +334,7 @@ export default function Workspace({
             }))}
             includePath={includePath}
             request={query}
-            active={active === 0}
+            active={visible && active === 0}
             onLocate={locate}
             categories={categories}
             indexVersion={completedTasks

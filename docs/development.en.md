@@ -103,7 +103,7 @@ The `registered_failures` case in `file_operations_real` is ignored by default a
 
 Foreground development requires an explicit absolute data directory. SCM mode defaults to `%ProgramData%\StashFinder`, which must be provisioned beforehand as a direct child of ProgramData. Disable root ACL inheritance, grant only SYSTEM and Administrators inheritable full control, and disallow reparse points. The GUI reads through the service, not directly from databases. The verification script below provisions isolated protected storage. Production installation and migration are not implemented.
 
-`catalog.sqlite` stores registrations; `volumes/<filesystem-id>.sqlite` stores independent filesystem data; `tasks.sqlite` stores tasks, automatic-update policy and paused partitions. SQLite uses WAL/FULL: copying only a live main database is not a backup. The recovery API creates a separate candidate catalog only, not a complete backup/restore tool. Protocol version 7 has a 16 KiB frame limit and paginated assets, tasks, directory entries and search results; use UI and service binaries from the same build. Existing partition databases migrate transactionally only after ownership validation; mismatched databases are not migrated.
+`catalog.sqlite` stores registrations; `volumes/<filesystem-id>.sqlite` stores independent filesystem data; `tasks.sqlite` stores tasks, automatic-update policy and paused partitions. SQLite uses WAL/FULL: copying only a live main database is not a backup. The recovery API creates a separate candidate catalog only, not a complete backup/restore tool. Protocol version 8 has a 16 KiB frame limit and paginated assets, tasks, directory entries and search results; use UI and service binaries from the same build. Existing partition databases migrate transactionally only after ownership validation; mismatched databases are not migrated.
 
 ## Automatic-update acceptance
 
@@ -234,4 +234,8 @@ The OS file cache is still warm after import; this is not a cold-start test. It 
 
 ## Full search acceptance
 
-See [search help](search.en.md). Verify category persistence across restart, cross-partition joint duplicate keys, zero and unknown sizes, regex errors, global column sorting, distant scrolling and cross-page selection, and cancellation. Protocol version 7 keeps batch pages within 16 KiB. See the [query baseline](query-performance.en.md) for million/ten-million-row reproduction and limits.
+See [search help](search.en.md). Verify category persistence across restart, cross-partition joint duplicate keys, zero and unknown sizes, regex errors, global column sorting, distant scrolling and cross-page selection, and cancellation. Protocol version 8 keeps batch pages within 16 KiB. See the [query baseline](query-performance.en.md) for million/ten-million-row reproduction and limits.
+
+## Icons, thumbnails, and cache
+
+See [system icons and thumbnails](system-visuals.en.md). The desktop obtains system images without elevation; the service only resolves indexed records for reading. Protocol 8 adds the image-record interface and search-result revisions. Images use the desktop bridge, outside the service's 16 KiB frames and partition databases. The linked guide includes focused tests and online/offline GUI verification steps.

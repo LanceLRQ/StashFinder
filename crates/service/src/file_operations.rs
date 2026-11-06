@@ -29,6 +29,47 @@ struct Slot {
     touched: Instant,
 }
 impl Selection {
+    pub fn inspect(&self, reference: &EntryRef, snapshot: &Snapshot) -> Result<VisualRecord> {
+        let catalog = Catalog::read(&self.root)?;
+        let registered = catalog.get(&reference.partition_id)?;
+        ensure!(
+            registered.filesystem_id == reference.filesystem_id,
+            "文件系统登记已变化"
+        );
+        let file =
+            file_operations::record(&catalog.volume_path(&reference.filesystem_id)?, reference)?;
+        let asset = snapshot
+            .assets
+            .iter()
+            .find(|a| a.registration.partition_id == reference.partition_id);
+        let online = snapshot.error.is_none()
+            && registered.state == "ready"
+            && asset.is_some_and(|a| {
+                a.registration.filesystem_id == reference.filesystem_id
+                    && a.registration.state == "ready"
+                    && a.connection == "online"
+                    && a.error.is_none()
+            });
+        let observation = if online {
+            &asset.unwrap().registration.observation
+        } else {
+            &registered.observation
+        };
+        Ok(VisualRecord {
+            online,
+            target: PreparedTarget {
+                mounts: if online {
+                    asset.unwrap().mounts.clone()
+                } else {
+                    vec![]
+                },
+                file,
+                volume: observation.candidate_id.clone(),
+                identity: observation.identity.clone(),
+                partition_name: registered.name,
+            },
+        })
+    }
     pub fn destination(&self, reference: &EntryRef, snapshot: &Snapshot) -> Result<PreparedTarget> {
         ensure!(
             snapshot.error.is_none() && (!snapshot.busy || !snapshot.assets.is_empty()),

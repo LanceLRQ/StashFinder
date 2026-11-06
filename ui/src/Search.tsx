@@ -13,6 +13,7 @@ import SearchFilters from "./SearchFilters";
 import VirtualResults, { virtualScale } from "./VirtualResults";
 import FileContextMenu, { type MenuAction } from "./FileContextMenu";
 import RenameInput from "./RenameInput";
+import FileIcon from "./FileIcon";
 import type { Asset } from "./asset-api";
 import { useFileOperations } from "./FileOperations";
 import {
@@ -641,9 +642,18 @@ export default function Search({
                 ) : (
                   <>
                     <td title={r.file.name}>
-                      <span
-                        className={`file-mark ${r.file.kind}`}
-                        aria-hidden="true"
+                      <FileIcon
+                        active={active}
+                        name={r.file.name}
+                        folder={r.file.kind === "folder"}
+                        connection={r.connection}
+                        reference={{
+                          partition_id: r.partition_id,
+                          filesystem_id: r.filesystem_id,
+                          generation: String(r.generation),
+                          revision: String(r.revision),
+                          entry: r.file.entry,
+                        }}
                       />
                       {editing === i ? (
                         <RenameInput
@@ -702,7 +712,19 @@ export default function Search({
         />
         {preview && (
           <FileDetails
+            active={active}
             selectionCount={count}
+            reference={
+              selectedRow
+                ? {
+                    partition_id: selectedRow.partition_id,
+                    filesystem_id: selectedRow.filesystem_id,
+                    generation: String(selectedRow.generation),
+                    revision: String(selectedRow.revision),
+                    entry: selectedRow.file.entry,
+                  }
+                : undefined
+            }
             rows={previewRows.map((r) => r.file)}
             partition={
               previewFirst &&

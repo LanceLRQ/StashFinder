@@ -5,6 +5,64 @@ use stashfinder_store::{catalog::Catalog, volume::*};
 fn fixture() -> (tempfile::TempDir, Indexes, Snapshot, EntryRef) {
     fixture_with(4, false)
 }
+
+#[test]
+fn visual_inspection_keeps_offline_identity_and_does_not_replace_an_operation_selection() {
+    let (_dir, indexes, snapshot, context) = fixture();
+    let selection = indexes
+        .selection_begin(
+            SelectionOrigin::Directory {
+                context: context.clone(),
+                all: false,
+            },
+            &snapshot,
+        )
+        .unwrap();
+    let mut file = context.clone();
+    file.entry = 2u32.to_le_bytes().to_vec();
+    indexes
+        .selection_add(selection, SelectionChunk::Entries(vec![file.entry.clone()]))
+        .unwrap();
+    assert_eq!(indexes.selection_seal(selection).unwrap(), 1);
+    assert!(indexes.selection_inspect(&file, &snapshot).unwrap().online);
+    let mut reconnected = snapshot.clone();
+    reconnected.assets[0].registration.observation.candidate_id = "current-volume".into();
+    assert_eq!(
+        indexes
+            .selection_inspect(&file, &reconnected)
+            .unwrap()
+            .target
+            .volume,
+        "current-volume"
+    );
+    let mut offline = snapshot.clone();
+    offline.assets[0].connection = "offline".into();
+    offline.assets[0].mounts.clear();
+    let record = indexes.selection_inspect(&file, &offline).unwrap();
+    assert!(!record.online);
+    assert_eq!(record.target.file.reference.entry, file.entry);
+    assert!(matches!(
+        record.target.file.identity,
+        Some(ExpectedIdentity::Native(_))
+    ));
+    assert!(record.target.mounts.is_empty());
+    assert_eq!(
+        indexes
+            .selection_page(selection, 0, &snapshot)
+            .unwrap()
+            .total,
+        1
+    );
+    offline.assets[0].connection = "historical".into();
+    offline.assets[0].registration.state = "historical".into();
+    assert!(!indexes.selection_inspect(&file, &offline).unwrap().online);
+    let mut stale = file.clone();
+    stale.revision = "999999".into();
+    assert!(indexes.selection_inspect(&stale, &offline).is_err());
+    stale = file;
+    stale.filesystem_id = "replacement".into();
+    assert!(indexes.selection_inspect(&stale, &offline).is_err());
+}
 fn fixture_with(count: u32, long: bool) -> (tempfile::TempDir, Indexes, Snapshot, EntryRef) {
     let dir = tempfile::tempdir().unwrap();
     let mut catalog = Catalog::open(dir.path()).unwrap();

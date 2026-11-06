@@ -17,6 +17,9 @@ Manifests and lockfiles determine exact direct dependency versions. This table r
 | serde / serde_json | [serde-rs](https://github.com/serde-rs) | MIT OR Apache-2.0 |
 | anyhow | [dtolnay/anyhow](https://github.com/dtolnay/anyhow) | MIT OR Apache-2.0 |
 | tempfile | [Stebalien/tempfile](https://github.com/Stebalien/tempfile) | MIT OR Apache-2.0 |
+| png | [image-rs/image-png](https://github.com/image-rs/image-png) | MIT OR Apache-2.0 |
+| sha2 | [RustCrypto/hashes](https://github.com/RustCrypto/hashes) | MIT OR Apache-2.0 |
+| base64 | [marshallpierce/rust-base64](https://github.com/marshallpierce/rust-base64) | MIT OR Apache-2.0 |
 | pcre2 / pcre2-sys | [BurntSushi/rust-pcre2](https://github.com/BurntSushi/rust-pcre2) | Unlicense OR MIT |
 | PCRE2 | [PCRE2Project/pcre2](https://github.com/PCRE2Project/pcre2) | BSD-3-Clause |
 | chrono | [chronotope/chrono](https://github.com/chronotope/chrono) | MIT OR Apache-2.0 |
