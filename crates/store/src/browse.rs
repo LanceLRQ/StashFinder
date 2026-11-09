@@ -19,7 +19,7 @@ pub fn read(path: &Path, request: &DirectoryRequest) -> Result<DirectoryPage> {
     ensure!(
         matches!(
             tx.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-            3..=4
+            3..=5
         ),
         "目录库需要升级，请等待服务初始化"
     );

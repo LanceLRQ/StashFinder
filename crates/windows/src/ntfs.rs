@@ -14,6 +14,8 @@ use windows::{
     core::{HSTRING, PWSTR},
 };
 
+pub mod mft;
+
 #[derive(Clone, Debug)]
 pub struct UsnRecord {
     pub id: u64,
@@ -135,6 +137,57 @@ pub fn decode_directory(bytes: &[u8]) -> Result<Vec<DirectoryEntry>> {
 }
 
 struct Handle(HANDLE);
+
+struct RawMetadata<'a> {
+    handle: &'a Handle,
+    sector: usize,
+    scratch: Vec<u8>,
+}
+
+impl mft::ReadAt for RawMetadata<'_> {
+    fn read_exact_at(&mut self, offset: u64, out: &mut [u8]) -> Result<()> {
+        let prefix = (offset % self.sector as u64) as usize;
+        let size = (prefix + out.len()).next_multiple_of(self.sector);
+        // A volume handle can require sector alignment even without an explicit flag.
+        let needs_copy =
+            prefix != 0 || size != out.len() || out.as_ptr().align_offset(self.sector) != 0;
+        let target = if needs_copy {
+            self.scratch.resize(size + self.sector - 1, 0);
+            let aligned = self.scratch.as_ptr().align_offset(self.sector);
+            &mut self.scratch[aligned..aligned + size]
+        } else {
+            &mut *out
+        };
+        let mut count = 0;
+        // SAFETY: The live handle is used synchronously, and both output buffers remain live.
+        unsafe {
+            SetFilePointerEx(
+                self.handle.0,
+                i64::try_from(offset - prefix as u64)?,
+                None,
+                FILE_BEGIN,
+            )?;
+            ReadFile(self.handle.0, Some(target), Some(&mut count), None)?;
+        }
+        ensure!(count as usize == size, "MFT 元数据短读");
+        if needs_copy {
+            let aligned = self.scratch.as_ptr().align_offset(self.sector);
+            out.copy_from_slice(&self.scratch[aligned + prefix..aligned + prefix + out.len()]);
+        }
+        Ok(())
+    }
+
+    fn bootstrap_record(&mut self, reference: u64, out: &mut [u8]) -> Result<Option<u64>> {
+        let slot = reference & 0x0000_ffff_ffff_ffff;
+        let data = self
+            .handle
+            .ioctl(FSCTL_GET_NTFS_FILE_RECORD, &slot.to_le_bytes())?;
+        let length = read_field::<u32>(&data, 8)? as usize;
+        ensure!(length == out.len(), "MFT 辅助记录尺寸不匹配");
+        out.copy_from_slice(data.get(12..12 + length).context("MFT 辅助记录截断")?);
+        Ok(Some(read_field(&data, 0)?))
+    }
+}
 impl Drop for Handle {
     fn drop(&mut self) {
         // SAFETY: This wrapper uniquely owns the file handle and closes it once.
@@ -263,6 +316,29 @@ impl VolumeReader {
     }
     pub fn volume_serial(&self) -> u64 {
         self.serial64
+    }
+
+    pub fn full_inventory(
+        &self,
+        cancelled: &AtomicBool,
+        consume: &mut dyn FnMut(&[NativeObject]) -> Result<()>,
+    ) -> Result<Option<mft::FastScanStats>> {
+        ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
+        // Take the geometry after the caller captures the journal boundary.
+        let data = self.handle.ioctl(FSCTL_GET_NTFS_VOLUME_DATA, &[])?;
+        ensure!(
+            read_field::<u64>(&data, 0)? == self.serial64,
+            "卷文件系统身份已变化"
+        );
+        let Some(geometry) = mft::Geometry::from_volume_data(&data)? else {
+            return Ok(None);
+        };
+        let mut disk = RawMetadata {
+            handle: &self.handle,
+            sector: geometry.sector_bytes,
+            scratch: Vec::new(),
+        };
+        mft::scan_mft(&mut disk, &geometry, self.root_id, cancelled, consume).map(Some)
     }
     pub fn verify(&self) -> Result<()> {
         let access = self.root.as_os_str().to_string_lossy();

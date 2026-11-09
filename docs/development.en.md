@@ -232,6 +232,20 @@ Reports include import, reopen and cache-load times, disk bytes, private commit,
 
 The OS file cache is still warm after import; this is not a cold-start test. It does not measure real disk indexing, the complete production schema, global sorting, duplicates, regex, cancellation, GUI budgets or service idle budgets. Avoid simultaneous builds or other heavy tasks. `.local/` holds ignored validation artifacts.
 
+## Real NTFS initial-index benchmark
+
+Build the measurement entry point with `cargo build --release -p stashfinder-service --example index-benchmark --locked`. From an elevated terminal, run `target\release\examples\index-benchmark.exe <volume-GUID-path> <new-absolute-database-path> 600 [auto|legacy|sequential]`. The volume must already have a USN journal. The tool opens the explicitly selected volume for reading and creates an isolated database.
+
+`legacy` uses directory scans. `sequential` forces sequential MFT reads and reports read, parse, object write, path import, journal replay, and search load time separately. `auto` can use the legacy path if the volume lacks required capabilities. The report records the actual strategy and fallback reason. Timeout uses cooperative cancellation.
+
+The backend uses `auto` for initial builds and rebuilds on NTFS partitions with a valid USN journal. If the reader lacks a required capability or the initial parent relationships are incomplete, the backend discards the candidate generation and runs one complete legacy scan. Scan-only indexing uses directory reads and change monitoring.
+
+From an elevated terminal, run `scripts/benchmark-ntfs-index.ps1 -Binary <absolute-benchmark-executable> -Volume <volume-GUID-path> -Output <new-directory-on-another-volume>` to alternate strategies. Run `node scripts/compare-ntfs-index.mjs <legacy-db> <sequential-db> <new-differences-jsonl>` with Node.js 24 or later to compare file identities, paths, and metadata. Avoid builds and other heavy work during measurement. The isolated VHD fixture in `scripts/verify-ntfs-sequential.ps1` requires authorization for its test target before execution.
+
+When comparing tools, align partition scope and metadata options, start with empty catalogs, compare full paths and metadata, and record searchable and durable completion separately. Without clearing the OS file cache, this is not a cold-disk benchmark. NTFS directory metadata can lag behind handle queries, especially for hard links and files still being written; matching counts do not establish metadata equality.
+
+Partition schema version 5 adds an object-to-path index while preserving records and cursors. Upgrade the backend and desktop together; older binaries cannot open upgraded catalogs. SQLite retains WAL and FULL synchronization. Its page cache grows on demand toward a 64 MiB per-connection target, which is not a total backend memory limit.
+
 ## Layout
 
 `crates/core` defines identity/query models and the protocol; `crates/windows` provides device and NTFS adapters; `crates/service` coordinates registration, indexing and search jobs; `crates/store` provides the asset catalog, independent partition databases, search caches and synthetic baseline; `ui` provides asset management, search, file operations and development validation.

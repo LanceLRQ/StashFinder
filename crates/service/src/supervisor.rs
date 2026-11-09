@@ -386,9 +386,14 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
     {
         for row in rows {
             let result = (|| -> Result<()> {
-                let db = shared.load(&row.partition_id)?;
+                let mut db = shared.load(&row.partition_id)?;
                 let status = db.index_status()?;
-                if status.phase == "building" {
+                if status.phase == "initial_paths" {
+                    db.discard_initial(
+                        status.generation.context("构建代次缺失")?,
+                        "上次构建中断，将重新建立",
+                    )?;
+                } else if status.phase == "building" {
                     db.fail_generation(
                         status.generation.context("构建代次缺失")?,
                         "上次构建中断，将重新建立",

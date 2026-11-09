@@ -93,7 +93,7 @@ fn migration_preserves_v3_rows_and_failure_leaves_v3_intact() {
             assert_eq!(
                 db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                     .unwrap(),
-                4
+                5
             );
         }
     }

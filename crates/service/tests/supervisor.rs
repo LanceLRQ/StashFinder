@@ -68,6 +68,51 @@ fn wait_until(mut condition: impl FnMut() -> bool) {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+#[test]
+fn startup_discards_unfinished_initial_paths_and_keeps_the_active_catalog() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut catalog = Catalog::open(dir.path()).unwrap();
+    let observed = Observation {
+        candidate_id: "fixture".into(),
+        disk_number: None,
+        model: None,
+        disk_bytes: None,
+        partition_bytes: None,
+        mounts: vec![],
+        capacity: None,
+        error: None,
+        identity: Identity {
+            layout: Layout::Gpt {
+                disk: "disk".into(),
+                partition: "partition".into(),
+            },
+            filesystem: Some("NTFS".into()),
+            serial: Some(Serial {
+                source: "ntfs64".into(),
+                value: "1".into(),
+            }),
+        },
+    };
+    let row = catalog.prepare(&observed, "Test").unwrap();
+    catalog.finish(&row.partition_id).unwrap();
+    let path = catalog.volume_path(&row.filesystem_id).unwrap();
+    let mut volume = stashfinder_store::volume::Volume::open(&path).unwrap();
+    let old = volume.begin_generation().unwrap();
+    volume.complete(old).unwrap();
+    volume.publish(old).unwrap();
+    let candidate = volume.begin_generation().unwrap();
+    volume.begin_initial_paths(candidate).unwrap();
+    drop(volume);
+    let worker = Runner::start_with_source(dir.path().into(), |_| {
+        panic!("offline startup opened a source")
+    });
+    wait_until(|| worker.ready());
+    let status = worker.status(&row.partition_id);
+    assert_eq!(status.active_generation, Some(old));
+    assert_eq!(status.phase, "failed");
+    assert!(status.error.unwrap().contains("上次构建中断"));
+}
 #[test]
 fn automatic_worker_requires_registration_online_identity_and_enabled_policy() {
     let dir = tempfile::tempdir().unwrap();

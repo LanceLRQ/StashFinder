@@ -232,6 +232,20 @@ cargo build -p stashfinder-store --bin baseline --release --locked
 
 导入后系统文件缓存仍热，不能称为冷启动；测量不覆盖真实硬盘索引、完整生产字段、全局排序、查重、正则、取消、GUI 或服务空闲预算。运行时避免并发构建和其他重任务。`.local/` 是验证产物，不入库。
 
+## 真实 NTFS 首次索引基准
+
+`cargo build --release -p stashfinder-service --example index-benchmark --locked` 构建测量入口。在管理员终端运行 `target\release\examples\index-benchmark.exe <卷GUID路径> <新的数据库绝对路径> 600 [auto|legacy|sequential]`。目标卷必须已有 USN 日志。工具以只读方式访问显式指定的卷，并创建独立数据库。
+
+`legacy` 使用目录扫描。`sequential` 强制使用顺序 MFT 读取，分别记录读取、解析、对象写入、路径导入、回放和搜索加载耗时。`auto` 允许在确认读取能力不足时改用旧路径，日志记录实际策略与原因。超时采用协作取消。
+
+生产后台首次建库或重建有有效 USN 日志的 NTFS 分区时使用 `auto`。确认读取能力不足或初始父目录关系不完整时，后台清理候选代次，再完整执行一次旧扫描。基础扫描继续使用目录读取和变化监控。
+
+在管理员终端使用 `scripts/benchmark-ntfs-index.ps1 -Binary <基准程序绝对路径> -Volume <卷GUID路径> -Output <另一卷上的新目录>` 运行交替 A/B。使用 Node.js 24 或更新版本运行 `node scripts/compare-ntfs-index.mjs <旧路径库> <顺序路径库> <新建差异JSONL>`，核对文件身份、完整路径和元数据。运行期间避免编译及其他重任务。实际写盘的隔离 VHD 验收入口为 `scripts/verify-ntfs-sequential.ps1`，执行前按目标授权。
+
+对比其他工具时，应统一分区范围和元数据选项，使用空库，核对完整路径及元数据，并单独记录可搜索时间与持久化时间。未清除系统文件缓存时不得称为冷盘基准。NTFS 目录元数据可能滞后于文件句柄查询，特别是硬链接与仍在写入的文件；数量相同不代表元数据完全一致。
+
+分区库版本 5 增加对象到路径的索引，保留既有记录和游标。后台与桌面端应一起升级；旧程序不支持打开升级后的库。SQLite 继续使用 WAL 和 FULL 同步，页缓存按需增长、每连接目标上限为 64 MiB；这不是整个后台的内存上限。
+
 ## 布局
 
 `crates/core` 定义身份、查询模型与协议；`crates/windows` 提供设备与 NTFS 适配；`crates/service` 协调登记、索引和查询任务；`crates/store` 提供资产目录、独立分区库、搜索缓存及合成基线；`ui` 提供资产管理、只读搜索与开发验证入口。

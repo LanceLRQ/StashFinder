@@ -2,6 +2,7 @@
 pub mod browse;
 pub mod catalog;
 pub mod file_operations;
+pub mod initial;
 pub mod search;
 pub mod tasks;
 pub mod volume;

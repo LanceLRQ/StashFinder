@@ -24,7 +24,7 @@ fn resolve_in(
     let revision: i64 = reference.revision.parse()?;
     let version = tx.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?;
     ensure!(
-        version == 4 || records_only && version == 3,
+        matches!(version, 4..=5) || records_only && version == 3,
         "目录库需要升级"
     );
     let manifest: String =
@@ -100,7 +100,7 @@ fn resolve_in(
         Some(ExpectedIdentity::Ntfs {
             frn: u64::from_le_bytes(object.as_slice().try_into().context("NTFS 对象标识损坏")?),
         })
-    } else if version == 4 {
+    } else if version >= 4 {
         crate::volume::read_native_identity(tx, generation, &object)?.map(ExpectedIdentity::Native)
     } else {
         None

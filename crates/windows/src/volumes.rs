@@ -26,6 +26,7 @@ macro_rules! scalar {
         }
     };
 }
+scalar!(u16, 2);
 scalar!(u32, 4);
 scalar!(u64, 8);
 scalar!(i64, 8);

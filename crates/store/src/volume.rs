@@ -39,7 +39,7 @@ pub struct Changes<'a> {
 
 pub(crate) fn configure(db: &Connection) -> Result<()> {
     db.busy_timeout(Duration::from_secs(2))?;
-    db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")?;
+    db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA cache_size=-65536;")?;
     Ok(())
 }
 
@@ -72,7 +72,7 @@ impl Volume {
         ensure!(
             matches!(
                 db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
-                1..=4
+                1..=5
             ),
             "不支持的分区库版本"
         );
@@ -111,7 +111,7 @@ impl Volume {
         ensure!(
             matches!(
                 db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
-                1..=4
+                1..=5
             ),
             "不支持的分区库版本"
         );
@@ -156,6 +156,15 @@ impl Volume {
         {
             let tx = self.db.transaction()?;
             tx.execute_batch("CREATE TABLE native_identity (generation INTEGER NOT NULL, object BLOB NOT NULL, identity_kind TEXT NOT NULL CHECK(identity_kind='file_id64'), native_id BLOB NOT NULL CHECK(length(native_id)=12), PRIMARY KEY(generation,object), FOREIGN KEY(generation,object) REFERENCES objects(generation,id) ON DELETE CASCADE); PRAGMA user_version=4;")?;
+            tx.commit()?;
+        }
+        if self
+            .db
+            .query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?
+            == 4
+        {
+            let tx = self.db.transaction()?;
+            tx.execute_batch("CREATE INDEX IF NOT EXISTS paths_object ON paths(generation,object); PRAGMA user_version=5;")?;
             tx.commit()?;
         }
         Ok(())
@@ -288,46 +297,45 @@ impl Volume {
                 params![generation, id],
             )?;
         }
+        // Native IDs are little-endian bytes, so source order scatters writes
+        // across the B-tree. Stable sorting also preserves the last observation
+        // when a batch contains several hard links to the same object.
+        let mut objects = objects.iter().collect::<Vec<_>>();
+        objects.sort_by(|a, b| a.id.cmp(&b.id));
         for object in objects {
             if replace_links {
-                tx.execute(
-                    "DELETE FROM paths WHERE generation=?1 AND object=?2",
-                    params![generation, object.id],
-                )?;
+                tx.prepare_cached("DELETE FROM paths WHERE generation=?1 AND object=?2")?
+                    .execute(params![generation, object.id])?;
             }
             ensure!(!object.id.is_empty(), "文件 ID 为空");
-            tx.execute("INSERT INTO objects VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(generation,id) DO UPDATE SET source=excluded.source,kind=excluded.kind,size=excluded.size,created=excluded.created,modified=excluded.modified,attributes=excluded.attributes", params![generation, object.id, object.source, object.kind, object.size, object.created.as_ref().map(|v|v.as_slice()), object.modified.as_ref().map(|v|v.as_slice()), object.attributes])?;
-            tx.execute(
-                "DELETE FROM native_identity WHERE generation=?1 AND object=?2",
-                params![generation, object.id],
-            )?;
+            tx.prepare_cached("INSERT INTO objects VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(generation,id) DO UPDATE SET source=excluded.source,kind=excluded.kind,size=excluded.size,created=excluded.created,modified=excluded.modified,attributes=excluded.attributes")?.execute(params![generation, object.id, object.source, object.kind, object.size, object.created.as_ref().map(|v|v.as_slice()), object.modified.as_ref().map(|v|v.as_slice()), object.attributes])?;
+            tx.prepare_cached("DELETE FROM native_identity WHERE generation=?1 AND object=?2")?
+                .execute(params![generation, object.id])?;
             if let Some(identity) = &object.identity {
                 let bytes = [
                     identity.volume.to_le_bytes().as_slice(),
                     identity.file.to_le_bytes().as_slice(),
                 ]
                 .concat();
-                tx.execute(
-                    "INSERT INTO native_identity VALUES(?1,?2,'file_id64',?3)",
-                    params![generation, object.id, bytes],
-                )?;
+                tx.prepare_cached("INSERT INTO native_identity VALUES(?1,?2,'file_id64',?3)")?
+                    .execute(params![generation, object.id, bytes])?;
             }
             // Replaced metadata and its pending state share the cursor transaction.
-            tx.execute(
-                "DELETE FROM pending_metadata WHERE generation=?1 AND object=?2",
-                params![generation, object.id],
-            )?;
+            tx.prepare_cached("DELETE FROM pending_metadata WHERE generation=?1 AND object=?2")?
+                .execute(params![generation, object.id])?;
         }
+        let mut entries = entries.iter().collect::<Vec<_>>();
+        entries.sort_by(|a, b| a.id.cmp(&b.id));
         for entry in entries {
             let name: Vec<u8> = entry.name.iter().flat_map(|c| c.to_le_bytes()).collect();
             ensure!(!name.is_empty(), "路径名称为空");
-            tx.execute("INSERT INTO paths VALUES(?1,?2,?3,?4,?5) ON CONFLICT(generation,id) DO UPDATE SET object=excluded.object,parent=excluded.parent,name=excluded.name", params![generation, entry.id, entry.object, entry.parent, name])?;
+            tx.prepare_cached("INSERT INTO paths VALUES(?1,?2,?3,?4,?5) ON CONFLICT(generation,id) DO UPDATE SET object=excluded.object,parent=excluded.parent,name=excluded.name")?.execute(params![generation, entry.id, entry.object, entry.parent, name])?;
         }
+        let mut pending = pending.iter().collect::<Vec<_>>();
+        pending.sort();
         for id in pending {
-            tx.execute(
-                "INSERT OR IGNORE INTO pending_metadata VALUES(?1,?2)",
-                params![generation, id],
-            )?;
+            tx.prepare_cached("INSERT OR IGNORE INTO pending_metadata VALUES(?1,?2)")?
+                .execute(params![generation, id])?;
         }
         if let Some(cursor) = cursor {
             ensure!(cursor.next >= 0, "USN 游标无效");
@@ -377,10 +385,10 @@ impl Volume {
     pub fn complete(&self, generation: i64) -> Result<()> {
         ensure!(
             self.db.execute(
-                "UPDATE generations SET complete=1 WHERE id=?1",
+                "UPDATE generations SET complete=1 WHERE id=?1 AND phase!='initial_paths'",
                 [generation]
             )? == 1,
-            "索引代次不存在"
+            "索引代次不存在或初始路径尚未导入"
         );
         Ok(())
     }

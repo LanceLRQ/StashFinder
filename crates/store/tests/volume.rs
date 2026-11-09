@@ -1,6 +1,77 @@
 use stashfinder_store::volume::*;
 
 #[test]
+fn existing_catalog_gains_an_object_link_index_without_changing_records() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("volume.sqlite");
+    let mut db = Volume::create(&path, "existing manifest").unwrap();
+    let generation = db.begin_generation().unwrap();
+    db.write_batch(
+        generation,
+        &[Object {
+            identity: None,
+            id: vec![1; 8],
+            source: "ntfs".into(),
+            kind: "file".into(),
+            size: Some(42),
+            created: None,
+            modified: None,
+            attributes: 0,
+        }],
+        &[Entry {
+            id: vec![1],
+            object: vec![1; 8],
+            parent: None,
+            name: "existing.txt".encode_utf16().collect(),
+        }],
+        &[],
+        Some(&Cursor {
+            journal: vec![1; 8],
+            next: 100,
+        }),
+    )
+    .unwrap();
+    db.complete(generation).unwrap();
+    db.publish(generation).unwrap();
+    drop(db);
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    sql.execute_batch("DROP INDEX IF EXISTS paths_object; PRAGMA user_version=4;")
+        .unwrap();
+    drop(sql);
+    let db = Volume::open(&path).unwrap();
+    assert_eq!(db.manifest().unwrap(), "existing manifest");
+    assert_eq!(db.active_generation().unwrap(), Some(generation));
+    assert_eq!(db.object_count(generation).unwrap(), 1);
+    assert_eq!(db.cursor(generation).unwrap().unwrap().next, 100);
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        sql.query_row("SELECT size FROM objects", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        42
+    );
+    assert_eq!(
+        sql.query_row("SELECT count(*) FROM paths", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    let mut statement = sql
+        .prepare("EXPLAIN QUERY PLAN SELECT id FROM paths WHERE generation=?1 AND object=?2")
+        .unwrap();
+    let plan = statement
+        .query_map(rusqlite::params![1, vec![1u8; 8]], |row| {
+            row.get::<_, String>(3)
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert!(
+        plan.iter()
+            .any(|line| line.contains("generation=? AND object=?")),
+        "{plan:?}"
+    );
+}
+
+#[test]
 fn index_transactions_wait_for_concurrent_capacity_writer() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("volume.sqlite");
