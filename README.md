@@ -12,6 +12,8 @@ StashFinder 是面向 Windows 10/11 的个人硬盘文件目录管理与搜索�
 
 文件列表使用 Windows 系统图标，单项预览按需获取系统缩略图；图片保存在独立缓存中，默认上限 2 GB，可在设置中调整或清空。离线时可查看已缓存的历史预览，详见[系统图标与缩略图](docs/system-visuals.md)。
 
+支持开发阶段的[便携构建](docs/portable.md)：程序、索引、设置和缓存随整个目录携带，后台单独授权，不安装 Windows 服务。使用系统 WebView2，完整发布矩阵仍在验收。
+
 搜索语法与边界见[搜索帮助](docs/search.md)，实测资源占用见[查询基线](docs/query-performance.md)。开发与验证步骤见[开发指南](docs/development.md)，依赖来源见[第三方说明](docs/third-party.md)。
 
 ## 开发目标

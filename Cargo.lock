@@ -3058,12 +3058,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "png",
+ "serde",
  "serde_json",
+ "sha2",
  "stashfinder-core",
  "tempfile",
  "tokio",
  "windows",
  "windows-core",
+ "windows-service",
 ]
 
 [[package]]

@@ -27,19 +27,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1
 
 ## 运行验证窗口
 
-终端一，普通用户运行后台验证进程：
+在仓库根目录以普通权限启动开发界面及后台：
 
 ```powershell
-cargo run -p stashfinder-service -- --foreground --data-dir "$PWD\.local\dev-assets"
+npm --prefix ui run dev:desktop
 ```
 
-终端二：
+启动器先等待前台后台握手，再运行 Tauri。开发目录为 `.local/dev-assets`。若默认验证管道上已有兼容后台，则复用连接。退出时只停止本次启动的后台。需要独立调试时，可以分别运行 `cargo run -p stashfinder-service -- --foreground --data-dir "$PWD\.local\dev-assets"` 和 `npm --prefix ui run tauri -- dev`。
 
-```powershell
-npm --prefix ui run tauri -- dev
-```
+默认首页为概览，左侧功能栏可折叠，文件页保留当前会话中的搜索输入和结果。任务页展示当前、需处理和历史任务；取消按任务 ID 定位，取消后分区暂停，需显式继续更新。普通用户前台模式可能无权读取物理磁盘布局，界面应明确显示不可访问；完整设备验收需使用下述 LocalSystem 服务。“设置 → 关于与诊断”可检查实际应用版本、后台模式和连接状态。命名管道限定配置账户、SYSTEM 和管理员，拒绝远程连接；IPC 不接受数据库路径或任意执行命令。
 
-默认首页为概览，左侧功能栏可折叠，文件页保留当前会话中的搜索输入和结果。任务页展示当前、需处理和历史任务；取消按任务 ID 定位，取消后分区暂停，需显式继续更新。普通用户前台模式可能无权读取物理磁盘布局，界面应明确显示不可访问；完整设备验收需使用下述 LocalSystem 服务。“设置 → 关于与诊断”可检查实际应用版本、后台模式和连接状态。关闭界面不停止后台；在终端一用 Ctrl+C 停止。命名管道限定配置账户、SYSTEM 和管理员，拒绝远程连接；IPC 不接受数据库路径或任意执行命令。
+## 正式 Windows 安装包
+
+从仓库根目录运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-installer.ps1`。生成的 NSIS 安装包位于 `target/release/bundle/nsis/`。
+
+安装时保留默认的 `Program Files\StashFinder` 位置。首次安装默认由桌面管理后台，打开时为索引进程确认 UAC，退出后后台随之停止。勾选安装 Windows 服务后，安装器会注册并启动自动运行的 `StashFinder` 服务，关闭界面后服务继续运行。服务停止时，打开界面或在“关于与诊断”重新连接会尝试启动。两种模式下界面都以普通权限运行，共用受保护的 `%ProgramData%\StashFinder` 和原安装账户。
+
+退出桌面后重新运行安装包可切换模式。安装器记住上次选择。静默安装用 `/S /SERVICE` 或 `/S /NOSERVICE` 显式指定，单独使用 `/S` 沿用已保存的选择。卸载移除服务注册并保留索引目录。实机验收应分别核对桌面退出后会话后台停止、服务模式下关闭桌面后服务继续运行，以及切换后索引仍可读。
 
 ## 桌面界面与设置验收
 
@@ -239,3 +243,11 @@ cargo build -p stashfinder-store --bin baseline --release --locked
 ## 图标、缩略图和缓存
 
 见 [系统图标与缩略图](system-visuals.md)。普通权限桌面端获取系统图像，后台只读解引用条目；协议 8 增加图片记录接口和搜索结果修订号。图片经过桌面桥接返回，不经过后台的 16 KiB 帧，也不存入分区数据库。专项测试和在线／离线 GUI 验证步骤见该文档。
+
+## 便携构建
+
+运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1` 生成 release GUI、后台、白名单 ZIP 和 SHA256 清单。默认输出到忽略的 `.local/packages/`；已有输出目录会被拒绝。包验证入口为 `scripts/verify-portable-package.ps1 -Archive <zip路径>`，不执行包内程序。
+
+`portable.json` 标记启用程序目录旁的 `data`，覆盖索引、界面设置、图片缓存及 WebView2 用户数据路径；GUI 仍以普通权限运行，后台每次单独提升，不注册服务。托盘和设置中的退出会撤销会话并等待后台停止，异常 GUI 退出另由父进程检测处理。没有标记则沿用现有模式。使用和依赖见[便携版说明](portable.md)。
+
+专项回归：`cargo test -p stashfinder-windows --test portable --locked`、`cargo test -p stashfinder-service --test portable --locked`、`cargo test -p stashfinder-desktop runtime --locked`。服务集成测试仅在临时目录建立空登记，不注册或扫描资料盘；真实 UAC、托盘和目录搬迁另行实机验收。

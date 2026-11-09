@@ -28,11 +28,16 @@ pub const DEFAULT_PIPE: &str = r"\\.\pipe\StashFinder.M0";
 pub const IO_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub fn current_user_sid() -> Result<String> {
+    // SAFETY: GetCurrentProcess returns the current process pseudo-handle.
+    process_user_sid(unsafe { GetCurrentProcess() })
+}
+
+pub(crate) fn process_user_sid(process: HANDLE) -> Result<String> {
     // SAFETY: Query-only token; aligned Windows-sized buffer; the token and allocated
     // SID string are released on every path.
     unsafe {
         let mut token = HANDLE::default();
-        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)?;
+        OpenProcessToken(process, TOKEN_QUERY, &mut token)?;
         let result = (|| -> Result<String> {
             let mut length = 0;
             let _ = GetTokenInformation(token, TokenUser, None, 0, &mut length);

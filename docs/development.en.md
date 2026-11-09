@@ -27,19 +27,23 @@ When available memory is limited, set `$env:CARGO_BUILD_JOBS = '1'` in the curre
 
 ## Run the validation window
 
-In an ordinary-user terminal:
+Start the development GUI and backend together from the repository root as a standard user:
 
 ```powershell
-cargo run -p stashfinder-service -- --foreground --data-dir "$PWD\.local\dev-assets"
+npm --prefix ui run dev:desktop
 ```
 
-In a second terminal:
+The launcher waits for the foreground backend handshake before starting Tauri. Development data lives in `.local/dev-assets`. A compatible backend already listening on the verification pipe is reused. On exit, the launcher stops only the process it started. To debug the components separately, run `cargo run -p stashfinder-service -- --foreground --data-dir "$PWD\.local\dev-assets"` and `npm --prefix ui run tauri -- dev` in separate terminals.
 
-```powershell
-npm --prefix ui run tauri -- dev
-```
+The default home screen is Overview, with a collapsible navigation rail. Files retains the current session's search input and results. Tasks separates current work, items needing attention and history. Cancellation targets a task ID and pauses its partition until updates are explicitly resumed. An ordinary foreground process may lack access to physical disk layouts. The UI reports this explicitly. Use the LocalSystem verification service below for complete device validation. Settings → About and diagnostics reports the actual app version, backend mode and connection state. The local pipe allows the configured account, SYSTEM and administrators and rejects remote clients. IPC accepts neither database paths nor arbitrary commands.
 
-The default home screen is Overview, with a collapsible navigation rail. Files retains the current session's search input and results. Tasks separates current work, items needing attention and history. Cancellation targets a task ID and pauses its partition until updates are explicitly resumed. An ordinary foreground process may lack access to physical disk layouts; the UI must report this explicitly. Use the LocalSystem verification service below for complete device validation. Settings → About and diagnostics reports the actual app version, backend mode and connection state. Closing the GUI does not stop the backend; use Ctrl+C in its terminal. The local pipe allows the configured account, SYSTEM and administrators and rejects remote clients. IPC accepts neither database paths nor arbitrary commands.
+## Windows installer
+
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-installer.ps1` from the repository root. The NSIS installer is written to `target/release/bundle/nsis/`.
+
+Keep the default `Program Files\StashFinder` directory. A fresh install defaults to desktop management. Approve UAC for the indexing process when opening the app. The process stops when the app exits. Select the Windows service option to register and start the automatic `StashFinder` service, which keeps running after the GUI closes. Opening the app or reconnecting from About and diagnostics starts a stopped service. Both modes keep the GUI unelevated and share the protected `%ProgramData%\StashFinder` index and configured account.
+
+Exit StashFinder and rerun the installer to switch modes. Setup remembers the last selection. For silent setup use `/S /SERVICE` or `/S /NOSERVICE` to select a mode explicitly. `/S` alone reuses the saved choice. Uninstall removes the service registration and keeps the index directory. Verify that desktop-managed indexing stops on exit, service-managed indexing continues after exit, and existing indexes can be read after switching.
 
 ## Desktop and preferences acceptance
 
@@ -239,3 +243,11 @@ See [search help](search.en.md). Verify category persistence across restart, cro
 ## Icons, thumbnails, and cache
 
 See [system icons and thumbnails](system-visuals.en.md). The desktop obtains system images without elevation; the service only resolves indexed records for reading. Protocol 8 adds the image-record interface and search-result revisions. Images use the desktop bridge, outside the service's 16 KiB frames and partition databases. The linked guide includes focused tests and online/offline GUI verification steps.
+
+## Portable builds
+
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1` to build the release GUI and backend, an allowlisted ZIP, and SHA256 metadata. Output defaults to the ignored `.local/packages/` directory; existing output directories are rejected. Validate with `scripts/verify-portable-package.ps1 -Archive <zip-path>` without executing packaged programs.
+
+The `portable.json` marker enables `data` beside the executable for indexes, preferences, image caches, and WebView2 user data. The GUI remains unelevated; the backend is elevated separately on each run without service registration. Tray and settings exits revoke the session and wait for the backend; parent-process detection handles abnormal GUI exits. Without a marker, existing behavior remains. See the [portable guide](portable.en.md) for usage and dependencies.
+
+Focused regression commands: `cargo test -p stashfinder-windows --test portable --locked`, `cargo test -p stashfinder-service --test portable --locked`, and `cargo test -p stashfinder-desktop runtime --locked`. The service integration test creates empty registrations in a temporary directory without registering or scanning data disks. Actual UAC, tray behavior, and directory relocation need separate machine verification.

@@ -3,10 +3,11 @@
 use anyhow::{Context, Result, ensure};
 mod file_operations;
 use serde::Serialize;
-use stashfinder_windows::{ipc, shell};
+use stashfinder_windows::shell;
 use std::{path::PathBuf, sync::Mutex};
 use tauri::{AppHandle, Manager, State};
 mod preferences;
+mod runtime;
 mod visual_cache;
 mod visuals;
 
@@ -52,14 +53,14 @@ struct Samples(Mutex<Vec<Sample>>);
 
 #[tauri::command]
 async fn service_status() -> Result<stashfinder_core::Status, String> {
-    ipc::status(ipc::DEFAULT_PIPE)
+    runtime::status()
         .await
         .map_err(|error| format!("{error:#}"))
 }
 
 #[tauri::command]
 async fn asset_snapshot() -> Result<stashfinder_core::assets::Snapshot, String> {
-    ipc::snapshot(ipc::DEFAULT_PIPE)
+    runtime::snapshot()
         .await
         .map_err(|error| format!("{error:#}"))
 }
@@ -70,7 +71,7 @@ async fn asset_command(action: stashfinder_core::Action) -> Result<(), String> {
         stashfinder_core::Action::Refresh
         | stashfinder_core::Action::Register { .. }
         | stashfinder_core::Action::Retry { .. }
-        | stashfinder_core::Action::Rename { .. } => ipc::request(ipc::DEFAULT_PIPE, action)
+        | stashfinder_core::Action::Rename { .. } => runtime::request(action)
             .await
             .map(|_| ())
             .map_err(|error| format!("{error:#}")),
@@ -94,7 +95,7 @@ async fn index_request(
         | stashfinder_core::Action::Directory(_)
         | stashfinder_core::Action::SearchPage { .. }
         | stashfinder_core::Action::SearchBatch { .. }
-        | stashfinder_core::Action::SearchCancel { .. } => ipc::request(ipc::DEFAULT_PIPE, action)
+        | stashfinder_core::Action::SearchCancel { .. } => runtime::request(action)
             .await
             .map_err(|error| format!("{error:#}")),
         _ => Err("不是索引操作".into()),
@@ -315,21 +316,34 @@ async fn edit_samples(
 }
 
 fn main() {
-    tauri::Builder::default()
+    if let Err(error) = run() {
+        runtime::show_error(&format!("{error:#}"));
+    }
+}
+
+fn run() -> Result<(), anyhow::Error> {
+    let mut context = tauri::generate_context!();
+    let mut session = runtime::start(context.config_mut())?;
+    let app = tauri::Builder::default()
+        .setup(|app| runtime::setup(app.handle()).map_err(Into::into))
         .manage(Samples::default())
         .manage(file_operations::Operations::default())
         .manage(visuals::Visuals::default())
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event
-                && file_operations::prevent_close(&window.state::<file_operations::Operations>())
-            {
-                api.prevent_close();
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if file_operations::prevent_close(&window.state::<file_operations::Operations>()) {
+                    api.prevent_close();
+                } else if runtime::active() {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
             preferences_get,
             preferences_set,
             app_version,
+            runtime::app_exit,
             service_status,
             asset_snapshot,
             asset_command,
@@ -354,8 +368,13 @@ fn main() {
             refresh_samples,
             edit_samples
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run StashFinder");
+        .build(context)?;
+    app.run(move |_, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            session.take();
+        }
+    });
+    Ok(())
 }
 
 #[cfg(test)]

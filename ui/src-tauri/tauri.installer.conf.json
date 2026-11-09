@@ -1,0 +1,16 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "resources": {
+      "../../target/release/stashfinder-service.exe": "stashfinder-service.exe",
+      "installer/installed.marker": "installed.marker"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "installerHooks": "installer/hooks.nsh"
+      }
+    }
+  }
+}

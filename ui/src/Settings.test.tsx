@@ -8,6 +8,7 @@ import {
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import Desktop from "./Desktop";
+import Settings from "./Settings";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeAll(() => {
@@ -22,6 +23,46 @@ afterEach(() => {
   cleanup();
   vi.resetAllMocks();
 });
+
+test.each(["portable", "windows_service"])(
+  "offers an explicit portable exit only for the portable backend: %s",
+  async (mode) => {
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "app_version") return "0.1.0";
+      if (command === "service_status")
+        return {
+          version: 8,
+          id: 1,
+          process_id: 42,
+          mode,
+          registered_partitions: 0,
+        };
+    });
+    render(
+      <Settings
+        preferences={{
+          version: 1,
+          collapsed: false,
+          start_page: "overview",
+          include_path: true,
+          categories: [],
+        }}
+        saving={false}
+        onSave={async () => {}}
+        tasks={null}
+        taskError=""
+        onTasksRefresh={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "关于与诊断" }));
+    await screen.findByText(mode);
+    const exit = screen.queryByRole("button", { name: "退出便携版" });
+    if (mode === "portable") {
+      fireEvent.click(exit!);
+      expect(invoke).toHaveBeenCalledWith("app_exit");
+    } else expect(exit).toBeNull();
+  },
+);
 test("saves preferences, restores them on restart, and retains saved values on failure", async () => {
   let saved = {
     version: 1,

@@ -1,5 +1,9 @@
 use anyhow::{Context, Result, ensure};
-use std::{os::windows::fs::MetadataExt, path::Path};
+use std::{
+    fs::File,
+    os::windows::fs::MetadataExt,
+    path::{Path, PathBuf},
+};
 use windows::{
     Win32::{
         Foundation::{HLOCAL, LocalFree},
@@ -13,11 +17,70 @@ use windows::{
     core::{HSTRING, PWSTR},
 };
 
+pub fn program_data() -> Result<PathBuf> {
+    use windows::Win32::{
+        System::Com::CoTaskMemFree,
+        UI::Shell::{FOLDERID_ProgramData, KF_FLAG_DEFAULT, SHGetKnownFolderPath},
+    };
+    // SAFETY: The known folder API returns an allocated, null-terminated path.
+    unsafe {
+        let path = SHGetKnownFolderPath(&FOLDERID_ProgramData, KF_FLAG_DEFAULT, None)?;
+        let result = path.to_string().map(PathBuf::from);
+        CoTaskMemFree(Some(path.0.cast()));
+        Ok(result?)
+    }
+}
+
+pub fn lock_backend(root: &Path) -> Result<File> {
+    let lock = File::options()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join("backend.lock"))?;
+    lock.try_lock().context("此索引目录已有后台在运行")?;
+    Ok(lock)
+}
+
+pub fn use_admin_file_owner() -> Result<()> {
+    use windows::Win32::{
+        Foundation::{CloseHandle, HANDLE},
+        Security::{
+            CreateWellKnownSid, SetTokenInformation, TOKEN_ADJUST_DEFAULT, TOKEN_OWNER, TokenOwner,
+            WinBuiltinAdministratorsSid,
+        },
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+    // SAFETY: The SID storage outlives SetTokenInformation, which copies the value.
+    unsafe {
+        let mut sid = [0u32; 17];
+        let mut length = size_of_val(&sid) as u32;
+        let owner = TOKEN_OWNER {
+            Owner: PSID(sid.as_mut_ptr().cast()),
+        };
+        CreateWellKnownSid(
+            WinBuiltinAdministratorsSid,
+            None,
+            Some(owner.Owner),
+            &mut length,
+        )?;
+        let mut token = HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_DEFAULT, &mut token)?;
+        let result = SetTokenInformation(
+            token,
+            TokenOwner,
+            (&owner as *const TOKEN_OWNER).cast(),
+            size_of::<TOKEN_OWNER>() as u32,
+        );
+        CloseHandle(token)?;
+        result.context("无法设置索引文件的默认所有者")
+    }
+}
+
 // Installation provisions a private, direct child of ProgramData. The GUI has no
 // database access: all reads and writes go through the authenticated local pipe.
 pub fn validate_service_root(root: &Path) -> Result<()> {
-    let base = std::env::var_os("ProgramData").context("ProgramData unavailable")?;
-    let base = std::fs::canonicalize(base)?;
+    let base = std::fs::canonicalize(program_data()?)?;
     ensure!(root.is_absolute(), "服务数据目录必须为绝对路径");
     ensure!(
         std::fs::canonicalize(root.parent().context("数据目录无父目录")?)? == base,
@@ -107,4 +170,16 @@ pub fn validate_service_root(root: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn installed_backends_cannot_write_the_same_catalog_concurrently() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = super::lock_backend(directory.path()).unwrap();
+        assert!(super::lock_backend(directory.path()).is_err());
+        drop(first);
+        assert!(super::lock_backend(directory.path()).is_ok());
+    }
 }

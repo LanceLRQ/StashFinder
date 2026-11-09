@@ -12,7 +12,7 @@ custom-protocol = ["tauri/custom-protocol"]
 tauri-build = { version = "=2.7.4", features = [] }
 
 [dependencies]
-tauri = { version = "=2.12.5", features = [] }
+tauri = { version = "=2.12.5", features = ["tray-icon"] }
 stashfinder-core = { path = "../../crates/core" }
 stashfinder-windows = { path = "../../crates/windows" }
 serde.workspace = true

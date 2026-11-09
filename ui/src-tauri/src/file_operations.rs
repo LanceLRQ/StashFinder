@@ -129,7 +129,7 @@ pub async fn file_prepare(
             "选择过大，单次最多操作 10,000 项"
         );
         let response = ipc::request(
-            ipc::DEFAULT_PIPE,
+            crate::runtime::pipe(),
             if records_only {
                 Action::FileRecordsBegin(input.origin)
             } else {
@@ -149,7 +149,7 @@ pub async fn file_prepare(
         ) {
             ensure!(!cancel.load(Ordering::Acquire), "操作准备已取消");
             ipc::request(
-                ipc::DEFAULT_PIPE,
+                crate::runtime::pipe(),
                 Action::FileSelectionAdd {
                     id: selection,
                     chunk,
@@ -158,7 +158,7 @@ pub async fn file_prepare(
             .await?;
         }
         let Response::SelectionCount(total) = ipc::request(
-            ipc::DEFAULT_PIPE,
+            crate::runtime::pipe(),
             Action::FileSelectionSeal { id: selection },
         )
         .await?
@@ -176,7 +176,7 @@ pub async fn file_prepare(
         loop {
             ensure!(!cancel.load(Ordering::Acquire), "操作准备已取消");
             let Response::SelectionPage(page) = ipc::request(
-                ipc::DEFAULT_PIPE,
+                crate::runtime::pipe(),
                 Action::FileSelectionPage {
                     id: selection,
                     offset,
@@ -243,7 +243,7 @@ pub async fn file_prepare(
     .await;
     if let Some(selection) = backend {
         let _ = ipc::request(
-            ipc::DEFAULT_PIPE,
+            crate::runtime::pipe(),
             Action::FileSelectionCancel { id: selection },
         )
         .await;
@@ -603,7 +603,7 @@ pub async fn file_paste(
             ..Default::default()
         };
     }
-    let prepared = ipc::request(ipc::DEFAULT_PIPE, Action::FileDestination(target))
+    let prepared = ipc::request(crate::runtime::pipe(), Action::FileDestination(target))
         .await
         .map_err(|e| format!("{e:#}"));
     let target = match prepared {

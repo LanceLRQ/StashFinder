@@ -10,6 +10,49 @@ impl Drop for Server {
 }
 
 #[tokio::test]
+async fn developer_backend_exits_when_its_launcher_closes_stdin() {
+    use std::io::Write;
+    let name = format!(r"\\.\pipe\StashFinder.dev-lifetime-{}", std::process::id());
+    let data = tempfile::tempdir().unwrap();
+    let mut server = Server(
+        Command::new(env!("CARGO_BIN_EXE_stashfinder-service"))
+            .args(["--foreground", &name, "--watch-stdin", "--data-dir"])
+            .arg(data.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    assert_eq!(status(&name).await.unwrap().process_id, server.0.id());
+    // Windows PowerShell writes an encoding preamble when it opens the pipe.
+    server
+        .0
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"\xEF\xBB\xBF")
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert!(
+        server.0.try_wait().unwrap().is_none(),
+        "backend exited while the launcher was still connected"
+    );
+    drop(server.0.stdin.take());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Some(exit) = server.0.try_wait().unwrap() {
+            assert!(exit.success());
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "backend outlived its launcher"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
 async fn connects_to_real_process_rejects_bad_request_and_reconnects() {
     use stashfinder_core::{read_frame, write_frame};
     use tokio::net::windows::named_pipe::ClientOptions;

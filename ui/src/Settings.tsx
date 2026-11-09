@@ -235,6 +235,17 @@ export default function Settings({
             <button disabled={checking} onClick={() => void connect()}>
               重新连接
             </button>
+            {status?.mode === "portable" && (
+              <button
+                onClick={() =>
+                  void invoke("app_exit").catch((failure) =>
+                    setError(String(failure)),
+                  )
+                }
+              >
+                退出便携版
+              </button>
+            )}
           </>
         )}
       </div>

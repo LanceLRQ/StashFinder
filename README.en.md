@@ -12,6 +12,8 @@ Online lists support copying, copy-only drag-out, cut/paste, F2 rename, recyclin
 
 File lists use Windows system icons, and single-item previews request system thumbnails on demand. Images use a separate cache with a default 2 GB limit that can be changed or cleared in settings. Cached historical previews remain available offline. See [system icons and thumbnails](docs/system-visuals.en.md).
 
+A development [portable build](docs/portable.en.md) keeps the program, indexes, preferences, and caches together. Its backend is elevated separately without installing a Windows service. It uses the system WebView2 runtime; the complete release matrix is still under verification.
+
 See [search help](docs/search.en.md) for syntax and boundaries and the [query baseline](docs/query-performance.en.md) for measured resource use. See the [development guide](docs/development.en.md) for build and validation steps and [third-party notices](docs/third-party.en.md) for dependency sources.
 
 ## Development goals

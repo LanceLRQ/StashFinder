@@ -386,7 +386,7 @@ pub async fn visual_preview(
     let mut work = Work::new(shared.clone(), request_id).map_err(|e| e.to_string())?;
     let _permit = work.enter(&notify).await.map_err(|e| e.to_string())?;
     notify("record");
-    let response = ipc::request(ipc::DEFAULT_PIPE, Action::FileInspect(reference))
+    let response = ipc::request(crate::runtime::pipe(), Action::FileInspect(reference))
         .await
         .map_err(|e| format!("{e:#}"))?;
     let Response::VisualRecord(record) = response else {

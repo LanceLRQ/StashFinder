@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/dev-desktop.ps1",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "tauri": "tauri",
