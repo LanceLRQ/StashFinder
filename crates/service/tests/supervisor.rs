@@ -163,6 +163,25 @@ fn automatic_worker_requires_registration_online_identity_and_enabled_policy() {
             .any(|t| t.state == "needs_confirmation")
     });
     assert_eq!(worker.status(&row.partition_id).phase, "needs_validation");
+    assert!(worker.status(&row.partition_id).journal_missing);
+
+    worker.set_enabled(false).unwrap();
+    let id = worker
+        .scan(&row.partition_id, IndexMode::Journal, &snapshot)
+        .unwrap();
+    wait_until(|| {
+        worker
+            .tasks()
+            .unwrap()
+            .iter()
+            .any(|t| t.id == id && t.state == "needs_confirmation")
+    });
+    assert!(worker.status(&row.partition_id).journal_missing);
+
+    journal.store(true, Ordering::SeqCst);
+    worker.retry(&id, &snapshot).unwrap();
+    wait_until(|| worker.status(&row.partition_id).phase == "ready");
+    assert!(!worker.status(&row.partition_id).journal_missing);
 }
 
 struct ScanDisk {

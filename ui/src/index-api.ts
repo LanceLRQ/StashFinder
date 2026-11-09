@@ -3,6 +3,7 @@ import type { SearchOptions } from "./search-options";
 
 export type IndexStatus = {
   task_id?: string | null;
+  journal_missing?: boolean;
   generation: number | null;
   active_generation: number | null;
   phase: string;

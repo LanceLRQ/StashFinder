@@ -76,6 +76,22 @@ test("offline partitions cannot start scans and failed rebuild preserves publish
     true,
   );
 });
+test("missing USN prompts for a choice and defaults to basic scanning", async () => {
+  mockStatus({ ...status, journal_missing: true });
+  render(<IndexControls partitionId="p" name="Movies" eligible />);
+  expect(await screen.findByText("此分区没有 USN 日志")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "选择索引方式 Movies" }));
+  expect(screen.queryByRole("radio", { name: "使用已有 USN 日志" })).toBeNull();
+  expect(
+    screen.getByRole("radio", { name: "基础扫描（不创建日志）" }),
+  ).toHaveProperty("checked", true);
+  fireEvent.click(screen.getByRole("button", { name: "开始索引" }));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("index_request", {
+      action: { index_start: { partition_id: "p", mode: "scan_only" } },
+    }),
+  );
+});
 test("running index can be cancelled", async () => {
   mockStatus({ ...status, phase: "scanning", task_id: "task-one" });
   render(<IndexControls partitionId="p" name="Movies" eligible />);

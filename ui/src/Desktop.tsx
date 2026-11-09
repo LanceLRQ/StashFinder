@@ -6,6 +6,7 @@ import Visuals from "./Visuals";
 import Settings from "./Settings";
 import type { AssetSnapshot } from "./asset-api";
 import Tasks from "./Tasks";
+import { IndexModeDialog } from "./IndexControls";
 import { taskKinds, taskLabels, useTasks } from "./task-api";
 import {
   defaultPreferences,
@@ -50,6 +51,20 @@ export default function Desktop() {
   const [development, setDevelopment] = useState(false);
   const tasks = useTasks(loaded);
   const [focusTask, setFocusTask] = useState("");
+  const [indexChoice, setIndexChoice] = useState("");
+  const partitions = (snapshot?.assets || []).map((a) => ({
+    id: a.registration.partition_id,
+    name: a.registration.name,
+    connection: a.connection,
+    canChooseIndex:
+      !snapshot?.error &&
+      !snapshot?.busy &&
+      !a.error &&
+      a.connection === "online" &&
+      a.registration.state === "ready" &&
+      a.registration.observation.identity.filesystem === "NTFS",
+  }));
+  const choicePartition = partitions.find((p) => p.id === indexChoice);
   useEffect(() => {
     let active = true;
     void readPreferences()
@@ -121,16 +136,32 @@ export default function Desktop() {
               navigate("tasks");
             }}
           >
-            {snapshot?.assets.find(
-              (a) => a.registration.partition_id === task.partition_id,
-            )?.registration.name || task.partition_id}
+            {partitions.find((p) => p.id === task.partition_id)?.name ||
+              task.partition_id}
           </button>
           <span>
             {taskKinds[task.kind] || task.kind} ·{" "}
             {taskLabels[task.state] || task.state}
           </span>
           <small>{new Date(task.updated * 1000).toLocaleString()}</small>
-          {task.error && <p className="desktop-error">{task.error}</p>}
+          {task.state === "needs_confirmation" ? (
+            <>
+              <p className="desktop-error">此分区没有 USN 日志</p>
+              <button
+                disabled={
+                  !!tasks.error ||
+                  !partitions.some(
+                    (p) => p.id === task.partition_id && p.canChooseIndex,
+                  )
+                }
+                onClick={() => setIndexChoice(task.partition_id)}
+              >
+                选择索引方式…
+              </button>
+            </>
+          ) : (
+            task.error && <p className="desktop-error">{task.error}</p>
+          )}
         </div>
       ))}
       {tasks.data && !tasks.data.tasks.length && (
@@ -250,11 +281,8 @@ export default function Desktop() {
               data={tasks.data}
               error={tasks.error}
               onRefresh={tasks.refresh}
-              partitions={(snapshot?.assets || []).map((a) => ({
-                id: a.registration.partition_id,
-                name: a.registration.name,
-                connection: a.connection,
-              }))}
+              onChooseIndex={setIndexChoice}
+              partitions={partitions}
             />
           )}
         </div>
@@ -272,6 +300,20 @@ export default function Desktop() {
           <Suspense fallback={<p>正在加载验证工具…</p>}>
             <Development />
           </Suspense>
+        )}
+        {choicePartition && (
+          <IndexModeDialog
+            partitionId={indexChoice}
+            name={choicePartition.name}
+            eligible={!tasks.error && choicePartition.canChooseIndex}
+            ntfs
+            journalMissing
+            onClose={() => setIndexChoice("")}
+            onStarted={() => {
+              setIndexChoice("");
+              tasks.refresh();
+            }}
+          />
         )}
       </main>
     </div>

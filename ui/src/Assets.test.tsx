@@ -69,9 +69,24 @@ test("registration is a dialog and closing it preserves the overview filter", as
   await openRegistration();
   const dialog = await screen.findByRole("dialog", { name: "选择分区登记" });
   expect(within(dialog).getAllByRole("checkbox")).toHaveLength(2);
+  const actions = dialog.querySelector<HTMLElement>(".dialog-actions");
+  expect(actions).toBeTruthy();
+  expect(
+    within(actions!)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["关闭登记", "登记所选分区"]);
   fireEvent.click(within(dialog).getByRole("button", { name: "关闭登记" }));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.getByLabelText("连接筛选")).toHaveProperty("value", "offline");
+});
+
+test("device processing updates the reserved overview footer", async () => {
+  vi.mocked(invoke).mockResolvedValue({ ...snapshot(), busy: true });
+  const { container } = render(<Assets />);
+  const footer = container.querySelector("footer")!;
+  const status = within(footer).getByRole("status");
+  expect(await screen.findByText("正在处理设备信息…")).toBe(status);
 });
 
 test("groups partitions by disk identity and keeps the last snapshot on service failure", async () => {

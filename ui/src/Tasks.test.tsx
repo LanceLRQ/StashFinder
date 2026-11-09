@@ -26,8 +26,8 @@ const row: Task = {
   error: null,
 };
 const partitions = [
-  { id: "one", name: "Movies", connection: "online" },
-  { id: "two", name: "Backup", connection: "offline" },
+  { id: "one", name: "Movies", connection: "online", canChooseIndex: true },
+  { id: "two", name: "Backup", connection: "offline", canChooseIndex: false },
 ];
 test("cancels the selected task by id and disables offline retries", async () => {
   vi.mocked(invoke).mockResolvedValue({ kind: "accepted" });
@@ -50,6 +50,7 @@ test("cancels the selected task by id and disables offline retries", async () =>
       error=""
       partitions={partitions}
       onRefresh={vi.fn()}
+      onChooseIndex={vi.fn()}
     />,
   );
   fireEvent.click(screen.getByRole("button", { name: "取消 Movies" }));
@@ -72,6 +73,7 @@ test("shows an honest empty state and retains rows on disconnect", () => {
       error=""
       partitions={partitions}
       onRefresh={vi.fn()}
+      onChooseIndex={vi.fn()}
     />,
   );
   expect(screen.getByText("当前没有任务")).toBeTruthy();
@@ -82,6 +84,7 @@ test("shows an honest empty state and retains rows on disconnect", () => {
       error="服务未连接"
       partitions={partitions}
       onRefresh={vi.fn()}
+      onChooseIndex={vi.fn()}
     />,
   );
   expect(screen.getByRole("button", { name: "Movies" })).toBeTruthy();
@@ -90,4 +93,34 @@ test("shows an honest empty state and retains rows on disconnect", () => {
     "disabled",
     true,
   );
+});
+test("an online task waiting for a journal choice can be resolved in place", () => {
+  const onChooseIndex = vi.fn();
+  render(
+    <Tasks
+      data={{
+        tasks: [
+          { ...row, state: "needs_confirmation" },
+          {
+            ...row,
+            id: "two-task",
+            partition_id: "two",
+            state: "needs_confirmation",
+          },
+        ],
+        automatic: true,
+        paused: [],
+      }}
+      error=""
+      focusTask={row.id}
+      partitions={partitions}
+      onRefresh={vi.fn()}
+      onChooseIndex={onChooseIndex}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "选择索引方式 Movies" }));
+  expect(onChooseIndex).toHaveBeenCalledWith("one");
+  expect(
+    screen.getByRole("button", { name: "选择索引方式 Backup" }),
+  ).toHaveProperty("disabled", true);
 });

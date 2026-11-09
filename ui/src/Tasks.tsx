@@ -13,12 +13,19 @@ export default function Tasks({
   error,
   partitions,
   onRefresh,
+  onChooseIndex,
   focusTask,
 }: {
   data: TaskSnapshot | null;
   error: string;
-  partitions: { id: string; name: string; connection: string }[];
+  partitions: {
+    id: string;
+    name: string;
+    connection: string;
+    canChooseIndex: boolean;
+  }[];
   onRefresh: () => void;
+  onChooseIndex: (partitionId: string) => void;
   focusTask?: string;
 }) {
   const initial = data?.tasks.find((t) => t.id === focusTask);
@@ -150,8 +157,13 @@ export default function Tasks({
                             ? indexLabels[task.phase] || task.phase
                             : taskLabels[task.state] || task.state}
                         </span>
-                        {task.error && (
-                          <small className="task-error">{task.error}</small>
+                        {(task.state === "needs_confirmation" ||
+                          task.error) && (
+                          <small className="task-error">
+                            {task.state === "needs_confirmation"
+                              ? "此分区没有 USN 日志"
+                              : task.error}
+                          </small>
                         )}
                       </td>
                       <td className="task-time">
@@ -188,6 +200,16 @@ export default function Tasks({
                               暂停
                             </button>
                           </>
+                        ) : task.state === "needs_confirmation" ? (
+                          <button
+                            aria-label={`选择索引方式 ${name}`}
+                            disabled={
+                              sending || !!error || !part?.canChooseIndex
+                            }
+                            onClick={() => onChooseIndex(task.partition_id)}
+                          >
+                            选择索引方式…
+                          </button>
                         ) : ["failed", "interrupted", "cancelled"].includes(
                             task.state,
                           ) ? (
@@ -227,9 +249,6 @@ export default function Tasks({
                               <dd>{task.id}</dd>
                             </div>
                           </dl>
-                          {task.state === "needs_confirmation" && (
-                            <p>请在概览的分区索引入口选择扫描方式。</p>
-                          )}
                           {task.state === "cancelled" && (
                             <p>保留已提交索引；继续更新需恢复这个分区。</p>
                           )}

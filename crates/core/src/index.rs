@@ -12,6 +12,8 @@ pub enum IndexMode {
 pub struct IndexStatus {
     #[serde(default)]
     pub task_id: Option<String>,
+    #[serde(default)]
+    pub journal_missing: bool,
     pub generation: Option<i64>,
     pub active_generation: Option<i64>,
     pub phase: String,

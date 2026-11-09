@@ -309,7 +309,6 @@ export default function Assets({
           {error}
         </p>
       )}
-      {disabled && <p role="status">正在处理设备信息…</p>}
       <div className="overview-body">
         <div className="disk-list">
           {data && !data.busy && !data.error && !data.assets.length && (
@@ -491,42 +490,19 @@ export default function Assets({
         <Modal
           title="candidate-title"
           onCancel={() => {
-            if (!disabled) setRegisterOpen(false);
+            if (!working) setRegisterOpen(false);
           }}
         >
+          <h2 id="candidate-title">选择分区登记</h2>
           {error && (
             <p className="asset-error" role="alert">
               {error}
             </p>
           )}
-          <button
-            className="dialog-close"
-            disabled={disabled}
-            onClick={() => setRegisterOpen(false)}
-          >
-            关闭登记
-          </button>
           <section
             className="candidate-section"
             aria-labelledby="candidate-title"
           >
-            <div className="candidate-heading">
-              <h2 id="candidate-title">选择分区登记</h2>
-              <button
-                disabled={
-                  disabled ||
-                  !Object.keys(selected).length ||
-                  Object.values(selected).some(
-                    (n) => !n.trim() || Array.from(n.trim()).length > 128,
-                  )
-                }
-                onClick={() => {
-                  void register();
-                }}
-              >
-                登记所选分区
-              </button>
-            </div>
             {!data.candidates.length && !data.busy && !data.error && (
               <p>没有可显示的新设备。接入硬盘后刷新设备。</p>
             )}
@@ -601,10 +577,32 @@ export default function Assets({
               </section>
             ))}
           </section>
+          <div className="dialog-actions">
+            <button
+              autoFocus
+              disabled={working}
+              onClick={() => setRegisterOpen(false)}
+            >
+              关闭登记
+            </button>
+            <button
+              disabled={
+                disabled ||
+                !Object.keys(selected).length ||
+                Object.values(selected).some(
+                  (n) => !n.trim() || Array.from(n.trim()).length > 128,
+                )
+              }
+              onClick={() => void register()}
+            >
+              登记所选分区
+            </button>
+          </div>
         </Modal>
       )}
       <footer className="asset-footer">
-        仅扫描已登记分区。离线容量与文件记录保留最后一次快照。
+        <span role="status">{disabled ? "正在处理设备信息…" : ""}</span>
+        <span>仅扫描已登记分区。离线容量与文件记录保留最后一次快照。</span>
       </footer>
       {rename && (
         <Modal
@@ -635,7 +633,7 @@ export default function Assets({
             </label>
             <p>仅修改软件内名称，不修改硬盘卷标。</p>
             {error && <p className="asset-error">{error}</p>}
-            <div>
+            <div className="dialog-actions">
               <button
                 type="button"
                 disabled={disabled}
@@ -662,7 +660,7 @@ export default function Assets({
           <p>
             这些分区可以按新分区登记，但再次接入时可能无法自动识别。不会自动关联已有记录。
           </p>
-          <div>
+          <div className="dialog-actions">
             <button autoFocus onClick={() => setWeakConfirm(false)}>
               取消
             </button>

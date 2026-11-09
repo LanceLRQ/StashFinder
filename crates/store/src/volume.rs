@@ -476,6 +476,7 @@ impl Volume {
         )?;
         Ok(stashfinder_core::index::IndexStatus {
             task_id: None,
+            journal_missing: false,
             generation: Some(generation),
             active_generation: active,
             phase,

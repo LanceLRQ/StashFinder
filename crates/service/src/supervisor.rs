@@ -239,12 +239,20 @@ impl Runner {
             });
         if let Ok(tasks) = self.tasks()
             && let Some(task) = tasks.iter().find(|t| {
-                t.partition_id == id && matches!(t.state.as_str(), "queued" | "running" | "waiting")
+                t.partition_id == id
+                    && matches!(
+                        t.state.as_str(),
+                        "queued" | "running" | "waiting" | "needs_confirmation"
+                    )
             })
         {
-            status.task_id = Some(task.id.clone());
-            if task.state != "running" {
-                status.phase = task.state.clone();
+            if task.state == "needs_confirmation" {
+                status.journal_missing = true;
+            } else {
+                status.task_id = Some(task.id.clone());
+                if task.state != "running" {
+                    status.phase = task.state.clone();
+                }
             }
         }
         status
@@ -543,10 +551,13 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                                 return Ok(None);
                             }
                             let task = t.enqueue(id, "build", IndexMode::Journal, true)?;
+                            if !task.automatic {
+                                return Ok(None);
+                            }
                             t.set_state(
                                 &task.id,
                                 "needs_confirmation",
-                                Some("没有 USN 日志；请在分区索引入口选择基础扫描或单独授权创建"),
+                                Some("此分区没有 USN 日志"),
                             )?;
                             Ok(None)
                         });
@@ -722,6 +733,13 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                         state.error = None;
                     })
                 };
+                if result
+                    .as_ref()
+                    .is_err_and(|e| e.is::<index::JournalMissing>())
+                    && let Some(g) = db.active_generation()?
+                {
+                    db.mark_stale(g, "USN 日志不可用，等待选择扫描方式或单独授权")?;
+                }
                 shared.publish(&task.partition_id, &db)?;
                 result
             })();
@@ -747,6 +765,10 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                             if catching_up { "queued" } else { "completed" },
                             None,
                         )
+                    }
+                    Err(e) if e.is::<index::JournalMissing>() => {
+                        failures.remove(&task.partition_id);
+                        t.set_state(&task.id, "needs_confirmation", Some("此分区没有 USN 日志"))
                     }
                     Err(e) => {
                         {

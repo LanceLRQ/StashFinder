@@ -46,16 +46,11 @@ export default function IndexControls({
   const [status, setStatus] = useState<IndexStatus | null>(null);
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<"journal" | "scan_only" | "create_journal">(
-    "journal",
-  );
-  const [consent, setConsent] = useState(false);
   const [sending, setSending] = useState(false);
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     onStatus?.(partitionId, status, error);
   }, [partitionId, status, error, onStatus]);
-  const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     let active = true;
     let timer: number;
@@ -84,32 +79,15 @@ export default function IndexControls({
       window.clearTimeout(timer);
     };
   }, [partitionId, revision]);
-  useEffect(() => {
-    if (!open) return;
-    const element = dialog.current!;
-    element.showModal();
-    return () => element.close();
-  }, [open]);
   const busy = !!status && running.has(status.phase);
-  async function submit(cancel = false) {
-    if (sending) return;
-    if (cancel && !status?.task_id) return;
+  const journalMissing = filesystem === "NTFS" && !!status?.journal_missing;
+  async function cancel() {
+    if (sending || !status?.task_id) return;
     setSending(true);
-    const success = await indexRequest(
-      cancel
-        ? { task_cancel: { id: status!.task_id! } }
-        : { index_start: { partition_id: partitionId, mode } },
-    ).then(
-      () => true,
-      (e) => {
-        setError(String(e));
-        return false;
-      },
+    await indexRequest({ task_cancel: { id: status.task_id } }).then(
+      () => setRevision((n) => n + 1),
+      (e) => setError(String(e)),
     );
-    if (success) {
-      setOpen(false);
-      setRevision((n) => n + 1);
-    }
     setSending(false);
   }
   return (
@@ -136,111 +114,168 @@ export default function IndexControls({
               : "尚无可搜索索引"}
         </small>
       )}
-      {(error || status?.error) && (
+      {(error || journalMissing || status?.error) && (
         <small className="asset-error" role="alert">
-          {error || status?.error}
+          {error || (journalMissing ? "此分区没有 USN 日志" : status?.error)}
         </small>
       )}
       {busy && status?.phase !== "loading" ? (
         <button
           disabled={sending || !status?.task_id}
           aria-label={`取消索引 ${name}`}
-          onClick={() => void submit(true)}
+          onClick={() => void cancel()}
         >
           取消索引
         </button>
       ) : (
         <button
           disabled={!eligible || busy || sending}
-          aria-label={`索引 ${name}`}
-          onClick={() => {
-            setMode(filesystem === "NTFS" ? "journal" : "scan_only");
-            setConsent(false);
-            setOpen(true);
-          }}
+          aria-label={`${journalMissing ? "选择索引方式" : "索引"} ${name}`}
+          onClick={() => setOpen(true)}
         >
-          索引…
+          {journalMissing ? "选择索引方式…" : "索引…"}
         </button>
       )}
       {open && (
-        <dialog
-          ref={dialog}
-          className="asset-dialog index-dialog"
-          aria-labelledby={`index-${partitionId}`}
-          onCancel={(e) => {
-            e.preventDefault();
-            if (!sending) setOpen(false);
+        <IndexModeDialog
+          partitionId={partitionId}
+          name={name}
+          eligible={eligible && !busy}
+          ntfs={filesystem === "NTFS"}
+          journalMissing={journalMissing}
+          onClose={() => setOpen(false)}
+          onStarted={() => {
+            setOpen(false);
+            setRevision((n) => n + 1);
           }}
-        >
-          <h2 id={`index-${partitionId}`}>索引 {name}</h2>
-          {error && (
-            <p className="asset-error" role="alert">
-              {error}
-            </p>
-          )}
-          <p>重新读取这个分区。构建完成前，保留已有索引。</p>
-          {filesystem === "NTFS" && (
-            <label>
-              <input
-                type="radio"
-                checked={mode === "journal"}
-                onChange={() => setMode("journal")}
-              />
-              使用已有 USN 日志
-            </label>
-          )}
-          <label>
-            <input
-              type="radio"
-              checked={mode === "scan_only"}
-              onChange={() => setMode("scan_only")}
-            />
-            基础扫描（不创建日志）
-          </label>
-          {mode === "scan_only" && (
-            <p>在线监控变化后重新校验；重连需完整扫描，保留上次快照供搜索。</p>
-          )}
-          {filesystem === "NTFS" && (
-            <label>
-              <input
-                type="radio"
-                checked={mode === "create_journal"}
-                onChange={() => setMode("create_journal")}
-              />
-              创建 USN 日志并索引
-            </label>
-          )}
-          {mode === "create_journal" && (
-            <>
-              <p>
-                会写入 NTFS 系统元数据，占用磁盘空间。新日志最大 32
-                MiB，分配增量 8 MiB；已有日志保持原配置。
-              </p>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={consent}
-                  onChange={(e) => setConsent(e.target.checked)}
-                />
-                允许在这个分区创建 USN 日志
-              </label>
-            </>
-          )}
-          <div>
-            <button disabled={sending} onClick={() => setOpen(false)}>
-              取消
-            </button>
-            <button
-              disabled={
-                sending || !eligible || (mode === "create_journal" && !consent)
-              }
-              onClick={() => void submit()}
-            >
-              开始索引
-            </button>
-          </div>
-        </dialog>
+        />
       )}
     </div>
+  );
+}
+
+export function IndexModeDialog({
+  partitionId,
+  name,
+  eligible,
+  ntfs,
+  journalMissing,
+  onClose,
+  onStarted,
+}: {
+  partitionId: string;
+  name: string;
+  eligible: boolean;
+  ntfs: boolean;
+  journalMissing: boolean;
+  onClose: () => void;
+  onStarted: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [choice, setMode] = useState<
+    "journal" | "scan_only" | "create_journal"
+  >(ntfs && !journalMissing ? "journal" : "scan_only");
+  const mode = journalMissing && choice === "journal" ? "scan_only" : choice;
+  const [consent, setConsent] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const element = dialog.current!;
+    element.showModal();
+    return () => element.close();
+  }, []);
+  async function submit() {
+    if (sending || !eligible || (mode === "create_journal" && !consent)) return;
+    setSending(true);
+    setError("");
+    await indexRequest({
+      index_start: { partition_id: partitionId, mode },
+    }).then(onStarted, (e) => setError(String(e)));
+    setSending(false);
+  }
+  return (
+    <dialog
+      ref={dialog}
+      className="asset-dialog index-dialog"
+      aria-labelledby={`index-${partitionId}`}
+      onCancel={(e) => {
+        e.preventDefault();
+        if (!sending) onClose();
+      }}
+    >
+      <h2 id={`index-${partitionId}`}>
+        {journalMissing ? "选择索引方式" : "索引"} {name}
+      </h2>
+      {error && (
+        <p className="asset-error" role="alert">
+          {error}
+        </p>
+      )}
+      <p>
+        {journalMissing
+          ? "此分区没有 USN 日志。构建完成前，保留已有索引。"
+          : "重新读取这个分区。构建完成前，保留已有索引。"}
+      </p>
+      {ntfs && !journalMissing && (
+        <label>
+          <input
+            type="radio"
+            checked={mode === "journal"}
+            onChange={() => setMode("journal")}
+          />
+          使用已有 USN 日志
+        </label>
+      )}
+      <label>
+        <input
+          type="radio"
+          checked={mode === "scan_only"}
+          onChange={() => setMode("scan_only")}
+        />
+        基础扫描（不创建日志）
+      </label>
+      {mode === "scan_only" && (
+        <p>在线监控变化后重新校验；重连需完整扫描，保留上次快照供搜索。</p>
+      )}
+      {ntfs && (
+        <label>
+          <input
+            type="radio"
+            checked={mode === "create_journal"}
+            onChange={() => setMode("create_journal")}
+          />
+          创建 USN 日志并索引
+        </label>
+      )}
+      {mode === "create_journal" && (
+        <>
+          <p>
+            会写入 NTFS 系统元数据，占用磁盘空间。新日志最大 32 MiB，分配增量 8
+            MiB；已有日志保持原配置。
+          </p>
+          <label>
+            <input
+              type="checkbox"
+              checked={consent}
+              onChange={(e) => setConsent(e.target.checked)}
+            />
+            允许在这个分区创建 USN 日志
+          </label>
+        </>
+      )}
+      <div className="dialog-actions">
+        <button disabled={sending} onClick={onClose}>
+          取消
+        </button>
+        <button
+          disabled={
+            sending || !eligible || (mode === "create_journal" && !consent)
+          }
+          onClick={() => void submit()}
+        >
+          开始索引
+        </button>
+      </div>
+    </dialog>
   );
 }

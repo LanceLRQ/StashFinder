@@ -132,7 +132,7 @@ npm --prefix ui run tauri -- build --debug --no-bundle
 
 ## NTFS indexing and offline search
 
-1. Register an accessible NTFS partition and choose its index action. The default uses an existing USN journal; an absent journal produces an explicit failure without creating one.
+1. Register an accessible NTFS partition. The index action defaults to using an existing USN journal. If no journal is found, choose the indexing mode from the partition row, activity panel, or Tasks page. Basic scan is selected by default.
 2. Scan-only mode creates no journal and starts monitoring before enumeration. Changes during a scan trigger validation; results are marked as scan snapshots. Creating a journal requires a separate checkbox: a new journal has a 32 MiB maximum and an 8 MiB allocation delta; existing settings remain unchanged.
 3. Progress shows NTFS enumeration, metadata scanning and replay of changes during scanning. Cancellation is available. Failed/cancelled builds preserve the previous active index; readable data from a failed first build is marked incomplete. Read errors are not evidence of deletion.
 4. Open file search. Matching is case-insensitive and includes paths by default: `aaa` matches `aaa\bbb.exe`; `aaa bbb` requires both words in either order; `"aaa bbb"` matches consecutive text. Filename-only mode and partition filters are available. Drive-letter terms match current online mounts only.

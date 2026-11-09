@@ -9,6 +9,17 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+#[derive(Debug)]
+pub(crate) struct JournalMissing;
+
+impl std::fmt::Display for JournalMissing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("此分区没有 USN 日志")
+    }
+}
+
+impl std::error::Error for JournalMissing {}
+
 pub trait Source {
     fn verify(&self) -> Result<()> {
         Ok(())
@@ -129,11 +140,7 @@ pub fn build_checked(
     ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
     let journal = match mode {
         IndexMode::ScanOnly => None,
-        IndexMode::Journal => Some(
-            source
-                .journal()?
-                .context("此分区没有 USN 日志，请选择基础扫描或单独授权创建日志")?,
-        ),
+        IndexMode::Journal => Some(source.journal()?.ok_or(JournalMissing)?),
         IndexMode::CreateJournal => Some(source.create_journal()?),
     };
     let generation = db.begin_generation()?;
