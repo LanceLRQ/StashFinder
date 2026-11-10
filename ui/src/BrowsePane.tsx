@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Asset } from "./asset-api";
 import {
   connectionLabel,
@@ -32,6 +32,7 @@ export default function BrowsePane({
   indexVersion = "",
   automatic = false,
   active = true,
+  emptyState,
 }: {
   id: number;
   asset?: Asset;
@@ -41,11 +42,17 @@ export default function BrowsePane({
   onChoose: (partition: string) => void;
   onSearch: (text: string) => void;
   onTitle: (id: number, title: string) => void;
-  onLocation?: (id: number, page: DirectoryPage) => void;
+  onLocation?: (
+    id: number,
+    page: DirectoryPage,
+    partition: string,
+    active: boolean,
+  ) => void;
   onLocate?: (row: FileRow) => void;
   indexVersion?: string;
   automatic?: boolean;
   active?: boolean;
+  emptyState?: ReactNode;
 }) {
   const [parent, setParent] = useState(initialParent);
   const operations = useFileOperations();
@@ -78,12 +85,12 @@ export default function BrowsePane({
   const composing = useRef(false);
   const request = useRef(0);
   const currentPage = useRef(page);
-  useEffect(() => {
-    if (page) onLocation?.(id, page);
-  }, [id, page, onLocation]);
-  currentPage.current = page;
   const partition = asset?.registration.partition_id;
   const filesystem = asset?.registration.filesystem_id;
+  useEffect(() => {
+    if (page && partition) onLocation?.(id, page, partition, active);
+  }, [id, page, partition, active, onLocation]);
+  currentPage.current = page;
   const parentKey = JSON.stringify(parent);
   useEffect(() => {
     if (!partition || !filesystem) return;
@@ -421,7 +428,12 @@ export default function BrowsePane({
         </span>
       </div>
       {!asset ? (
-        <p className="search-empty">选择已登记分区以浏览文件</p>
+        <div className="browse-body">
+          {tree && <nav className="directory-tree" aria-label="目录树" />}
+          <div className="search-empty directory-main">
+            {emptyState ?? <p>选择已登记分区以浏览文件</p>}
+          </div>
+        </div>
       ) : (
         <>
           {error && (
@@ -437,15 +449,36 @@ export default function BrowsePane({
           <div className="browse-body">
             {tree && (
               <nav className="directory-tree" aria-label="目录树">
-                <DirectoryTree
-                  partition={partition!}
-                  filesystem={filesystem!}
-                  name={asset.registration.name}
-                  selected={page?.location || null}
-                  ancestors={page?.ancestors}
-                  version={page ? `${page.generation}:${page.revision}` : ""}
-                  onNavigate={navigate}
-                />
+                {assets.map(({ registration }) =>
+                  registration.partition_id === partition ? (
+                    <DirectoryTree
+                      key={partition}
+                      partition={partition!}
+                      filesystem={filesystem!}
+                      name={registration.name}
+                      selected={page?.location || null}
+                      ancestors={page?.ancestors}
+                      version={
+                        page ? `${page.generation}:${page.revision}` : ""
+                      }
+                      onNavigate={navigate}
+                    />
+                  ) : (
+                    <div
+                      className="tree-row other-partition"
+                      key={registration.partition_id}
+                    >
+                      <button
+                        className="tree-label"
+                        title={registration.name}
+                        onClick={() => onChoose(registration.partition_id)}
+                      >
+                        <span className="file-mark folder" aria-hidden="true" />
+                        {registration.name}
+                      </button>
+                    </div>
+                  ),
+                )}
               </nav>
             )}
             <div className="directory-main">

@@ -22,6 +22,7 @@ vi.mock("./browse-api", async (original) => ({
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.resetAllMocks();
 });
 const asset = {
@@ -398,4 +399,96 @@ test("uses the empty browse tab for an overview partition request", async () => 
   );
   await screen.findByRole("row", { name: /notes.txt/ });
   expect(screen.getAllByRole("tab")).toHaveLength(1);
+});
+
+test("restores an offline directory by identity when the reliable snapshot arrives", async () => {
+  setup().unmount();
+  const key = "stashfinder.last-directory";
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      version: 1,
+      partitionId: "p",
+      filesystemId: "fs",
+      entry: [2],
+    }),
+  );
+  const online = {
+    ...asset,
+    connection: "online",
+    registration: {
+      ...asset.registration,
+      name: "Another disk",
+      partition_id: "other",
+    },
+  };
+  const offline = {
+    ...asset,
+    registration: { ...asset.registration, name: "Changed display name" },
+  };
+  const request = { text: "", revision: 0 };
+  const view = render(
+    <Workspace
+      assets={[]}
+      includePath
+      request={request}
+      startupReady={false}
+    />,
+  );
+  expect(
+    screen.getByRole("tab", { name: "浏览", selected: true }),
+  ).toBeTruthy();
+  expect(readDirectory).not.toHaveBeenCalled();
+  view.rerender(
+    <Workspace
+      assets={[online, offline]}
+      includePath
+      request={request}
+      startupReady
+    />,
+  );
+  await screen.findByRole("row", { name: /movie.mkv/ });
+  await screen.findByRole("tab", { name: "Films", selected: true });
+  expect(readDirectory).toHaveBeenCalledWith(
+    expect.objectContaining({
+      partition_id: "p",
+      filesystem_id: "fs",
+      parent: [2],
+    }),
+  );
+  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({
+    version: 1,
+    partitionId: "p",
+    filesystemId: "fs",
+    entry: [2],
+  });
+});
+
+test("uses the same partition root when the saved directory is confirmed missing", async () => {
+  localStorage.setItem(
+    "stashfinder.last-directory",
+    JSON.stringify({
+      version: 1,
+      partitionId: "p",
+      filesystemId: "fs",
+      entry: [6],
+    }),
+  );
+  vi.mocked(readDirectory).mockImplementation(async (request) => {
+    if (request.parent?.[0] === 6) throw Error("目录已不存在，请返回上级目录");
+    return root;
+  });
+  render(
+    <Workspace
+      assets={[asset]}
+      includePath
+      request={{ text: "", revision: 0 }}
+      startupReady
+    />,
+  );
+  await screen.findByText(/目录已不存在，已返回/);
+  expect(screen.getByRole("row", { name: /notes.txt/ })).toBeTruthy();
+  expect(
+    JSON.parse(localStorage.getItem("stashfinder.last-directory")!).entry,
+  ).toEqual([1]);
 });

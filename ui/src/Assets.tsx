@@ -1,10 +1,13 @@
 import {
   useCallback,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   type ReactNode,
+  type Ref,
 } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import IndexControls from "./IndexControls";
 import "./assets.css";
@@ -33,7 +36,7 @@ function Modal({
     dialog.showModal();
     return () => dialog.close();
   }, []);
-  return (
+  return createPortal(
     <dialog
       ref={ref}
       className="asset-dialog"
@@ -44,7 +47,8 @@ function Modal({
       }}
     >
       {children}
-    </dialog>
+    </dialog>,
+    document.body,
   );
 }
 
@@ -74,12 +78,20 @@ const connectionLabels: Record<string, string> = {
   inaccessible: "不可访问",
 };
 
+export type AssetControls = {
+  register: () => void;
+  refresh: () => void;
+  retry: () => void;
+};
+
 export default function Assets({
   onSearch,
   onBrowse,
   onSnapshot,
   onIndexStatus,
   activity,
+  ref,
+  onStatus,
 }: {
   onSearch?: (text: string) => void;
   onBrowse?: (partition: string) => void;
@@ -90,6 +102,8 @@ export default function Assets({
     error: string,
   ) => void;
   activity?: ReactNode;
+  ref?: Ref<AssetControls>;
+  onStatus?: (status: { error: string; working: boolean }) => void;
 } = {}) {
   const [data, setData] = useState<AssetSnapshot | null>(null);
   const [message, setMessage] = useState("");
@@ -230,6 +244,30 @@ export default function Assets({
 
   const disabled = working || !!data?.busy;
   const error = message || data?.error;
+  useEffect(() => {
+    onStatus?.({ error: error || "", working });
+  }, [error, working, onStatus]);
+  const registrationTrigger = useRef<HTMLElement | null>(null);
+  function openRegistration() {
+    if (!data || data.busy || lock.current) return;
+    registrationTrigger.current = document.activeElement as HTMLElement;
+    setRegisterOpen(true);
+  }
+  function closeRegistration() {
+    setRegisterOpen(false);
+    const trigger = registrationTrigger.current;
+    window.setTimeout(() => trigger?.focus(), 0);
+  }
+  useImperativeHandle(ref, () => ({
+    register: openRegistration,
+    refresh: () => {
+      if (!disabled) void command("refresh");
+    },
+    retry: () => {
+      setMessage("");
+      void reload().catch((error) => setMessage(String(error)));
+    },
+  }));
   const groups = new Map<string, Asset[]>();
   for (const asset of data?.assets || []) {
     const key = asset.registration.disk_id;
@@ -277,10 +315,7 @@ export default function Assets({
         <button disabled={disabled} onClick={() => void command("refresh")}>
           刷新设备
         </button>
-        <button
-          disabled={!data || disabled}
-          onClick={() => setRegisterOpen(true)}
-        >
+        <button disabled={!data || disabled} onClick={openRegistration}>
           登记分区
         </button>
         <div className="asset-stats" aria-label="已登记资产统计">
@@ -490,7 +525,7 @@ export default function Assets({
         <Modal
           title="candidate-title"
           onCancel={() => {
-            if (!working) setRegisterOpen(false);
+            if (!working) closeRegistration();
           }}
         >
           <h2 id="candidate-title">选择分区登记</h2>
@@ -578,11 +613,7 @@ export default function Assets({
             ))}
           </section>
           <div className="dialog-actions">
-            <button
-              autoFocus
-              disabled={working}
-              onClick={() => setRegisterOpen(false)}
-            >
+            <button autoFocus disabled={working} onClick={closeRegistration}>
               关闭登记
             </button>
             <button

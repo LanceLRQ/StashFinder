@@ -1,10 +1,10 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import Assets from "./Assets";
+import Assets, { type AssetControls } from "./Assets";
 import Workspace from "./Workspace";
 import FileOperations from "./FileOperations";
 import Visuals from "./Visuals";
 import Settings from "./Settings";
-import type { AssetSnapshot } from "./asset-api";
+import type { Asset, AssetSnapshot } from "./asset-api";
 import Tasks from "./Tasks";
 import { IndexModeDialog } from "./IndexControls";
 import { taskKinds, taskLabels, useTasks } from "./task-api";
@@ -12,27 +12,12 @@ import {
   defaultPreferences,
   readPreferences,
   writePreferences,
-  type Page,
   type Preferences,
 } from "./settings-api";
-import logo from "./logo.svg";
 import "./desktop.css";
 
 const Development = import.meta.env.DEV ? lazy(() => import("./App")) : null;
-const navigation: { id: Page; label: string; path: string }[] = [
-  {
-    id: "overview",
-    label: "概览",
-    path: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
-  },
-  { id: "files", label: "文件", path: "M3 5h7l2 3h9v12H3z" },
-  {
-    id: "tasks",
-    label: "任务",
-    path: "m3 6 2 2 3-4 M11 6h10 m-18 9 2 2 3-4 M11 15h10",
-  },
-  { id: "settings", label: "设置", path: "M4 7h16 M4 17h16 M8 4v6 M16 14v6" },
-];
+const noAssets: Asset[] = [];
 
 export default function Desktop() {
   const [preferences, setPreferences] = useState(defaultPreferences);
@@ -40,19 +25,22 @@ export default function Desktop() {
   const [preferenceError, setPreferenceError] = useState("");
   const [saving, setSaving] = useState(false);
   const saveLock = useRef(false);
-  const [page, setPage] = useState<Page>("overview");
   const [snapshot, setSnapshot] = useState<AssetSnapshot | null>(null);
-  const [searchVisited, setSearchVisited] = useState(false);
-  const [searchRequest, setSearchRequest] = useState({ text: "", revision: 0 });
-  const [browseRequest, setBrowseRequest] = useState({
-    partition: "",
-    revision: 0,
+  const [deviceStatus, setDeviceStatus] = useState({
+    error: "",
+    working: false,
   });
-  const [development, setDevelopment] = useState(false);
-  const tasks = useTasks(loaded);
-  const [focusTask, setFocusTask] = useState("");
+  const deviceControls = useRef<AssetControls>(null);
+  const [searchRequest, setSearchRequest] = useState({ text: "", revision: 0 });
+  const [browseRequest, setBrowseRequest] = useState<{
+    partition: string;
+    revision: number;
+  }>();
+  const tasks = useTasks(true);
+  const [taskRequest, setTaskRequest] = useState({ id: "", revision: 0 });
   const [indexChoice, setIndexChoice] = useState("");
-  const partitions = (snapshot?.assets || []).map((a) => ({
+  const assets = snapshot?.assets ?? noAssets;
+  const partitions = assets.map((a) => ({
     id: a.registration.partition_id,
     name: a.registration.name,
     connection: a.connection,
@@ -70,10 +58,7 @@ export default function Desktop() {
     void readPreferences()
       .then(
         (value) => {
-          if (!active) return;
-          setPreferences(value);
-          setPage(value.start_page);
-          setSearchVisited(value.start_page === "files");
+          if (active) setPreferences(value);
         },
         (error) => {
           if (active) setPreferenceError(`设置读取失败：${String(error)}`);
@@ -100,14 +85,9 @@ export default function Desktop() {
     setSaving(false);
     saveLock.current = false;
   }
-  function navigate(next: Page) {
-    setDevelopment(false);
-    setPage(next);
-    if (next === "files") setSearchVisited(true);
-  }
-  function search(text: string) {
-    setSearchRequest((previous) => ({ text, revision: previous.revision + 1 }));
-    navigate("files");
+
+  function openTasks(id: string) {
+    setTaskRequest((previous) => ({ id, revision: previous.revision + 1 }));
   }
   const activity = (
     <>
@@ -115,8 +95,7 @@ export default function Desktop() {
         <h2>任务动态</h2>
         <button
           onClick={() => {
-            setFocusTask("");
-            navigate("tasks");
+            openTasks("");
           }}
         >
           全部
@@ -132,8 +111,7 @@ export default function Desktop() {
           <button
             className="task-name"
             onClick={() => {
-              setFocusTask(task.id);
-              navigate("tasks");
+              openTasks(task.id);
             }}
           >
             {partitions.find((p) => p.id === task.partition_id)?.name ||
@@ -172,155 +150,110 @@ export default function Desktop() {
       )}
     </>
   );
-  if (!loaded)
-    return (
-      <div className="desktop-loading" role="status">
-        正在读取设置…
-      </div>
-    );
-  const content = (
-    <div className={`desktop ${preferences.collapsed ? "rail-collapsed" : ""}`}>
-      <aside className="function-rail">
-        <div className="rail-brand">
-          <img src={logo} alt="" />
-          <span>StashFinder</span>
-        </div>
-        <button
-          className="rail-toggle"
-          aria-expanded={!preferences.collapsed}
-          disabled={saving}
-          title={preferences.collapsed ? "展开功能栏" : "收起功能栏"}
-          aria-label={preferences.collapsed ? "展开功能栏" : "收起功能栏"}
-          onClick={() =>
-            void save({ ...preferences, collapsed: !preferences.collapsed })
-          }
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4 5h16 M4 12h16 M4 19h16" />
-          </svg>
-        </button>
-        <nav aria-label="主功能">
-          {navigation.map((item) => (
-            <button
-              key={item.id}
-              title={item.label}
-              aria-label={item.label}
-              aria-current={
-                page === item.id && !development ? "page" : undefined
-              }
-              onClick={() => navigate(item.id)}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d={item.path} />
-              </svg>
-              <span>{item.label}</span>
-            </button>
-          ))}
-        </nav>
-        {Development && (
-          <button
-            className="development-entry"
-            title="开发验证"
-            onClick={() => setDevelopment(true)}
-          >
-            <span>开发验证</span>
-          </button>
-        )}
-      </aside>
-      <main className="desktop-main">
-        {preferenceError && (
-          <p role="alert" className="desktop-error preference-error">
-            {preferenceError}
-          </p>
-        )}
-        <div
-          className="desktop-page"
-          hidden={page !== "overview" || development}
-        >
-          <Assets
-            onSearch={search}
-            onBrowse={(partition) => {
-              setBrowseRequest((previous) => ({
-                partition,
-                revision: previous.revision + 1,
-              }));
-              navigate("files");
-            }}
-            onSnapshot={setSnapshot}
-            activity={activity}
-          />
-        </div>
-        {searchVisited && (
-          <div
-            className="desktop-page"
-            hidden={page !== "files" || development}
-          >
-            <Workspace
-              visible={page === "files" && !development}
-              assets={snapshot?.assets || []}
-              includePath={preferences.include_path}
-              categories={preferences.categories}
-              request={searchRequest}
-              browseRequest={browseRequest}
-              completedTasks={tasks.data?.tasks.filter(
-                (t) => t.state === "completed",
-              )}
-              automatic={tasks.data?.automatic}
-              paused={tasks.data?.paused}
-            />
-          </div>
-        )}
-        <div
-          className="desktop-page tasks-page"
-          hidden={page !== "tasks" || development}
-        >
-          {page === "tasks" && (
-            <Tasks
-              key={focusTask}
-              focusTask={focusTask}
-              data={tasks.data}
-              error={tasks.error}
-              onRefresh={tasks.refresh}
-              onChooseIndex={setIndexChoice}
-              partitions={partitions}
-            />
-          )}
-        </div>
-        {page === "settings" && !development && (
-          <Settings
-            preferences={preferences}
-            saving={saving}
-            onSave={save}
-            tasks={tasks.data}
-            taskError={tasks.error}
-            onTasksRefresh={tasks.refresh}
-          />
-        )}
-        {development && Development && (
-          <Suspense fallback={<p>正在加载验证工具…</p>}>
-            <Development />
-          </Suspense>
-        )}
-        {choicePartition && (
-          <IndexModeDialog
-            partitionId={indexChoice}
-            name={choicePartition.name}
-            eligible={!tasks.error && choicePartition.canChooseIndex}
-            ntfs
-            journalMissing
-            onClose={() => setIndexChoice("")}
-            onStarted={() => {
-              setIndexChoice("");
-              tasks.refresh();
-            }}
-          />
-        )}
-      </main>
-    </div>
-  );
   return (
     <Visuals>
-      <FileOperations>{content}</FileOperations>
+      <FileOperations>
+        <main className="desktop">
+          <Workspace
+            assets={assets}
+            includePath={preferences.include_path}
+            categories={preferences.categories}
+            request={searchRequest}
+            searchReady={loaded}
+            taskRevision={taskRequest.revision}
+            browseRequest={browseRequest}
+            completedTasks={tasks.data?.tasks.filter(
+              (t) => t.state === "completed",
+            )}
+            automatic={tasks.data?.automatic}
+            paused={tasks.data?.paused}
+            startupReady={
+              !!snapshot &&
+              !snapshot.error &&
+              !deviceStatus.error &&
+              (!snapshot.busy || assets.length > 0)
+            }
+            device={{
+              ...deviceStatus,
+              busy: !!snapshot?.busy || deviceStatus.working,
+              register: () => deviceControls.current?.register(),
+              refresh: () => deviceControls.current?.refresh(),
+              retry: () => deviceControls.current?.retry(),
+            }}
+            notice={
+              preferenceError && (
+                <p role="alert" className="desktop-error preference-error">
+                  {preferenceError}
+                </p>
+              )
+            }
+            panels={{
+              overview: (
+                <Assets
+                  ref={deviceControls}
+                  onSearch={(text) =>
+                    setSearchRequest((previous) => ({
+                      text,
+                      revision: previous.revision + 1,
+                    }))
+                  }
+                  onBrowse={(partition) =>
+                    setBrowseRequest((previous) => ({
+                      partition,
+                      revision: (previous?.revision ?? 0) + 1,
+                    }))
+                  }
+                  activity={activity}
+                  onSnapshot={setSnapshot}
+                  onStatus={setDeviceStatus}
+                />
+              ),
+              tasks: (
+                <Tasks
+                  key={taskRequest.revision}
+                  focusTask={taskRequest.id}
+                  data={tasks.data}
+                  error={tasks.error}
+                  onRefresh={tasks.refresh}
+                  onChooseIndex={setIndexChoice}
+                  partitions={partitions}
+                />
+              ),
+              settings: (
+                <Settings
+                  preferences={preferences}
+                  saving={saving || !loaded}
+                  onSave={save}
+                  tasks={tasks.data}
+                  taskError={tasks.error}
+                  onTasksRefresh={tasks.refresh}
+                />
+              ),
+              ...(Development && {
+                development: (
+                  <Suspense fallback={<p>正在加载验证工具…</p>}>
+                    <Development />
+                  </Suspense>
+                ),
+              }),
+            }}
+          />
+          {choicePartition && (
+            <IndexModeDialog
+              partitionId={indexChoice}
+              name={choicePartition.name}
+              eligible={!tasks.error && choicePartition.canChooseIndex}
+              ntfs
+              journalMissing
+              onClose={() => setIndexChoice("")}
+              onStarted={() => {
+                setIndexChoice("");
+                tasks.refresh();
+              }}
+            />
+          )}
+        </main>
+      </FileOperations>
     </Visuals>
   );
 }

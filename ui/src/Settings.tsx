@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import CategoryEditor from "./CategoryEditor";
 import CacheSettings from "./CacheSettings";
-import type { Page, Preferences, ServiceStatus } from "./settings-api";
+import type { Preferences, ServiceStatus } from "./settings-api";
 import { taskCommand, type TaskSnapshot } from "./task-api";
 
 export default function Settings({
@@ -20,7 +20,7 @@ export default function Settings({
   taskError: string;
   onTasksRefresh: () => void;
 }) {
-  const [category, setCategory] = useState("general");
+  const [category, setCategory] = useState("search");
   const [status, setStatus] = useState<ServiceStatus | null>(null);
   const [error, setError] = useState("");
   const [version, setVersion] = useState("");
@@ -85,7 +85,6 @@ export default function Settings({
     <div className="settings-page">
       <nav className="settings-nav" aria-label="设置分类">
         {[
-          ["general", "常规"],
           ["search", "搜索"],
           ["sync", "索引与同步"],
           ["cache", "缓存"],
@@ -131,40 +130,6 @@ export default function Settings({
               日志断档时自动校验；创建 USN
               日志仍需按分区授权。扫描模式在线监控变化，重连后完整校验。
             </p>
-          </>
-        )}
-        {category === "general" && (
-          <>
-            <label className="setting-row">
-              <span>启动页面</span>
-              <select
-                aria-label="启动页面"
-                value={preferences.start_page}
-                disabled={saving}
-                onChange={(e) =>
-                  void onSave({
-                    ...preferences,
-                    start_page: e.target.value as Page,
-                  })
-                }
-              >
-                <option value="overview">概览</option>
-                <option value="files">文件</option>
-                <option value="tasks">任务</option>
-                <option value="settings">设置</option>
-              </select>
-            </label>
-            <label className="setting-row">
-              <span>收起功能栏</span>
-              <input
-                type="checkbox"
-                checked={preferences.collapsed}
-                disabled={saving}
-                onChange={(e) =>
-                  void onSave({ ...preferences, collapsed: e.target.checked })
-                }
-              />
-            </label>
           </>
         )}
         {category === "search" && (

@@ -24,6 +24,11 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
+function openSettings() {
+  fireEvent.click(screen.getByRole("button", { name: "工具" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "设置" }));
+}
+
 test.each(["portable", "windows_service"])(
   "offers an explicit portable exit only for the portable backend: %s",
   async (mode) => {
@@ -98,29 +103,30 @@ test("saves preferences, restores them on restart, and retains saved values on f
     return undefined;
   });
   const view = render(<Desktop />);
-  fireEvent.click(await screen.findByRole("button", { name: "设置" }));
-  fireEvent.change(screen.getByLabelText("启动页面"), {
-    target: { value: "settings" },
-  });
-  await waitFor(() =>
-    expect(screen.getByLabelText("启动页面")).toHaveProperty(
-      "value",
-      "settings",
-    ),
-  );
+  openSettings();
+  const include = screen.getByLabelText("默认包含路径");
+  await waitFor(() => expect(include).toHaveProperty("disabled", false));
+  fireEvent.click(include);
+  await waitFor(() => expect(include).toHaveProperty("checked", false));
   view.unmount();
   render(<Desktop />);
   expect(
-    (await screen.findByRole("button", { name: "设置" })).getAttribute(
-      "aria-current",
+    screen.getByRole("tab", { name: "浏览", selected: true }),
+  ).toBeTruthy();
+  openSettings();
+  await waitFor(() =>
+    expect(screen.getByLabelText("默认包含路径")).toHaveProperty(
+      "checked",
+      false,
     ),
-  ).toBe("page");
-  expect(screen.getByLabelText("启动页面")).toHaveProperty("value", "settings");
-  fireEvent.click(screen.getByRole("button", { name: "搜索" }));
+  );
   fail = true;
   fireEvent.click(screen.getByLabelText("默认包含路径"));
   await screen.findByText(/磁盘写入失败/);
-  expect(screen.getByLabelText("默认包含路径")).toHaveProperty("checked", true);
+  expect(screen.getByLabelText("默认包含路径")).toHaveProperty(
+    "checked",
+    false,
+  );
 });
 
 test("shows actual version and service diagnostics, and can retry after a connection failure", async () => {
@@ -154,6 +160,7 @@ test("shows actual version and service diagnostics, and can retry after a connec
     }
   });
   render(<Desktop />);
+  openSettings();
   fireEvent.click(await screen.findByRole("button", { name: "关于与诊断" }));
   expect(await screen.findByText("0.1.0")).toBeTruthy();
   expect(await screen.findByText(/管道未连接/)).toBeTruthy();
@@ -210,6 +217,7 @@ test("disabling automatic updates requires confirmation and a failed save retain
     }
   });
   render(<Desktop />);
+  openSettings();
   fireEvent.click(await screen.findByRole("button", { name: "索引与同步" }));
   const toggle = await screen.findByRole("switch", {
     name: "自动更新已登记分区",
