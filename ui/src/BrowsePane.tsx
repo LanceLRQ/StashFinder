@@ -7,6 +7,7 @@ import {
 } from "./browse-api";
 import DirectoryTree from "./DirectoryTree";
 import FileList from "./FileList";
+import { fileViewOptions, type FileView } from "./file-view";
 import FileDetails from "./FileDetails";
 import FileContextMenu from "./FileContextMenu";
 import { useFileOperations } from "./FileOperations";
@@ -37,6 +38,8 @@ export default function BrowsePane({
   active = true,
   emptyState,
   onCommands,
+  view,
+  onView,
 }: {
   id: number;
   asset?: Asset;
@@ -57,6 +60,8 @@ export default function BrowsePane({
   automatic?: boolean;
   active?: boolean;
   onCommands?: (context: FileCommandContext | null) => void;
+  view: FileView;
+  onView: (view: FileView) => void;
   emptyState?: ReactNode;
 }) {
   const [parent, setParent] = useState(initialParent);
@@ -301,6 +306,7 @@ export default function BrowsePane({
     active,
     onCommands,
     [
+      ...fileViewOptions(view, onView),
       { label: "目录树", checked: tree, run: () => setTree((v) => !v) },
       { label: "预览窗格", checked: preview, run: () => setPreview((v) => !v) },
       {
@@ -497,6 +503,7 @@ export default function BrowsePane({
               {page && (
                 <FileList
                   active={active}
+                  view={view}
                   key={page.location.join(",")}
                   rows={page.entries}
                   context={context() || undefined}

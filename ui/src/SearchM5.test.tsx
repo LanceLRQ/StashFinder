@@ -39,6 +39,92 @@ function openPreview() {
   fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "预览窗格" }));
 }
 
+test.each([1600, 1_000_000])(
+  "changes thumbnail sizes without restarting %i search results or losing the visible file",
+  async (total) => {
+    mock("offline", total);
+    render(<SearchWithView partitions={[]} />);
+    const list = screen.getByLabelText("搜索结果列表");
+    const results = within(list);
+    const waitForFile = (name: string) =>
+      results.findByText(name, {}, { timeout: 5000 });
+    await waitForFile("file-0.txt");
+    Object.defineProperties(list, {
+      clientWidth: { value: 704, configurable: true },
+      clientHeight: { value: 500 },
+    });
+    fireEvent.resize(window);
+    const middle = total / 2;
+    const scale = (total * 64 - 500) / (Math.min(total * 64, 8_000_000) - 500);
+    fireEvent.scroll(list, {
+      target: { scrollTop: (middle * 64 + 7) / scale },
+    });
+    const name = `file-${middle}.txt`;
+    fireEvent.click(await waitForFile(name));
+    expect(screen.getByText("已选择 1 项")).toBeTruthy();
+    const menu = within(screen.getByRole("navigation", { name: "程序菜单" }));
+    const viewButton = menu.getByRole("button", { name: "查看" });
+    const sizes = ["小", "中", "大"];
+    const rowHeights = [82, 108, 176];
+    for (const [index, size] of sizes.entries()) {
+      fireEvent.click(viewButton);
+      expect(
+        menu
+          .getByRole("menuitemradio", {
+            name: index ? `缩略图（${sizes[index - 1]}图标）` : "详情",
+          })
+          .getAttribute("aria-checked"),
+      ).toBe("true");
+      fireEvent.click(
+        menu.getByRole("menuitemradio", { name: `缩略图（${size}图标）` }),
+      );
+      const grid = results.getByRole("listbox");
+      expect(list.style.getPropertyValue("--details-row-height")).toBe(
+        `${rowHeights[index]}px`,
+      );
+      const item = (await waitForFile(name)).closest('[role="option"]')!;
+      expect(item.getAttribute("aria-selected")).toBe("true");
+      expect(item.getAttribute("aria-posinset")).toBe(String(middle + 1));
+      expect(item.getAttribute("aria-setsize")).toBe(String(total));
+      expect(grid.querySelectorAll('[role="option"]').length).toBeLessThan(100);
+      expect(list.scrollTop).toBeGreaterThan(0);
+    }
+    // 704px fits three large tiles, 438px fits two. Keep the same result in view.
+    const previousTop = list.scrollTop;
+    Object.defineProperty(list, "clientWidth", {
+      value: 438,
+      configurable: true,
+    });
+    fireEvent.resize(window);
+    const item = (await waitForFile(name)).closest('[role="option"]')!;
+    expect(item.getAttribute("aria-selected")).toBe("true");
+    const expectedHeight = Math.ceil(total / 2) * 176;
+    const gridScale =
+      (expectedHeight - 500) / (Math.min(expectedHeight, 8_000_000) - 500);
+    const rowTop = Math.floor(middle / 2) * 176;
+    expect(list.scrollTop).toBeCloseTo(rowTop / gridScale);
+    if (total === 1600) expect(list.scrollTop).toBeGreaterThan(previousTop);
+    fireEvent.keyDown(list, { key: "End" });
+    await waitForFile(`file-${total - 1}.txt`);
+    fireEvent.keyDown(list, { key: "Home" });
+    fireEvent.click(await waitForFile("file-0.txt"));
+    fireEvent.keyDown(document, { key: "v", altKey: true });
+    fireEvent.click(menu.getByRole("menuitemradio", { name: "详情" }));
+    const firstRow = (await waitForFile("file-0.txt")).closest("tr");
+    expect(firstRow?.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(firstRow);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(
+          ([command, args]: any[]) =>
+            command === "index_request" && args.action.search_start,
+        ),
+    ).toHaveLength(1);
+  },
+  15000,
+);
+
 test("multi-selection preview uses shared facts only when the full selection is loaded", async () => {
   mock();
   render(<SearchWithView partitions={[]} />);

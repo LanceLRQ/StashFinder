@@ -4,6 +4,7 @@ import DetailsViewport from "./DetailsViewport";
 import RenameInput from "./RenameInput";
 import FileIcon from "./FileIcon";
 import { fileEditingKey, type EntryRef } from "./file-operations";
+import { thumbnailLayouts, type FileView } from "./file-view";
 
 const layout = { rowHeight: 34, overscan: 10 };
 const columns = [{ label: "名称" }, { label: "大小" }, { label: "修改时间" }];
@@ -26,6 +27,7 @@ export default function FileList({
   context,
   connection,
   active = true,
+  view = "details",
 }: {
   rows: FileRow[];
   selection: string[];
@@ -48,7 +50,10 @@ export default function FileList({
   context?: EntryRef;
   connection?: string;
   active?: boolean;
+  view?: FileView;
 }) {
+  const grid = view === "details" ? undefined : thumbnailLayouts[view];
+  const Item = grid ? "div" : "tr";
   const anchor = useRef(0);
   const dragging = useRef<{ x: number; y: number; started: boolean } | null>(
     null,
@@ -87,12 +92,13 @@ export default function FileList({
       label="目录文件列表"
       tableLabel="文件"
       layout={layout}
+      grid={grid}
       columns={columns}
       total={rows.length}
       onContextMenu={(e) => {
         if (
           onBlankContext &&
-          !(e.target as HTMLElement).closest("tr[data-index]")
+          !(e.target as HTMLElement).closest("[data-index]")
         ) {
           e.preventDefault();
           onBlankContext(e.clientX, e.clientY);
@@ -106,15 +112,42 @@ export default function FileList({
           else onSelect(rows.map((r) => r.entry.join(",")));
         }
       }}
-      row={(index, scrollToRow) => {
+      row={(index, scrollToRow, columns) => {
         const row = rows[index];
+        const name =
+          editing?.entry === row.entry.join(",") ? (
+            <RenameInput
+              name={row.name}
+              folder={row.kind === "folder"}
+              onSubmit={editing.onSubmit}
+              onCancel={editing.onCancel}
+            />
+          ) : (
+            row.name
+          );
+        const icon = (
+          <FileIcon
+            active={active}
+            name={row.name}
+            folder={row.kind === "folder"}
+            reference={context ? { ...context, entry: row.entry } : undefined}
+            connection={connection}
+            size={grid?.size}
+            thumbnail={!!grid}
+          />
+        );
         return (
-          <tr
+          <Item
             key={row.entry.join(",")}
             tabIndex={0}
             data-index={index}
-            aria-rowindex={index + 2}
+            role={grid ? "option" : undefined}
+            aria-rowindex={grid ? undefined : index + 2}
+            aria-posinset={grid ? index + 1 : undefined}
+            aria-setsize={grid ? rows.length : undefined}
             aria-selected={selected(row)}
+            className={grid ? "thumbnail-cell" : undefined}
+            title={grid ? row.name : undefined}
             onClick={(e) => {
               if (suppressClick.current) {
                 suppressClick.current = false;
@@ -160,7 +193,7 @@ export default function FileList({
             onDragStart={(e) => e.preventDefault()}
             onDoubleClick={() => onOpen(row)}
             onKeyDown={(e) => {
-              if (onFileKey?.(e)) return;
+              if (fileEditingKey(e) || onFileKey?.(e)) return;
               if (e.key === "Enter") {
                 e.preventDefault();
                 onOpen(row);
@@ -169,14 +202,21 @@ export default function FileList({
                 e.preventDefault();
                 choose(index, e.shiftKey, e.ctrlKey);
               }
-              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              const step =
+                e.key === "ArrowDown"
+                  ? columns
+                  : e.key === "ArrowUp"
+                    ? -columns
+                    : grid && e.key === "ArrowRight"
+                      ? 1
+                      : grid && e.key === "ArrowLeft"
+                        ? -1
+                        : 0;
+              if (step) {
                 e.preventDefault();
                 const target = Math.max(
                   0,
-                  Math.min(
-                    rows.length - 1,
-                    index + (e.key === "ArrowDown" ? 1 : -1),
-                  ),
+                  Math.min(rows.length - 1, index + step),
                 );
                 choose(target, e.shiftKey, false);
                 const sibling = e.currentTarget.parentElement?.querySelector(
@@ -197,36 +237,32 @@ export default function FileList({
               }
             }}
           >
-            <td title={row.name}>
-              <FileIcon
-                active={active}
-                name={row.name}
-                folder={row.kind === "folder"}
-                reference={
-                  context ? { ...context, entry: row.entry } : undefined
-                }
-                connection={connection}
-              />
-              {editing?.entry === row.entry.join(",") ? (
-                <RenameInput
-                  name={row.name}
-                  folder={row.kind === "folder"}
-                  onSubmit={editing.onSubmit}
-                  onCancel={editing.onCancel}
-                />
-              ) : (
-                row.name
-              )}
-            </td>
-            <td className="result-size">
-              {row.kind === "folder"
-                ? "—"
-                : row.size == null
-                  ? "未知"
-                  : `${BigInt(row.size).toLocaleString()} B`}
-            </td>
-            <td>{fileTime(row.modified)}</td>
-          </tr>
+            {grid ? (
+              <>
+                {icon}
+                {typeof name === "string" ? (
+                  <span className="thumbnail-name">{name}</span>
+                ) : (
+                  name
+                )}
+              </>
+            ) : (
+              <>
+                <td title={row.name}>
+                  {icon}
+                  {name}
+                </td>
+                <td className="result-size">
+                  {row.kind === "folder"
+                    ? "—"
+                    : row.size == null
+                      ? "未知"
+                      : `${BigInt(row.size).toLocaleString()} B`}
+                </td>
+                <td>{fileTime(row.modified)}</td>
+              </>
+            )}
+          </Item>
         );
       }}
     >

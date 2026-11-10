@@ -87,11 +87,24 @@ export function useTypeIcon(
   }, [key, context]);
   return state.key === key ? state.url : null;
 }
+
+const thumbnailQueue = new Set<() => void>();
+let thumbnailRequests = 0;
+function drainThumbnails() {
+  while (thumbnailRequests < 4 && thumbnailQueue.size) {
+    const start = thumbnailQueue.values().next().value!;
+    thumbnailQueue.delete(start);
+    thumbnailRequests++;
+    start();
+  }
+}
+
 export function useFileVisual(
   reference: EntryRef | undefined,
   kind: "icon" | "thumbnail",
   size: number,
   connection?: string,
+  queued = false,
 ) {
   const context = useVisuals();
   const key = JSON.stringify([
@@ -99,6 +112,7 @@ export function useFileVisual(
     kind,
     size,
     connection,
+    queued,
     context?.epoch,
   ]);
   const [state, setState] = useState<{
@@ -119,46 +133,61 @@ export function useFileVisual(
     }
     const requestId = crypto.randomUUID();
     setState({ key, image: null, phase: "waiting", error: "" });
-    void listen<{ request_id: string; phase: string }>(
-      "visual-progress",
-      (event) => {
-        if (live && !done && event.payload.request_id === requestId)
-          setState((previous) => ({ ...previous, phase: event.payload.phase }));
-      },
-    )
-      .then(async (stop) => {
-        if (!live) {
-          stop();
-          return;
-        }
-        unlisten = stop;
-        started = true;
-        const image = await invoke<VisualImage>("visual_preview", {
-          requestId,
-          reference,
-          kind,
-          size,
-        });
-        if (live) {
-          done = true;
-          stopListening();
-          setState({ key, image, phase: "", error: "" });
-        }
-      })
-      .catch((error) => {
-        if (live) {
-          done = true;
-          stopListening();
-          setState({
-            key,
-            image: null,
-            phase: "",
-            error: String(error).replace(/^Error: /, ""),
+    const request = () =>
+      void listen<{ request_id: string; phase: string }>(
+        "visual-progress",
+        (event) => {
+          if (live && !done && event.payload.request_id === requestId)
+            setState((previous) => ({
+              ...previous,
+              phase: event.payload.phase,
+            }));
+        },
+      )
+        .then(async (stop) => {
+          if (!live) {
+            stop();
+            return;
+          }
+          unlisten = stop;
+          started = true;
+          const image = await invoke<VisualImage>("visual_preview", {
+            requestId,
+            reference,
+            kind,
+            size,
           });
-        }
-      });
+          if (live) {
+            done = true;
+            stopListening();
+            setState({ key, image, phase: "", error: "" });
+          }
+        })
+        .catch((error) => {
+          if (live) {
+            done = true;
+            stopListening();
+            setState({
+              key,
+              image: null,
+              phase: "",
+              error: String(error).replace(/^Error: /, ""),
+            });
+          }
+        })
+        .finally(() => {
+          if (queued) {
+            thumbnailRequests--;
+            drainThumbnails();
+          }
+        });
+    if (queued) {
+      thumbnailQueue.add(request);
+      drainThumbnails();
+    } else request();
     return () => {
       live = false;
+      thumbnailQueue.delete(request);
       stopListening();
       if (started && !done)
         void invoke("visual_cancel", { requestId }).catch(() => {});

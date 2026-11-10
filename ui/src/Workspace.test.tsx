@@ -114,6 +114,54 @@ function setup() {
     />,
   );
 }
+
+test("directory thumbnail modes preserve focus, selection and the tab's layout", async () => {
+  setup();
+  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
+    target: { value: "p" },
+  });
+  const row = await screen.findByRole("row", { name: /notes.txt/ });
+  row.focus();
+  fireEvent.click(row);
+  const menu = screen.getByRole("button", { name: "查看" });
+  const choose = (name: string) => {
+    fireEvent.pointerDown(menu);
+    fireEvent.click(menu);
+    fireEvent.click(screen.getByRole("menuitemradio", { name }));
+  };
+  choose("缩略图（小图标）");
+  const item = screen.getByRole("option", { name: "notes.txt" });
+  expect(item.getAttribute("aria-selected")).toBe("true");
+  expect(document.activeElement).toBe(item);
+  choose("缩略图（中图标）");
+  choose("缩略图（大图标）");
+  expect(document.activeElement).toBe(
+    screen.getByRole("option", { name: "notes.txt" }),
+  );
+  fireEvent.change(screen.getByRole("searchbox"), {
+    target: { value: "notes" },
+  });
+  await screen.findByRole("tab", { name: "搜索" });
+  fireEvent.click(menu);
+  expect(
+    screen
+      .getByRole("menuitemradio", { name: "详情" })
+      .getAttribute("aria-checked"),
+  ).toBe("true");
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  fireEvent.click(screen.getByRole("tab", { name: "Movies" }));
+  expect(
+    screen
+      .getByRole("option", { name: "notes.txt" })
+      .getAttribute("aria-selected"),
+  ).toBe("true");
+  choose("详情");
+  expect(
+    screen
+      .getByRole("row", { name: /notes.txt/ })
+      .getAttribute("aria-selected"),
+  ).toBe("true");
+}, 15000);
 test("refreshes the current directory once from either workspace entry", async () => {
   setup();
   fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {

@@ -15,3 +15,65 @@
   padding: 0;
   border: 0;
 }
+.thumbnail-cells {
+  display: grid;
+  grid-auto-rows: var(--details-row-height);
+}
+.thumbnail-cell {
+  display: grid;
+  grid-auto-rows: max-content;
+  align-content: start;
+  justify-items: center;
+  gap: 2px;
+  min-width: 0;
+  margin: 2px;
+  padding: 4px;
+  border-radius: 4px;
+  outline-offset: -2px;
+  font-size: 12px;
+  user-select: none;
+}
+.thumbnail-cell:hover {
+  background: #f0f3f7;
+}
+.thumbnail-cell[aria-selected="true"] {
+  background: #e3edf8;
+}
+.thumbnail-cell:focus-visible,
+.virtual-result-row:focus-visible {
+  outline: 1px solid #386da7;
+}
+.thumbnail-name,
+.thumbnail-location {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.thumbnail-name {
+  line-height: 15px;
+}
+.thumbnail-location {
+  color: #647082;
+  font-size: 11px;
+  line-height: 13px;
+}
+.thumbnail-cell input {
+  min-width: 0;
+  max-width: 100%;
+  user-select: text;
+}
+.thumbnail-art {
+  display: grid;
+  place-items: center;
+  max-width: 100%;
+}
+.thumbnail-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.thumbnail-art .file-mark {
+  margin: 0;
+}

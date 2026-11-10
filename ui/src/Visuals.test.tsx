@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import Visuals from "./Visuals";
 import FileIcon from "./FileIcon";
 import FileDetails from "./FileDetails";
+import FileList from "./FileList";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -40,6 +41,83 @@ const image = (url = png) => ({
   source: "system_icon",
   historical: false,
   warning: null,
+});
+
+test("thumbnail grids reuse versioned cache requests, cancel the old size and fall back offline", async () => {
+  let resolveOld: (value: unknown) => void = () => {};
+  vi.mocked(invoke).mockImplementation(async (command, args: any) => {
+    if (command !== "visual_preview") return image();
+    if (args.size === 32 && args.reference.entry[0] === 2)
+      return new Promise((resolve) => {
+        resolveOld = resolve;
+      });
+    if (args.reference.entry[0] === 3) throw Error("缩略图缓存未命中");
+    return {
+      ...image(png + "medium"),
+      source: "local_cache",
+      historical: true,
+    };
+  });
+  const list = (view: "small" | "medium", active = true) => (
+    <Visuals>
+      <FileList
+        view={view}
+        rows={[row("hit.png", 2), row("miss.png", 3)]}
+        context={reference}
+        connection="offline"
+        active={active}
+        selection={[]}
+        onSelect={() => {}}
+        onOpen={() => {}}
+        next={null}
+        busy={false}
+        onMore={() => {}}
+      />
+    </Visuals>
+  );
+  const view = render(list("small"));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("visual_preview", {
+      requestId: expect.any(String),
+      reference,
+      size: 32,
+      kind: "thumbnail",
+    }),
+  );
+  view.rerender(list("medium"));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("visual_cancel", {
+      requestId: expect.any(String),
+    }),
+  );
+  await waitFor(() => {
+    expect(
+      screen
+        .getByRole("option", { name: "hit.png" })
+        .querySelector("img")
+        ?.getAttribute("src"),
+    ).toBe(png + "medium");
+    expect(
+      screen
+        .getByRole("option", { name: "miss.png" })
+        .querySelector("img")
+        ?.getAttribute("src"),
+    ).toBe(png);
+  });
+  await act(async () => resolveOld(image(png + "old")));
+  expect(
+    screen
+      .getByRole("option", { name: "hit.png" })
+      .querySelector("img")
+      ?.getAttribute("src"),
+  ).toBe(png + "medium");
+  view.rerender(list("medium", false));
+  await act(async () => {});
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "visual_preview"),
+  ).toHaveLength(4);
 });
 
 test("visible files share a system type-icon request without requiring source paths", async () => {

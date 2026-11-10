@@ -125,7 +125,12 @@ export function commandEnabled(action: MenuAction, facts: CommandFacts) {
       return online && count > 0 && sameParent;
   }
 }
-type ViewOption = { label: string; checked: boolean; run: () => void };
+type ViewOption = {
+  label: string;
+  checked: boolean;
+  radio?: boolean;
+  run: () => void;
+};
 export type FileCommandContext = {
   enabled: (action: MenuAction) => boolean;
   dispatch: (action: MenuAction) => void;

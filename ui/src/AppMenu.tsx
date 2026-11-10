@@ -9,6 +9,7 @@ export type MenuGroup = {
     disabled?: boolean;
     shortcut?: string;
     checked?: boolean;
+    radio?: boolean;
   }[];
 };
 
@@ -148,7 +149,11 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
                 <button
                   key={item.label}
                   role={
-                    item.checked === undefined ? "menuitem" : "menuitemcheckbox"
+                    item.radio
+                      ? "menuitemradio"
+                      : item.checked === undefined
+                        ? "menuitem"
+                        : "menuitemcheckbox"
                   }
                   tabIndex={-1}
                   aria-checked={item.checked}

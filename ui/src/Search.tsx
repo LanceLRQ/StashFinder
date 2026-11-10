@@ -11,7 +11,8 @@ import {
 import FileDetails from "./FileDetails";
 import SearchFilters from "./SearchFilters";
 import VirtualResults, { searchDetailsLayout } from "./VirtualResults";
-import { virtualScale, virtualWindow } from "./DetailsViewport";
+import { virtualWindow, type ViewportLayout } from "./DetailsViewport";
+import { fileViewOptions, thumbnailLayouts, type FileView } from "./file-view";
 import FileContextMenu from "./FileContextMenu";
 import RenameInput from "./RenameInput";
 import FileIcon from "./FileIcon";
@@ -123,6 +124,9 @@ export default function Search({
   const [unavailable, setUnavailable] = useState<string[]>([]);
   const [revision, setRevision] = useState(0);
   const [preview, setPreview] = useState(false);
+  const [view, setView] = useState<FileView>("details");
+  const grid = view === "details" ? undefined : thumbnailLayouts[view];
+  const Item = grid ? "div" : "tr";
   const [selection, setSelection] = useState<Selection>(emptySelection);
   const selectedSnapshot = useRef<{ index: number; hit: SearchHit } | null>(
     null,
@@ -144,13 +148,20 @@ export default function Search({
     logicalTop: 0,
     height: 500,
     lastScroll: 0,
+    layout: { ...searchDetailsLayout, columns: 1 },
   });
   const [restore, setRestore] = useState<{ logicalTop: number } | null>(null);
   const onPosition = useCallback(
-    (logicalTop: number, height: number, scrolling: boolean) => {
+    (
+      logicalTop: number,
+      height: number,
+      scrolling: boolean,
+      layout: ViewportLayout,
+    ) => {
       viewportPosition.current = {
         logicalTop,
         height,
+        layout,
         lastScroll: scrolling
           ? Date.now()
           : viewportPosition.current.lastScroll,
@@ -263,7 +274,7 @@ export default function Search({
           page.total,
           position.logicalTop,
           position.height,
-          searchDetailsLayout,
+          position.layout,
         );
         const rows = new Map<number, SearchHit>();
         let offset = start;
@@ -289,9 +300,9 @@ export default function Search({
         if (position !== viewportPosition.current) continue;
         nextCache = rows;
         setRestore({ logicalTop });
-        anchor.current = cursor.current = Math.floor(
-          logicalTop / searchDetailsLayout.rowHeight,
-        );
+        anchor.current = cursor.current =
+          Math.floor(logicalTop / position.layout.rowHeight) *
+          position.layout.columns;
         break;
       }
     } else {
@@ -561,7 +572,10 @@ export default function Search({
     menuAction,
     active,
     onCommands,
-    [{ label: "预览窗格", checked: preview, run: () => setPreview((v) => !v) }],
+    [
+      ...fileViewOptions(view, setView),
+      { label: "预览窗格", checked: preview, run: () => setPreview((v) => !v) },
+    ],
     !busy && !refreshing && editing === null
       ? () => setRevision((n) => n + 1)
       : undefined,
@@ -643,6 +657,7 @@ export default function Search({
       )}
       <div className="search-body" onClick={() => setMenu(null)}>
         <VirtualResults
+          grid={grid}
           sort={options.sort}
           descending={options.descending}
           onSort={(sort) =>
@@ -657,7 +672,7 @@ export default function Search({
           onRange={viewport}
           onPosition={onPosition}
           restore={restore}
-          onKeyDown={(e) => {
+          onKeyDown={(e, { columns, reveal, scrollTo }) => {
             if (fileEditingKey(e)) return;
             if (
               fileKey(e, dispatch, () => {
@@ -679,43 +694,95 @@ export default function Search({
               });
             }
             if (e.key === "Escape") setMenu(null);
-            if ((e.key === "ArrowDown" || e.key === "ArrowUp") && total) {
+            if (grid && (e.key === "Home" || e.key === "End") && total) {
               e.preventDefault();
-              const i = Math.max(
-                0,
-                Math.min(
-                  total - 1,
-                  cursor.current + (e.key === "ArrowDown" ? 1 : -1),
-                ),
-              );
+              e.currentTarget.focus({ preventScroll: true });
+              scrollTo(e.key === "Home" ? 0 : Infinity);
+            }
+            const step =
+              e.key === "ArrowDown"
+                ? columns
+                : e.key === "ArrowUp"
+                  ? -columns
+                  : grid && e.key === "ArrowRight"
+                    ? 1
+                    : grid && e.key === "ArrowLeft"
+                      ? -1
+                      : 0;
+            if (step && total) {
+              e.preventDefault();
+              const i = Math.max(0, Math.min(total - 1, cursor.current + step));
               choose(i, e.shiftKey, false);
-              const height = e.currentTarget.clientHeight || 500;
-              const { rowHeight } = searchDetailsLayout;
-              const scale = virtualScale(total, height, rowHeight);
-              const logicalOffset = i * rowHeight;
-              const virtualTop = e.currentTarget.scrollTop * scale;
-              if (
-                logicalOffset < virtualTop ||
-                logicalOffset > virtualTop + height - 100
-              )
-                e.currentTarget.scrollTop = logicalOffset / scale;
+              reveal(i);
+              if (grid) {
+                const list = e.currentTarget;
+                requestAnimationFrame(() =>
+                  list
+                    .querySelector<HTMLElement>(`[data-index="${i}"]`)
+                    ?.focus({ preventScroll: true }),
+                );
+              }
             }
             if (e.key === "Enter" && selectedRow) open(selectedRow);
           }}
           row={(i) => {
             const cached = cache.get(i);
             const r = cached ? currentHit(cached) : undefined;
+            const path = r
+              ? (r.connection === "online" ? r.mounts[0] || "" : "") +
+                r.file.path
+              : "";
+            const location = r ? `${r.partition_name} · ${path}` : "";
+            const icon = r && (
+              <FileIcon
+                active={active}
+                name={r.file.name}
+                folder={r.file.kind === "folder"}
+                connection={r.connection}
+                reference={{
+                  partition_id: r.partition_id,
+                  filesystem_id: r.filesystem_id,
+                  generation: String(r.generation),
+                  revision: String(r.revision),
+                  entry: r.file.entry,
+                }}
+                size={grid?.size}
+                thumbnail={!!grid}
+              />
+            );
+            const name =
+              r &&
+              (editing === i ? (
+                <RenameInput
+                  name={r.file.name}
+                  folder={r.file.kind === "folder"}
+                  onCancel={() => setEditing(null)}
+                  onSubmit={(name) => {
+                    setEditing(null);
+                    perform({ rename: name }, i);
+                  }}
+                />
+              ) : (
+                r.file.name
+              ));
             return (
-              <tr
+              <Item
                 key={i}
-                aria-rowindex={i + 2}
+                data-index={i}
+                tabIndex={-1}
+                role={grid ? "option" : undefined}
+                aria-rowindex={grid ? undefined : i + 2}
+                aria-posinset={grid ? i + 1 : undefined}
+                aria-setsize={grid ? total : undefined}
                 aria-selected={selected(i)}
-                className="virtual-result-row"
+                className={grid ? "thumbnail-cell" : "virtual-result-row"}
+                title={grid && r ? `${r.file.name}\n${location}` : undefined}
                 onClick={(e) => {
                   if (suppressClick.current) {
                     suppressClick.current = false;
                     return;
                   }
+                  if (grid) e.currentTarget.focus({ preventScroll: true });
                   choose(i, e.shiftKey, e.ctrlKey);
                 }}
                 onDoubleClick={() => {
@@ -755,7 +822,6 @@ export default function Search({
                 onContextMenu={(e) => {
                   if (!r) return;
                   e.preventDefault();
-                  e.currentTarget.tabIndex = -1;
                   e.currentTarget.focus();
                   if (!selected(i)) choose(i, false, false);
                   setMenu({
@@ -764,43 +830,30 @@ export default function Search({
                   });
                 }}
               >
-                {!r ? (
+                {grid ? (
+                  r ? (
+                    <>
+                      {icon}
+                      {typeof name === "string" ? (
+                        <span className="thumbnail-name">{name}</span>
+                      ) : (
+                        name
+                      )}
+                      <span className="thumbnail-location">{location}</span>
+                    </>
+                  ) : (
+                    "正在读取…"
+                  )
+                ) : !r ? (
                   <td colSpan={7}>正在读取…</td>
                 ) : (
                   <>
                     <td title={r.file.name}>
-                      <FileIcon
-                        active={active}
-                        name={r.file.name}
-                        folder={r.file.kind === "folder"}
-                        connection={r.connection}
-                        reference={{
-                          partition_id: r.partition_id,
-                          filesystem_id: r.filesystem_id,
-                          generation: String(r.generation),
-                          revision: String(r.revision),
-                          entry: r.file.entry,
-                        }}
-                      />
-                      {editing === i ? (
-                        <RenameInput
-                          name={r.file.name}
-                          folder={r.file.kind === "folder"}
-                          onCancel={() => setEditing(null)}
-                          onSubmit={(name) => {
-                            setEditing(null);
-                            perform({ rename: name }, i);
-                          }}
-                        />
-                      ) : (
-                        r.file.name
-                      )}
+                      {icon}
+                      {name}
                       {r.hard_link && <small>硬链接</small>}
                     </td>
-                    <td title={r.file.path}>
-                      {r.connection === "online" ? r.mounts[0] || "" : ""}
-                      {r.file.path}
-                    </td>
+                    <td title={r.file.path}>{path}</td>
                     <td>{r.partition_name}</td>
                     <td
                       className="result-size"
@@ -833,7 +886,7 @@ export default function Search({
                     <td>{r.duplicate_group || "—"}</td>
                   </>
                 )}
-              </tr>
+              </Item>
             );
           }}
         />

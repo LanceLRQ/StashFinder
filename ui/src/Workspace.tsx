@@ -8,6 +8,7 @@ import {
 import type { Asset } from "./asset-api";
 import type { SearchHit } from "./index-api";
 import BrowsePane from "./BrowsePane";
+import type { FileView } from "./file-view";
 import Search from "./Search";
 import WindowChrome from "./WindowChrome";
 import "./workspace.css";
@@ -29,6 +30,7 @@ type BrowseTab = {
   filesystem: string | null;
   parent: number[] | null;
   focusEntry?: number[];
+  view?: FileView;
 };
 const pages = {
   search: { id: 0, title: "搜索", kind: "search" },
@@ -657,6 +659,16 @@ export default function Workspace({
               ) : (
                 <BrowsePane
                   active={visible && active === tab.id}
+                  view={tab.view ?? "details"}
+                  onView={(view) =>
+                    setTabs((previous) =>
+                      previous.map((item) =>
+                        item.kind === "browse" && item.id === tab.id
+                          ? { ...item, view }
+                          : item,
+                      ),
+                    )
+                  }
                   key={`${tab.id}:${tab.partition}:${tab.filesystem}`}
                   id={tab.id}
                   asset={asset}
