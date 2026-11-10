@@ -1,3 +1,5 @@
+import { useLayoutEffect, useRef } from "react";
+
 export type EntryRef = {
   partition_id: string;
   filesystem_id: string;
@@ -56,40 +58,155 @@ export type ReportPage = {
   }[];
   next: number | null;
 };
-export function fileKey(
-  e: React.KeyboardEvent,
-  actions: {
-    copy: () => void;
-    cut: () => void;
-    paste?: () => void;
-    rename: () => void;
-    remove: (permanent: boolean) => void;
-    properties: () => void;
-    menu: () => void;
-  },
-) {
-  const target = e.target as HTMLElement;
-  if (
-    e.nativeEvent.isComposing ||
-    target.closest('input,textarea,select,[contenteditable="true"]')
-  )
-    return false;
-  const key = e.key.toLowerCase();
-  let action: (() => void) | undefined;
-  if (e.ctrlKey && !e.altKey) {
-    if (key === "c") action = actions.copy;
-    if (key === "x") action = actions.cut;
-    if (key === "v") action = actions.paste;
-  } else if (e.key === "F2") action = actions.rename;
-  else if (e.key === "Delete") action = () => actions.remove(e.shiftKey);
-  else if (e.altKey && e.key === "Enter") action = actions.properties;
-  else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10"))
-    action = actions.menu;
-  if (action) {
-    e.preventDefault();
-    e.stopPropagation();
-    action();
-    return true;
+export const fileCommands = {
+  open: ["打开", "Enter"],
+  open_with: ["打开方式...", ""],
+  browse_parent: ["在新标签页浏览所在目录", ""],
+  locate: ["在资源管理器显示", ""],
+  cut: ["剪切", "Ctrl+X"],
+  copy: ["复制文件", "Ctrl+C"],
+  paste: ["粘贴", "Ctrl+V"],
+  copy_name: ["复制名称", ""],
+  copy_path: ["复制路径", "Ctrl+Shift+C"],
+  rename: ["重命名", "F2"],
+  recycle: ["删除", "Delete"],
+  properties: ["属性", "Alt+Enter"],
+  more: ["更多...", ""],
+  delete: ["永久删除", "Shift+Delete"],
+} as const;
+export type MenuAction = keyof typeof fileCommands;
+export const editCommands: MenuAction[] = [
+  "cut",
+  "copy",
+  "paste",
+  "copy_name",
+  "copy_path",
+  "rename",
+  "recycle",
+  "properties",
+];
+export const contextCommands = (
+  Object.keys(fileCommands) as MenuAction[]
+).filter((action) => action !== "delete");
+export type CommandFacts = {
+  count: number;
+  online: boolean;
+  singleFile: boolean;
+  sameParent: boolean;
+  folder?: boolean;
+  paste?: boolean;
+  blocked?: boolean;
+};
+export function commandEnabled(action: MenuAction, facts: CommandFacts) {
+  if (facts.blocked) return false;
+  const { count, online, singleFile, sameParent, folder, paste } = facts;
+  switch (action) {
+    case "open":
+      return count === 1 && (online || !!folder);
+    case "open_with":
+      return online && singleFile;
+    case "browse_parent":
+      return count === 1;
+    case "locate":
+    case "rename":
+      return online && count === 1;
+    case "cut":
+    case "copy":
+    case "recycle":
+    case "delete":
+      return online && count > 0;
+    case "paste":
+      return !!paste;
+    case "copy_name":
+    case "copy_path":
+    case "properties":
+      return count > 0;
+    case "more":
+      return online && count > 0 && sameParent;
   }
-  return false;
+}
+type ViewOption = { label: string; checked: boolean; run: () => void };
+export type FileCommandContext = {
+  enabled: (action: MenuAction) => boolean;
+  dispatch: (action: MenuAction) => void;
+  views: ViewOption[];
+};
+export function useFileCommands(
+  facts: CommandFacts,
+  run: (action: MenuAction) => void,
+  active: boolean,
+  onContext: ((context: FileCommandContext | null) => void) | undefined,
+  views: ViewOption[],
+) {
+  const current = useRef({ facts, run, active, views });
+  useLayoutEffect(() => {
+    current.current = { facts, run, active, views };
+  });
+  const enabled = (action: MenuAction) =>
+    current.current.active && commandEnabled(action, current.current.facts);
+  const dispatch = (action: MenuAction) => {
+    if (enabled(action)) current.current.run(action);
+  };
+  const availability = editCommands
+    .map((id) => Number(commandEnabled(id, facts)))
+    .join("");
+  const checked = views.map((view) => Number(view.checked)).join("");
+  useLayoutEffect(() => {
+    if (!active || !onContext) return;
+    onContext({
+      enabled,
+      dispatch,
+      views: current.current.views.map((view, index) => ({
+        ...view,
+        run: () => current.current.views[index]?.run(),
+      })),
+    });
+    return () => onContext(null);
+  }, [active, onContext, availability, checked]);
+  return dispatch;
+}
+
+export function editableTarget(target: EventTarget | null) {
+  return (
+    target instanceof Element &&
+    !!target.closest(
+      'input,textarea,select,[contenteditable]:not([contenteditable="false"])',
+    )
+  );
+}
+
+export function fileKey(
+  e: React.KeyboardEvent | KeyboardEvent,
+  dispatch: (action: MenuAction) => void,
+  menu?: () => void,
+) {
+  if (e.metaKey || fileEditingKey(e)) return false;
+  const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+  const shortcut = [
+    e.ctrlKey ? "Ctrl+" : "",
+    e.altKey ? "Alt+" : "",
+    e.shiftKey ? "Shift+" : "",
+    key,
+  ].join("");
+  const action = (Object.keys(fileCommands) as MenuAction[]).find(
+    (id) => id !== "open" && fileCommands[id][1] === shortcut,
+  );
+  const context =
+    menu && (shortcut === "ContextMenu" || shortcut === "Shift+F10");
+  if (!action && !context) return false;
+  e.preventDefault();
+  e.stopPropagation();
+  if (action) dispatch(action);
+  else menu?.();
+  return true;
+}
+
+export function fileEditingKey(e: React.KeyboardEvent | KeyboardEvent) {
+  return (
+    e.defaultPrevented ||
+    ("nativeEvent" in e ? e.nativeEvent.isComposing : e.isComposing) ||
+    e.key === "Process" ||
+    e.keyCode === 229 ||
+    editableTarget(e.target)
+  );
 }

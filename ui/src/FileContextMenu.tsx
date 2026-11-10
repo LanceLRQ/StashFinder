@@ -1,18 +1,10 @@
 import { useEffect, useRef } from "react";
-export type MenuAction =
-  | "open"
-  | "open_with"
-  | "browse_parent"
-  | "locate"
-  | "cut"
-  | "copy"
-  | "copy_name"
-  | "copy_path"
-  | "rename"
-  | "recycle"
-  | "properties"
-  | "more"
-  | "paste";
+import {
+  commandEnabled,
+  contextCommands,
+  fileCommands,
+  type MenuAction,
+} from "./file-operations";
 export default function FileContextMenu({
   x,
   y,
@@ -22,6 +14,7 @@ export default function FileContextMenu({
   sameParent,
   folder = false,
   paste = false,
+  blocked = false,
   onAction,
   onClose,
 }: {
@@ -33,6 +26,7 @@ export default function FileContextMenu({
   sameParent: boolean;
   folder?: boolean;
   paste?: boolean;
+  blocked?: boolean;
   onAction: (action: MenuAction) => void;
   onClose: () => void;
 }) {
@@ -54,21 +48,15 @@ export default function FileContextMenu({
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
   }, [onClose]);
-  const items: [MenuAction, string, string, boolean][] = [
-    ["open", "打开", "Enter", count === 1 && (online || folder)],
-    ["open_with", "打开方式...", "", online && singleFile],
-    ["browse_parent", "在新标签页浏览所在目录", "", count === 1],
-    ["locate", "在资源管理器显示", "", online && count === 1],
-    ["cut", "剪切", "Ctrl+X", online && count > 0],
-    ["copy", "复制文件", "Ctrl+C", online && count > 0],
-    ["paste", "粘贴", "Ctrl+V", paste],
-    ["copy_name", "复制名称", "", count > 0],
-    ["copy_path", "复制路径", "", count > 0],
-    ["rename", "重命名", "F2", online && count === 1],
-    ["recycle", "删除", "Delete", online && count > 0],
-    ["properties", "属性", "Alt+Enter", count > 0],
-    ["more", "更多...", "", online && count > 0 && sameParent],
-  ];
+  const facts = {
+    count,
+    online,
+    singleFile,
+    sameParent,
+    folder,
+    paste,
+    blocked,
+  };
   return (
     <div
       ref={ref}
@@ -106,27 +94,30 @@ export default function FileContextMenu({
         }
       }}
     >
-      {items
-        .filter(([action]) => count > 0 || action === "paste")
-        .map(([action, label, key, enabled]) => (
-          <button
-            role="menuitem"
-            key={action}
-            disabled={!enabled}
-            title={
-              action === "more" && !sameParent
-                ? "跨目录选择暂不支持 Windows 原生菜单"
-                : undefined
-            }
-            onClick={() => {
-              onAction(action);
-              onClose();
-            }}
-          >
-            <span>{label}</span>
-            {key && <kbd>{key}</kbd>}
-          </button>
-        ))}
+      {contextCommands
+        .filter((action) => count > 0 || action === "paste")
+        .map((action) => {
+          const [label, key] = fileCommands[action];
+          return (
+            <button
+              role="menuitem"
+              key={action}
+              disabled={!commandEnabled(action, facts)}
+              title={
+                action === "more" && !sameParent
+                  ? "跨目录选择暂不支持 Windows 原生菜单"
+                  : undefined
+              }
+              onClick={() => {
+                onAction(action);
+                onClose();
+              }}
+            >
+              <span>{label}</span>
+              {key && <kbd aria-hidden="true">{key}</kbd>}
+            </button>
+          );
+        })}
     </div>
   );
 }

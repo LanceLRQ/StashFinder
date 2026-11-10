@@ -8,10 +8,13 @@ import {
 import DirectoryTree from "./DirectoryTree";
 import FileList from "./FileList";
 import FileDetails from "./FileDetails";
-import FileContextMenu, { type MenuAction } from "./FileContextMenu";
+import FileContextMenu from "./FileContextMenu";
 import { useFileOperations } from "./FileOperations";
 import {
   fileKey,
+  useFileCommands,
+  type FileCommandContext,
+  type MenuAction,
   type FileAction,
   type SelectionInput,
   type EntryRef,
@@ -33,6 +36,7 @@ export default function BrowsePane({
   automatic = false,
   active = true,
   emptyState,
+  onCommands,
 }: {
   id: number;
   asset?: Asset;
@@ -52,6 +56,7 @@ export default function BrowsePane({
   indexVersion?: string;
   automatic?: boolean;
   active?: boolean;
+  onCommands?: (context: FileCommandContext | null) => void;
   emptyState?: ReactNode;
 }) {
   const [parent, setParent] = useState(initialParent);
@@ -63,6 +68,9 @@ export default function BrowsePane({
     blank: boolean;
   } | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  useEffect(() => {
+    if (!active) setMenu(null);
+  }, [active]);
   const lastIndex = useRef(indexVersion);
   useEffect(() => {
     if (lastIndex.current !== indexVersion && editing === null) {
@@ -277,20 +285,28 @@ export default function BrowsePane({
     }
     perform(action);
   }
+  const facts = {
+    count,
+    online: !!online,
+    singleFile: count === 1 && selectedRows[0]?.kind === "file",
+    sameParent: true,
+    folder: count === 1 && selectedRows[0]?.kind === "folder",
+    paste: !!online && !!page && !page.needs_validation && !busy && !error,
+    blocked: editing !== null,
+  };
+  const dispatch = useFileCommands(facts, menuAction, active, onCommands, [
+    { label: "目录树", checked: tree, run: () => setTree((v) => !v) },
+    { label: "预览窗格", checked: preview, run: () => setPreview((v) => !v) },
+    {
+      label: "面包屑",
+      checked: breadcrumb,
+      run: () => setBreadcrumb((v) => !v),
+    },
+  ]);
   function fileKeys(e: React.KeyboardEvent) {
-    return fileKey(e, {
-      copy: () => perform("copy"),
-      cut: () => perform("cut"),
-      paste: () => {
-        if (online) menuAction("paste");
-      },
-      rename,
-      remove: (permanent) => perform(permanent ? "delete" : "recycle"),
-      properties: () => menuAction("properties"),
-      menu: () => {
-        const rect = (e.target as HTMLElement).getBoundingClientRect();
-        showMenu(rect.left + 20, rect.bottom, count === 0);
-      },
+    return fileKey(e, dispatch, () => {
+      const rect = (e.target as HTMLElement).getBoundingClientRect();
+      showMenu(rect.left + 20, rect.bottom, count === 0);
     });
   }
   async function more() {
@@ -607,17 +623,18 @@ export default function BrowsePane({
                 : ""}
             </span>
           </footer>
-          {menu && (
+          {active && menu && (
             <FileContextMenu
               x={menu.x}
               y={menu.y}
               count={menu.blank ? 0 : count}
-              online={!!online}
-              singleFile={count === 1 && selectedRows[0]?.kind === "file"}
-              sameParent
-              folder={count === 1 && selectedRows[0]?.kind === "folder"}
-              paste={menu.blank && !!online}
-              onAction={menuAction}
+              online={facts.online}
+              singleFile={facts.singleFile}
+              sameParent={facts.sameParent}
+              folder={facts.folder}
+              paste={menu.blank && facts.paste}
+              blocked={facts.blocked}
+              onAction={dispatch}
               onClose={() => {
                 setMenu(null);
               }}

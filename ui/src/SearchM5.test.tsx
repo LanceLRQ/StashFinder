@@ -205,7 +205,7 @@ test("keeps DOM rows bounded and requests distant result positions", async () =>
   expect(await screen.findByText("已选择 10,000,000 项")).toBeTruthy();
 });
 test("copies the full selection descriptor instead of the visible result cache", async () => {
-  mock();
+  mock("online");
   render(
     <FileOperations>
       <Search partitions={[]} />

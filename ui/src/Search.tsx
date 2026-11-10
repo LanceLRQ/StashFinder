@@ -11,13 +11,17 @@ import {
 import FileDetails from "./FileDetails";
 import SearchFilters from "./SearchFilters";
 import VirtualResults, { virtualScale } from "./VirtualResults";
-import FileContextMenu, { type MenuAction } from "./FileContextMenu";
+import FileContextMenu from "./FileContextMenu";
 import RenameInput from "./RenameInput";
 import FileIcon from "./FileIcon";
 import type { Asset } from "./asset-api";
 import { useFileOperations } from "./FileOperations";
 import {
+  fileEditingKey,
   fileKey,
+  useFileCommands,
+  type FileCommandContext,
+  type MenuAction,
   type FileAction,
   type SelectionInput,
 } from "./file-operations";
@@ -33,6 +37,7 @@ export default function Search({
   includePath = true,
   request,
   active = true,
+  onCommands,
   onLocate,
   categories = defaultCategories,
   context,
@@ -44,6 +49,7 @@ export default function Search({
   includePath?: boolean;
   request?: { text: string; revision: number };
   active?: boolean;
+  onCommands?: (context: FileCommandContext | null) => void;
   onLocate?: (hit: SearchHit, folder?: boolean) => void;
   categories?: Category[];
   context?: SearchContext;
@@ -113,11 +119,7 @@ export default function Search({
   );
   const anchor = useRef(0);
   const cursor = useRef(0);
-  const [menu, setMenu] = useState<{
-    x: number;
-    y: number;
-    row: SearchHit;
-  } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [cache, setCache] = useState<Map<number, SearchHit>>(new Map());
   const queryId = useRef<number | null>(null);
   const sequence = useRef(0);
@@ -426,6 +428,17 @@ export default function Search({
     }
     perform(action);
   }
+  const facts = {
+    count,
+    online,
+    sameParent,
+    singleFile: count === 1 && selectedRow?.file.kind === "file",
+    folder: count === 1 && selectedRow?.file.kind === "folder",
+    blocked: busy || editing !== null || queryId.current === null,
+  };
+  const dispatch = useFileCommands(facts, menuAction, active, onCommands, [
+    { label: "预览窗格", checked: preview, run: () => setPreview((v) => !v) },
+  ]);
   return (
     <div className="assets-app search-app">
       {onBack && <button onClick={onBack}>硬盘管理</button>}
@@ -526,24 +539,16 @@ export default function Search({
           revision={resultVersion}
           onRange={viewport}
           onKeyDown={(e) => {
+            if (fileEditingKey(e)) return;
             if (
-              fileKey(e, {
-                copy: () => perform("copy"),
-                cut: () => perform("cut"),
-                rename,
-                remove: (permanent) =>
-                  perform(permanent ? "delete" : "recycle"),
-                properties: () => menuAction("properties"),
-                menu: () => {
-                  if (selectedRow) {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    setMenu({
-                      x: rect.left + 20,
-                      y: rect.top + 45,
-                      row: selectedRow,
-                    });
-                  }
-                },
+              fileKey(e, dispatch, () => {
+                if (count) {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setMenu({
+                    x: rect.left + 20,
+                    y: rect.top + 45,
+                  });
+                }
               })
             )
               return;
@@ -633,7 +638,6 @@ export default function Search({
                   setMenu({
                     x: Math.min(e.clientX, window.innerWidth - 270),
                     y: Math.min(e.clientY, window.innerHeight - 60),
-                    row: r,
                   });
                 }}
               >
@@ -764,16 +768,17 @@ export default function Search({
           {missing ? `${missing.toLocaleString()} 项缺少查重元数据` : ""}
         </span>
       </footer>
-      {menu && (
+      {active && menu && (
         <FileContextMenu
           x={menu.x}
           y={menu.y}
           count={count}
-          online={online}
-          sameParent={sameParent}
-          singleFile={count === 1 && selectedRow?.file.kind === "file"}
-          folder={count === 1 && selectedRow?.file.kind === "folder"}
-          onAction={menuAction}
+          online={facts.online}
+          sameParent={facts.sameParent}
+          singleFile={facts.singleFile}
+          folder={facts.folder}
+          blocked={facts.blocked}
+          onAction={dispatch}
           onClose={() => setMenu(null)}
         />
       )}

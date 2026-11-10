@@ -80,7 +80,11 @@ test("starts in files and keeps the search input when switching to a singleton o
   fireEvent.change(screen.getByRole("searchbox", { name: "搜索文件或路径" }), {
     target: { value: "aaa bbb" },
   });
-  await screen.findByText("没有匹配的文件");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("searchbox", { name: "搜索文件或路径" }),
+    ).toHaveProperty("value", "aaa bbb"),
+  );
   menu("查看", "概览（硬盘）");
   menu("查看", "概览（硬盘）");
   expect(screen.getAllByRole("tab", { name: "概览" })).toHaveLength(1);

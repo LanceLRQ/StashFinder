@@ -3,18 +3,9 @@ import { afterEach, expect, test, vi } from "vitest";
 import { fileKey } from "./file-operations";
 afterEach(cleanup);
 test("file shortcuts leave text editing and IME composition untouched", () => {
-  const copy = vi.fn(),
-    remove = vi.fn();
-  const actions = {
-    copy,
-    remove,
-    cut: vi.fn(),
-    rename: vi.fn(),
-    properties: vi.fn(),
-    menu: vi.fn(),
-  };
+  const dispatch = vi.fn();
   render(
-    <div onKeyDown={(e) => fileKey(e, actions)}>
+    <div onKeyDown={(e) => fileKey(e, dispatch)}>
       <input aria-label="名称" />
       <button>列表</button>
     </div>,
@@ -27,14 +18,14 @@ test("file shortcuts leave text editing and IME composition untouched", () => {
     key: "Delete",
     isComposing: true,
   });
-  expect(remove).not.toHaveBeenCalled();
+  expect(dispatch).not.toHaveBeenCalled();
   fireEvent.keyDown(screen.getByRole("button"), {
     key: "Delete",
     shiftKey: true,
   });
-  expect(remove).toHaveBeenCalledWith(true);
+  expect(dispatch).toHaveBeenLastCalledWith("delete");
   fireEvent.keyDown(screen.getByRole("textbox"), { key: "c", ctrlKey: true });
-  expect(copy).not.toHaveBeenCalled();
+  expect(dispatch).toHaveBeenCalledTimes(1);
   fireEvent.keyDown(screen.getByRole("button"), { key: "c", ctrlKey: true });
-  expect(copy).toHaveBeenCalledOnce();
+  expect(dispatch).toHaveBeenLastCalledWith("copy");
 });

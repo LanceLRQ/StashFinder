@@ -14,6 +14,12 @@ import "./workspace.css";
 import type { Category, SearchContext } from "./search-options";
 import { readDirectory, type DirectoryPage } from "./browse-api";
 import AppMenu, { type MenuGroup } from "./AppMenu";
+import {
+  editCommands,
+  fileCommands,
+  fileKey,
+  type FileCommandContext,
+} from "./file-operations";
 
 type BrowseTab = {
   kind: "browse";
@@ -130,6 +136,7 @@ export default function Workspace({
     "partition" | "filesystem" | "parent" | "title"
   > | null>(null);
   const [searchContext, setSearchContext] = useState<SearchContext>();
+  const [commands, setCommands] = useState<FileCommandContext | null>(null);
   const location = useCallback(
     (id: number, page: DirectoryPage, partition: string, isActive: boolean) => {
       locations.current.set(id, page);
@@ -355,8 +362,11 @@ export default function Workspace({
         root.current.closest("[hidden]") ||
         e.isComposing ||
         e.keyCode === 229 ||
+        e.key === "Process" ||
         e.defaultPrevented ||
-        document.querySelector("dialog[open]")
+        document.querySelector(
+          'dialog[open], [role="dialog"], [role="alertdialog"]',
+        )
       )
         return;
       if (e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "f") {
@@ -400,10 +410,16 @@ export default function Workspace({
         );
         return;
       }
+      if (
+        commands &&
+        !(e.target instanceof Element && e.target.closest('[role="menu"]'))
+      ) {
+        fileKey(e, commands.dispatch);
+      }
     }
     document.addEventListener("keydown", keyDown);
     return () => document.removeEventListener("keydown", keyDown);
-  }, [active, tabs, assets]);
+  }, [active, tabs, assets, commands]);
   useEffect(() => {
     root.current
       ?.querySelector('[role="tab"][aria-selected="true"]')
@@ -420,6 +436,7 @@ export default function Workspace({
   const groups: MenuGroup[] = [
     {
       label: "文件",
+      accessKey: "f",
       items: [
         { label: "新建浏览标签页", shortcut: "Ctrl+T", run: add },
         { label: "关闭标签页", shortcut: "Ctrl+W", run: () => close(active) },
@@ -436,11 +453,26 @@ export default function Workspace({
       ],
     },
     {
+      label: "编辑",
+      accessKey: "e",
+      items: editCommands.map((id) => ({
+        label: fileCommands[id][0],
+        shortcut: fileCommands[id][1],
+        disabled: !commands?.enabled(id),
+        run: () => commands?.dispatch(id),
+      })),
+    },
+    {
       label: "查看",
-      items: [{ label: "概览（硬盘）", run: () => openPage("overview") }],
+      accessKey: "v",
+      items: [
+        { label: "概览（硬盘）", run: () => openPage("overview") },
+        ...(commands?.views ?? []),
+      ],
     },
     {
       label: "工具",
+      accessKey: "t",
       items: [
         { label: "任务", run: () => openPage("tasks") },
         { label: "设置", run: () => openPage("settings") },
@@ -541,6 +573,7 @@ export default function Workspace({
                   initialParent={tab.parent}
                   focusEntry={tab.focusEntry}
                   onLocation={location}
+                  onCommands={setCommands}
                   emptyState={
                     device &&
                     (startupReady && !assets.length ? (
@@ -633,6 +666,7 @@ export default function Workspace({
               includePath={includePath}
               request={query}
               active={visible && active === 0}
+              onCommands={setCommands}
               onLocate={locate}
               categories={categories}
               indexVersion={completedTasks

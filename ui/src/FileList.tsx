@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { fileTime, type FileRow } from "./browse-api";
 import RenameInput from "./RenameInput";
 import FileIcon from "./FileIcon";
-import type { EntryRef } from "./file-operations";
+import { fileEditingKey, type EntryRef } from "./file-operations";
 
 export default function FileList({
   rows,
@@ -96,7 +96,7 @@ export default function FileList({
       }}
       tabIndex={0}
       onKeyDown={(e) => {
-        if (!e.defaultPrevented && onFileKey?.(e)) return;
+        if (fileEditingKey(e) || onFileKey?.(e)) return;
         if (e.ctrlKey && e.key.toLowerCase() === "a") {
           e.preventDefault();
           if (onSelectAll) onSelectAll();

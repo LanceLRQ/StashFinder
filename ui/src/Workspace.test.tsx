@@ -134,51 +134,189 @@ test("published index changes refresh the current directory without changing its
   ).toBe("true");
 });
 
-test("keyboard paste keeps pending-index feedback when automatic updates are disabled", async () => {
-  vi.mocked(readDirectory).mockResolvedValue(root);
-  vi.mocked(invoke).mockImplementation(async (command) =>
-    command === "file_paste"
-      ? "完成 1 项"
-      : command === "file_report"
-        ? {
-            id: 1,
-            total: 1,
-            completed: 1,
-            rows: [
-              {
-                index: 0,
-                source: "new.txt",
-                state: "completed",
-                destination: "Movies\\new.txt",
-                error: null,
-                note: null,
-              },
-            ],
-            next: null,
-          }
-        : undefined,
-  );
-  render(
-    <FileOperations>
-      <Workspace
-        assets={[{ ...asset, connection: "online" }]}
-        includePath
-        request={{ text: "", revision: 0 }}
-        automatic={false}
-      />
-    </FileOperations>,
-  );
-  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
-    target: { value: "p" },
-  });
-  await screen.findByRole("row", { name: /notes.txt/ });
-  fireEvent.keyDown(screen.getByLabelText("目录文件列表"), {
-    key: "v",
-    ctrlKey: true,
-  });
-  expect(await screen.findByText("文件操作已结束，索引待更新")).toBeTruthy();
-  expect(screen.getByRole("row", { name: /notes.txt/ })).toBeTruthy();
-});
+test.each(["online", "offline"] as const)(
+  "routes Edit, context menu and keyboard to the same %s selection",
+  async (connection) => {
+    vi.mocked(readDirectory).mockResolvedValue(root);
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "file_prepare")
+        return {
+          id: 7,
+          count: 2,
+          names: ["Films", "notes.txt"],
+          same_parent: true,
+          single_file: false,
+        };
+      if (command === "file_report")
+        return { id: 7, total: 2, completed: 2, rows: [], next: null };
+      return "已复制";
+    });
+    render(
+      <FileOperations>
+        <Workspace
+          assets={[{ ...asset, connection }]}
+          includePath
+          request={{ text: "", revision: 0 }}
+          panels={{ overview: <p>概览面板</p> }}
+        />
+      </FileOperations>,
+    );
+    const edit = screen.getByRole("button", { name: "编辑" });
+    fireEvent.click(edit);
+    expect(screen.getByRole("menuitem", { name: "复制路径" })).toHaveProperty(
+      "ariaDisabled",
+      "true",
+    );
+    expect(screen.getByRole("menuitem", { name: "粘贴" })).toHaveProperty(
+      "ariaDisabled",
+      "true",
+    );
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
+      target: { value: "p" },
+    });
+    const notes = await screen.findByRole("row", { name: /notes.txt/ });
+    const films = screen.getByRole("row", { name: /Films/ });
+    const list = screen.getByLabelText("目录文件列表");
+    fireEvent.click(films);
+    fireEvent.click(notes, { ctrlKey: true });
+    const selection = {
+      origin: {
+        kind: "directory",
+        context: {
+          partition_id: "p",
+          filesystem_id: "fs",
+          generation: "1",
+          revision: "2",
+          entry: [1],
+        },
+        all: false,
+      },
+      entries: [[2], [3]],
+      positions: [],
+    };
+    for (const source of ["edit", "context", "keyboard"]) {
+      if (source === "edit") {
+        fireEvent.click(edit);
+        expect(
+          screen
+            .getByRole("menuitem", { name: "复制文件" })
+            .getAttribute("aria-disabled"),
+        ).toBe(String(connection === "offline"));
+        expect(
+          screen
+            .getByRole("menuitem", { name: "重命名" })
+            .getAttribute("aria-disabled"),
+        ).toBe("true");
+        expect(
+          screen
+            .getByRole("menuitem", { name: "粘贴" })
+            .getAttribute("aria-disabled"),
+        ).toBe(String(connection === "offline"));
+        fireEvent.click(screen.getByRole("menuitem", { name: "复制路径" }));
+      } else if (source === "context") {
+        fireEvent.contextMenu(notes);
+        expect(
+          screen.getByRole("menuitem", { name: "复制文件" }),
+        ).toHaveProperty("disabled", connection === "offline");
+        fireEvent.click(screen.getByRole("menuitem", { name: "复制路径" }));
+      } else {
+        fireEvent.keyDown(list, { key: "C", ctrlKey: true, shiftKey: true });
+      }
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("file_run", {
+          id: 7,
+          action: "copy_path",
+        }),
+      );
+      expect(invoke).toHaveBeenCalledWith("file_prepare", {
+        input: selection,
+        recordsOnly: true,
+      });
+      vi.mocked(invoke).mockClear();
+    }
+    const shortcut = { key: "C", ctrlKey: true, shiftKey: true };
+    expect(fireEvent.keyDown(screen.getByRole("searchbox"), shortcut)).toBe(
+      true,
+    );
+    expect(fireEvent.keyDown(list, { ...shortcut, isComposing: true })).toBe(
+      true,
+    );
+    expect(fireEvent.keyDown(list, { ...shortcut, keyCode: 229 })).toBe(true);
+    expect(invoke).not.toHaveBeenCalledWith("file_prepare", expect.anything());
+    fireEvent.click(screen.getByRole("button", { name: "查看" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "概览（硬盘）" }));
+    fireEvent.click(edit);
+    expect(screen.getByRole("menuitem", { name: "复制路径" })).toHaveProperty(
+      "ariaDisabled",
+      "true",
+    );
+  },
+);
+
+test.each(["keyboard", "edit"])(
+  "%s paste uses the open directory and keeps pending-index feedback",
+  async (source) => {
+    vi.mocked(readDirectory).mockResolvedValue(root);
+    vi.mocked(invoke).mockImplementation(async (command) =>
+      command === "file_paste"
+        ? "完成 1 项"
+        : command === "file_report"
+          ? {
+              id: 1,
+              total: 1,
+              completed: 1,
+              rows: [
+                {
+                  index: 0,
+                  source: "new.txt",
+                  state: "completed",
+                  destination: "Movies\\new.txt",
+                  error: null,
+                  note: null,
+                },
+              ],
+              next: null,
+            }
+          : undefined,
+    );
+    render(
+      <FileOperations>
+        <Workspace
+          assets={[{ ...asset, connection: "online" }]}
+          includePath
+          request={{ text: "", revision: 0 }}
+          automatic={false}
+          panels={{ overview: <p>概览面板</p> }}
+        />
+      </FileOperations>,
+    );
+    fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
+      target: { value: "p" },
+    });
+    await screen.findByRole("row", { name: /notes.txt/ });
+    if (source === "keyboard") {
+      fireEvent.keyDown(screen.getByLabelText("目录文件列表"), {
+        key: "v",
+        ctrlKey: true,
+      });
+    } else {
+      fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "粘贴" }));
+    }
+    expect(await screen.findByText("文件操作已结束，索引待更新")).toBeTruthy();
+    expect(invoke).toHaveBeenCalledWith("file_paste", {
+      target: {
+        partition_id: "p",
+        filesystem_id: "fs",
+        generation: "1",
+        revision: "2",
+        entry: [1],
+      },
+    });
+    expect(screen.getByRole("row", { name: /notes.txt/ })).toBeTruthy();
+  },
+);
 test("keeps independent directory selection and scroll while a single search tab is reused", async () => {
   setup();
   fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {

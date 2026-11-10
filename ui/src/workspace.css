@@ -164,6 +164,30 @@
 .app-menu-popup button span {
   color: #566476;
 }
+.app-menu button:focus-visible,
+.app-menu-popup:focus-visible {
+  outline: 2px solid #315c9b;
+  outline-offset: -2px;
+}
+.app-menu-popup .menu-check {
+  display: inline-grid;
+  grid-template-columns: 1em auto;
+  gap: 6px;
+  color: inherit;
+}
+@media (forced-colors: active) {
+  .app-menu-group > button[aria-expanded="true"],
+  .app-menu-popup {
+    border: 1px solid ButtonText;
+  }
+  .app-menu button:focus-visible,
+  .app-menu-popup:focus-visible {
+    outline-color: Highlight;
+  }
+  .app-menu-popup button[aria-disabled="true"] {
+    color: GrayText;
+  }
+}
 .tree-row.other-partition {
   padding-left: 24px;
 }
