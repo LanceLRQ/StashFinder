@@ -256,14 +256,14 @@ test.each([1600, 1_000_000])(
     const rendered = () =>
       table.querySelectorAll("tbody tr[aria-rowindex]").length;
     const [before, after] = spacers();
-    expect(parseFloat(before.style.height)).toBeCloseTo(
-      physicalTop - 8 * 64 - 17,
+    expect(parseFloat(before.style.height)).toBe(
+      Math.round(physicalTop - 8 * 64 - 17),
     );
     expect(
       parseFloat(before.style.height) +
         rendered() * 64 +
         parseFloat(after.style.height),
-    ).toBeCloseTo(content);
+    ).toBe(content);
     fireEvent.scroll(list, { target: { scrollTop: content - height } });
     await screen.findByText(`file-${total - 1}.txt`);
     expect(table.getAttribute("aria-rowcount")).toBe(String(total + 1));

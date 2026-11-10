@@ -40,10 +40,13 @@ export function virtualWindow(
     start + Math.ceil(height / rowHeight) + 2 * overscan,
   );
   const rowsHeight = (end - start) * rowHeight;
-  // Keep the fractional row offset while the physical scrollbar spans the whole result set.
+  // Round once so Chromium's independent spacer rounding cannot change the scroll height.
   const before = Math.max(
     0,
-    Math.min(top - (clamped - start * rowHeight), content - rowsHeight),
+    Math.min(
+      Math.round(top - (clamped - start * rowHeight)),
+      content - rowsHeight,
+    ),
   );
   const after = Math.max(0, content - before - rowsHeight);
   return { start, end, top, logicalTop: clamped, before, after };
