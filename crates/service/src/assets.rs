@@ -264,7 +264,11 @@ fn build_snapshot(
                         row.observation.candidate_id = current.candidate_id.clone();
                         if update && row.state == "ready" {
                             match db.observe(&row.partition_id, current) {
-                                Ok(()) => row = db.get(&row.partition_id)?,
+                                Ok(true) => row = db.get(&row.partition_id)?,
+                                Ok(false) => {
+                                    asset.capacity_error =
+                                        Some("索引写入中，容量保留上次快照".into());
+                                }
                                 Err(error) => asset.error = Some(format!("{error:#}")),
                             }
                         }

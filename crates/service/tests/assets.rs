@@ -45,6 +45,72 @@ fn settled(assets: &Assets) -> Snapshot {
 }
 
 #[test]
+fn index_writer_does_not_make_device_refresh_fail() {
+    let root = tempfile::tempdir().unwrap();
+    let fixtures = Arc::new(Mutex::new(vec![observation()]));
+    let source = fixtures.clone();
+    let assets = Assets::start(root.path().into(), move || {
+        Ok(source.lock().unwrap().clone())
+    });
+    let snapshot = settled(&assets);
+    assets
+        .submit(Action::Register {
+            version: snapshot.version,
+            candidate_id: "volume-a".into(),
+            name: "A".into(),
+            allow_weak: false,
+        })
+        .unwrap();
+    let registered = settled(&assets);
+    let catalog = stashfinder_store::catalog::Catalog::read(root.path()).unwrap();
+    let path = catalog
+        .volume_path(&registered.assets[0].registration.filesystem_id)
+        .unwrap();
+    let mut writer = rusqlite::Connection::open(path).unwrap();
+    let transaction = writer
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .unwrap();
+    fixtures.lock().unwrap()[0].capacity.as_mut().unwrap().free = 250;
+
+    assets.submit(Action::Refresh).unwrap();
+    let deferred = settled(&assets);
+    assert!(deferred.error.is_none());
+    assert_eq!(deferred.assets[0].connection, "online");
+    assert!(
+        deferred.assets[0].error.is_none(),
+        "{:?}",
+        deferred.assets[0].error
+    );
+    assert!(deferred.assets[0].capacity_error.is_some());
+    assert_eq!(
+        deferred.assets[0]
+            .registration
+            .observation
+            .capacity
+            .as_ref()
+            .unwrap()
+            .free,
+        500
+    );
+
+    transaction.commit().unwrap();
+    assets.submit(Action::Refresh).unwrap();
+    let refreshed = settled(&assets);
+    assert!(refreshed.assets[0].error.is_none());
+    assert!(refreshed.assets[0].capacity_error.is_none());
+    assert_eq!(
+        refreshed.assets[0]
+            .registration
+            .observation
+            .capacity
+            .as_ref()
+            .unwrap()
+            .free,
+        250
+    );
+}
+
+#[test]
 fn replaced_filesystem_is_historical_and_new_instance_requires_registration() {
     let root = tempfile::tempdir().unwrap();
     let fixtures = Arc::new(Mutex::new(vec![observation()]));

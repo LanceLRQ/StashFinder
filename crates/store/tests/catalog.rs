@@ -81,6 +81,43 @@ fn observed(partition: &str) -> Observation {
 }
 
 #[test]
+fn observation_defers_during_index_write_and_recovers_on_next_refresh() {
+    let root = tempfile::tempdir().unwrap();
+    let mut catalog = Catalog::open(root.path()).unwrap();
+    let row = catalog.prepare(&observed("busy"), "Busy").unwrap();
+    catalog.finish(&row.partition_id).unwrap();
+    let before = catalog.get(&row.partition_id).unwrap();
+    let path = catalog.volume_path(&row.filesystem_id).unwrap();
+    let mut writer = rusqlite::Connection::open(&path).unwrap();
+    let transaction = writer
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .unwrap();
+    let mut fresh = observed("busy");
+    fresh.capacity.as_mut().unwrap().free = 100;
+    fresh.capacity.as_mut().unwrap().sampled_at = 456;
+    fresh.mounts = vec!["Y:\\".into()];
+
+    // A held index transaction must not turn an online partition into an error.
+    assert!(!catalog.observe(&row.partition_id, &fresh).unwrap());
+    let deferred = catalog.get(&row.partition_id).unwrap();
+    assert_eq!(deferred.observation.mounts, ["X:\\"]);
+    assert_eq!(deferred.observation.capacity.unwrap().sampled_at, 123);
+    assert_eq!(deferred.last_seen, before.last_seen);
+    catalog.health(&row.filesystem_id).unwrap();
+    transaction.commit().unwrap();
+
+    assert!(catalog.observe(&row.partition_id, &fresh).unwrap());
+    let updated = catalog.get(&row.partition_id).unwrap();
+    assert_eq!(updated.observation.mounts, ["Y:\\"]);
+    assert_eq!(updated.observation.capacity.unwrap().free, 100);
+    let volume = stashfinder_store::volume::Volume::open(&path).unwrap();
+    assert_eq!(volume.capacity().unwrap().unwrap().sampled_at, 456);
+    let saved: Registration = serde_json::from_str(&volume.manifest().unwrap()).unwrap();
+    assert_eq!(saved.observation.mounts, ["Y:\\"]);
+    assert_eq!(saved.observation.capacity.unwrap().free, 100);
+}
+
+#[test]
 fn interrupted_registration_recovers_and_rename_survives_restart() {
     let root = tempfile::tempdir().unwrap();
     let mut db = Catalog::open(root.path()).unwrap();

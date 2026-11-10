@@ -302,7 +302,8 @@ impl Catalog {
             .context("名称已保存，但恢复副本尚未同步")
     }
 
-    pub fn observe(&mut self, partition: &str, observation: &Observation) -> Result<()> {
+    /// Returns false when the index writer owns the partition store; retry on the next refresh.
+    pub fn observe(&mut self, partition: &str, observation: &Observation) -> Result<bool> {
         let mut row = self.get(partition)?;
         ensure!(row.state == "ready", "历史记录不能自动更新");
         self.health(&row.filesystem_id)?;
@@ -311,6 +312,21 @@ impl Catalog {
             "分区身份未确认"
         );
         let child = Volume::open(&self.volume_path(&row.filesystem_id)?)?;
+        // Capacity and the recovery manifest are one short, opportunistic write.
+        // Do not compete with an index transaction or expose its lock as device failure.
+        child.db.busy_timeout(std::time::Duration::ZERO)?;
+        let tx = match rusqlite::Transaction::new_unchecked(
+            &child.db,
+            rusqlite::TransactionBehavior::Immediate,
+        ) {
+            Ok(tx) => tx,
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.code == rusqlite::ErrorCode::DatabaseBusy =>
+            {
+                return Ok(false);
+            }
+            Err(error) => return Err(error.into()),
+        };
         if let Some(capacity) = &observation.capacity {
             child.set_capacity(capacity)?;
         }
@@ -326,7 +342,9 @@ impl Catalog {
                 row.filesystem_id
             ],
         )?;
-        self.sync_manifest(&row)
+        child.set_manifest(&serde_json::to_string(&row)?)?;
+        tx.commit()?;
+        Ok(true)
     }
 
     pub fn archive(&mut self, partition: &str) -> Result<()> {

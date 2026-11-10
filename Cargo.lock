@@ -3029,6 +3029,7 @@ name = "stashfinder-service"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "rusqlite",
  "serde_json",
  "stashfinder-core",
  "stashfinder-store",
