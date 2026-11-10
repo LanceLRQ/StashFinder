@@ -20,7 +20,11 @@ impl Source for FastFixture {
         Ok(Some(Journal {
             id: 1,
             first: 0,
-            next: if self.failure == Some("replay") && self.journals.get() > 1 {
+            next: if matches!(self.failure, Some("paged_delete" | "missing" | "reused"))
+                && self.journals.get() > 1
+            {
+                300
+            } else if self.failure == Some("replay") && self.journals.get() > 1 {
                 200
             } else {
                 100
@@ -88,7 +92,11 @@ impl Source for FastFixture {
         consume(&[entry(40, "legacy.txt", false, 7)])
     }
     fn object(&self, id: u64) -> anyhow::Result<Option<NativeObject>> {
-        if self.failure == Some("replay") && id == 21 {
+        if matches!(
+            self.failure,
+            Some("replay" | "paged_delete" | "missing" | "reused")
+        ) && id == 21
+        {
             return Ok(None);
         }
         assert_eq!(id, 5);
@@ -98,6 +106,29 @@ impl Source for FastFixture {
         }))
     }
     fn changes(&self, id: u64, start: i64) -> anyhow::Result<UsnPage> {
+        if matches!(self.failure, Some("paged_delete" | "missing" | "reused")) {
+            assert_eq!(id, 1);
+            assert!(matches!(start, 100 | 200));
+            return Ok(UsnPage {
+                next: if start == 100 { 200 } else { 300 },
+                records: if start == 200 && self.failure == Some("missing") {
+                    vec![]
+                } else {
+                    vec![UsnRecord {
+                        id: if start == 200 && self.failure == Some("reused") {
+                            21 + (1 << 48)
+                        } else {
+                            21
+                        },
+                        parent: 20,
+                        usn: start + 50,
+                        reason: if start == 100 { 1 } else { 0x200 },
+                        attributes: 32,
+                        name: vec![],
+                    }]
+                },
+            });
+        }
         assert_eq!((self.failure, id, start), (Some("replay"), 1, 100));
         Ok(UsnPage {
             next: 200,
@@ -110,6 +141,60 @@ impl Source for FastFixture {
                 name: vec![],
             }],
         })
+    }
+}
+
+#[test]
+fn replay_requires_deletion_evidence_across_pages_for_the_same_full_file_id() {
+    for incremental in [false, true] {
+        for failure in ["paged_delete", "missing", "reused"] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut db = Volume::create(&dir.path().join("v.sqlite"), "{}").unwrap();
+            let mut source = FastFixture {
+                failure: None,
+                fast: Cell::new(0),
+                legacy: Cell::new(0),
+                journals: Cell::new(0),
+            };
+            if incremental {
+                build(
+                    &source,
+                    &mut db,
+                    IndexMode::Journal,
+                    &AtomicBool::new(false),
+                    &mut |_| {},
+                )
+                .unwrap();
+            }
+            source.failure = Some(failure);
+            let result = if incremental {
+                stashfinder_service::index::synchronize(&source, &mut db, &AtomicBool::new(false))
+                    .map(|_| ())
+            } else {
+                build(
+                    &source,
+                    &mut db,
+                    IndexMode::Journal,
+                    &AtomicBool::new(false),
+                    &mut |_| {},
+                )
+            };
+            if failure == "paged_delete" {
+                result.unwrap();
+                let generation = db.active_generation().unwrap().unwrap();
+                assert_eq!(db.cursor(generation).unwrap().unwrap().next, 300);
+                assert_eq!(db.index_status().unwrap().records, 1);
+            } else {
+                assert!(result.is_err());
+                if incremental {
+                    let generation = db.active_generation().unwrap().unwrap();
+                    assert_eq!(db.cursor(generation).unwrap().unwrap().next, 100);
+                    assert_eq!(db.index_status().unwrap().records, 3);
+                } else {
+                    assert!(db.active_generation().unwrap().is_none());
+                }
+            }
+        }
     }
 }
 

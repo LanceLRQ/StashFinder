@@ -287,7 +287,8 @@ impl Volume {
             [generation],
         )?;
         for id in removed {
-            tx.execute("WITH RECURSIVE doomed(id) AS (SELECT id FROM paths WHERE generation=?1 AND object=?2 UNION SELECT p.id FROM paths p JOIN doomed d ON p.parent=d.id WHERE p.generation=?1) DELETE FROM paths WHERE generation=?1 AND id IN (SELECT id FROM doomed)",params![generation,id])?;
+            // Keep the small recursive frontier outermost so each lookup uses paths_parent.
+            tx.execute("WITH RECURSIVE doomed(id) AS (SELECT id FROM paths WHERE generation=?1 AND object=?2 UNION SELECT p.id FROM doomed d CROSS JOIN paths p ON p.parent=d.id WHERE p.generation=?1) DELETE FROM paths WHERE generation=?1 AND id IN (SELECT id FROM doomed)",params![generation,id])?;
             tx.execute(
                 "DELETE FROM pending_metadata WHERE generation=?1 AND object=?2",
                 params![generation, id],

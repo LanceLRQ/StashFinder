@@ -373,6 +373,7 @@ fn build_strategy_checked(
                     let mut entries = Vec::new();
                     let mut removed = Vec::new();
                     let mut added = HashSet::new();
+                    let mut later_deletions = None;
                     for (id, reason) in ids {
                         ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
                         if id & 0x0000ffffffffffff < 16 && id != source.root_id() {
@@ -390,11 +391,19 @@ fn build_strategy_checked(
                                 &mut entries,
                                 &mut added,
                             )?,
-                            None if reason & 0x200 != 0 => {
+                            None => {
+                                verify_deletion(
+                                    source,
+                                    journal.id,
+                                    page.next as i64,
+                                    id,
+                                    reason,
+                                    &mut later_deletions,
+                                    cancelled,
+                                )?;
                                 disappeared.remove(&id);
                                 removed.push(id.to_le_bytes().to_vec());
                             }
-                            None => anyhow::bail!("文件 {id:016x} 未读到，但没有删除证据"),
                         }
                     }
                     next = page.next as i64;
@@ -556,6 +565,61 @@ fn collect_object(
     Ok(())
 }
 
+// A file may have disappeared after an older event, with its deletion in a later page.
+// Look ahead for evidence without advancing the transaction's persisted cursor.
+fn verify_deletion(
+    source: &dyn Source,
+    journal: u64,
+    start: i64,
+    id: u64,
+    reason: u32,
+    cached: &mut Option<HashSet<u64>>,
+    cancelled: &AtomicBool,
+) -> Result<()> {
+    if reason & 0x200 != 0 {
+        return Ok(());
+    }
+    if cached.is_none() {
+        let boundary = source.journal()?.context("USN 日志不可用")?;
+        ensure!(
+            boundary.id == journal && start >= boundary.first && start <= boundary.next,
+            "USN 日志发生断档"
+        );
+        let mut next = start;
+        let mut deleted = HashSet::new();
+        while next < boundary.next {
+            ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
+            let page = source.changes(journal, next)?;
+            ensure!(
+                page.next > next as u64 && page.next <= i64::MAX as u64,
+                "USN 回放未前进"
+            );
+            for record in page.records {
+                ensure!(
+                    record.usn >= next && record.usn < page.next as i64,
+                    "USN 记录范围无效"
+                );
+                if record.reason & 0x200 != 0 {
+                    deleted.insert(record.id);
+                }
+            }
+            next = page.next as i64;
+        }
+        let end = source.journal()?.context("USN 日志不可用")?;
+        ensure!(
+            end.id == journal && start >= end.first && next <= end.next,
+            "USN 日志发生断档"
+        );
+        source.verify()?;
+        *cached = Some(deleted);
+    }
+    ensure!(
+        cached.as_ref().is_some_and(|deleted| deleted.contains(&id)),
+        "文件 {id:016x} 未读到，但没有删除证据"
+    );
+    Ok(())
+}
+
 /// Returns false when the persisted journal boundary already matches the source.
 pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool) -> Result<bool> {
     let generation = db.active_generation()?.context("尚无活动索引")?;
@@ -607,6 +671,7 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
             let mut entries = Vec::new();
             let mut removed = Vec::new();
             let mut added = HashSet::new();
+            let mut later_deletions = None;
             for (id, reason) in ids {
                 ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
                 if id & 0x0000ffffffffffff < 16 && id != source.root_id() {
@@ -625,8 +690,18 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
                         &mut entries,
                         &mut added,
                     )?,
-                    None if reason & 0x200 != 0 => removed.push(id.to_le_bytes().to_vec()),
-                    None => anyhow::bail!("文件 {id:016x} 未读到，但没有删除证据"),
+                    None => {
+                        verify_deletion(
+                            source,
+                            journal_id,
+                            page.next as i64,
+                            id,
+                            reason,
+                            &mut later_deletions,
+                            cancelled,
+                        )?;
+                        removed.push(id.to_le_bytes().to_vec());
+                    }
                 }
             }
             let end = source.journal()?.context("USN 日志已失效")?;
