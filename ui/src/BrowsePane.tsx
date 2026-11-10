@@ -291,7 +291,8 @@ export default function BrowsePane({
     singleFile: count === 1 && selectedRows[0]?.kind === "file",
     sameParent: true,
     folder: count === 1 && selectedRows[0]?.kind === "folder",
-    paste: !!online && !!page && !page.needs_validation && !busy && !error,
+    paste:
+      !!online && !!page && !page.partial && !asset?.error && !busy && !error,
     blocked: editing !== null,
   };
   const dispatch = useFileCommands(facts, menuAction, active, onCommands, [

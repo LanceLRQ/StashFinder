@@ -2,7 +2,7 @@
 
 [简体中文](file-operations.md) | English
 
-Directory and search lists share the same operations. Indexing remains read-only. The ordinary-user desktop app delegates file operations to Windows; the background service exposes no arbitrary-path write command.
+Directory and search lists share the same operations. The top Edit menu (Alt+E), file context menu and shortcuts use the selection and directory in the active file tab. Indexing remains read-only. The ordinary-user desktop app delegates file operations to Windows; the background service exposes no arbitrary-path write command.
 
 ## Operations and shortcuts
 
@@ -12,12 +12,12 @@ Directory and search lists share the same operations. Indexing remains read-only
 | Copy files | Ctrl+C, then paste in Explorer or another receiving app |
 | Drag files out | Drag a file row; always copy semantics |
 | Cut | Ctrl+X publishes a cut list; source files have not moved yet |
-| Paste | Ctrl+V in the current browse directory, or its blank-area menu; search has no paste destination |
+| Paste | Ctrl+V, Edit → Paste, or the blank-area context menu in the current online browse directory; search has no paste destination |
 | Rename | F2 for one item, Enter to submit, Escape to cancel; existing-name collisions are rejected |
 | Delete | Delete, then confirm a Windows recycle request |
 | Permanently delete | Shift+Delete shows items and count; Cancel is the default |
 | Properties | Windows properties for one online item; catalog metadata for other selections |
-| Copy text | Copy names or paths from the menu, including offline and historical records |
+| Copy text | Copy names or paths from Edit or the context menu. Ctrl+Shift+C copies paths, including for offline and historical records |
 | Windows menu | “更多...” at the bottom, for one item or multiple items with the same parent |
 
 Use Ctrl/Shift to select. Ctrl+A selects all immediate directory children or all search results, including unloaded rows. Preparation is limited to 10,000 selected records per operation, checked before collapsing descendants; larger selections are rejected rather than truncated. After preparation, actual file operations collapse selected descendants under selected folders. Distinct hard-link paths remain distinct. File shortcuts do not intercept text inputs or IME composition.

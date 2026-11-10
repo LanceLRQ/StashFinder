@@ -35,7 +35,7 @@ npm --prefix ui run dev:desktop
 
 The launcher waits for the foreground backend handshake before starting Tauri. Development data lives in `.local/dev-assets`. A compatible backend already listening on the verification pipe is reused. On exit, the launcher stops only the process it started. To debug the components separately, run `cargo run -p stashfinder-service -- --foreground --data-dir "$PWD\.local\dev-assets"` and `npm --prefix ui run tauri -- dev` in separate terminals.
 
-The default home screen is Overview, with a collapsible navigation rail. Files retains the current session's search input and results. Tasks separates current work, items needing attention and history. Cancellation targets a task ID and pauses its partition until updates are explicitly resumed. An ordinary foreground process may lack access to physical disk layouts. The UI reports this explicitly. Use the LocalSystem verification service below for complete device validation. Settings → About and diagnostics reports the actual app version, backend mode and connection state. The local pipe allows the configured account, SYSTEM and administrators and rejects remote clients. IPC accepts neither database paths nor arbitrary commands.
+The app opens in the file workspace and tries to restore the last readable directory. The top menus open Overview, Tasks and Settings as single-instance tabs. Search also uses one reusable tab. Tasks shows the five most recently updated tasks by default, with filters for current work, items needing attention and history. Cancellation targets a task ID and pauses its partition until updates are explicitly resumed. An ordinary foreground process may lack access to physical disk layouts. The UI reports this explicitly. Use the LocalSystem verification service below for complete device validation. Settings → About and diagnostics reports the actual app version, backend mode and connection state. The local pipe allows the configured account, SYSTEM and administrators and rejects remote clients. IPC accepts neither database paths nor arbitrary commands.
 
 ## Windows installer
 
@@ -47,9 +47,9 @@ Exit StashFinder and rerun the installer to switch modes. Setup remembers the la
 
 ## Desktop and preferences acceptance
 
-- Search from Overview, switch pages or collapse the rail, then return: the query and results remain intact. Complete results are loaded in bounded viewport pages.
+- Open View → Overview and enter a query to open the Search tab. Switch tabs and return to confirm the query and results remain intact. Complete results are loaded in bounded viewport pages.
 - Register partitions opens a dialog. Closing it preserves the overview connection filter. A service disconnect keeps the displayed asset snapshot with an error, rather than marking every device offline.
-- Settings supports the startup page, collapsed rail and default path matching. Path matching applies when a search page next opens, without overriding an existing query's selection. Restart to verify persistence.
+- Settings supports default path matching. Path matching applies when a search tab next opens, without overriding an existing query's selection. Restart to verify persistence.
 - Preferences live in `preferences.json` under Tauri's `app_config_dir` (usually `%APPDATA%\io.github.lancelrq.stashfinder\preferences.json` on Windows), separately from service indexes. Saving replaces the file through a temporary file in the same directory; failures preserve the old configuration and show an error. System startup entries are not changed.
 - Corrupt or unsupported configuration versions produce an explicit error. Back up and move the configuration file, then restart to restore defaults. Do not change the index databases to reset the UI.
 - Settings remains accessible without the service. UI preferences still work; About and diagnostics can reconnect and never reports a failed read as connected.
@@ -60,7 +60,7 @@ Exit StashFinder and rerun the installer to switch modes. Setup remembers the la
 - Click a partition name in Overview or select a registered partition in Files. The tree reads the local index on demand and works offline. Double-click a folder or press Enter to enter it; use breadcrumbs or Alt+Up to go up.
 - Use + or Ctrl+T for a browse tab, Ctrl+Tab to switch, and Ctrl+W to close. Each tab retains its location, scroll and multi-selection. Ctrl/Shift-click and arrow keys select entries; Ctrl+A selects all immediate directory children. Renaming a partition or changing its drive letter does not change its directory identity.
 - Typing a query in a browse tab or searching from Overview opens the single search tab. Closing it returns to the previous browse tab. Ctrl+F focuses search. A result's context action, “在新标签页浏览所在目录” (browse parent in a new tab), uses filesystem and directory IDs and works offline.
-- View toggles the tree, metadata preview and breadcrumbs. Resize tree and preview panes from their bottom corners. Preview shows indexed metadata only, explicitly labels unknown values and never reads file contents. Tab and pane state lasts for the current window session only.
+- The top View menu and the file toolbar's view controls toggle the tree, metadata preview and breadcrumbs. Resize tree and preview panes from their bottom corners. Preview shows indexed metadata only, explicitly labels unknown values and never reads file contents. Tab and pane state lasts for the current window session.
 - Directory pages contain at most 100 entries, also bounded by the 16 KiB frame budget. Load more fetches subsequent pages; a search target beyond the loaded page requires loading more to view it. F5 refreshes the current directory. Index changes reject old page cursors and prompt a refresh; read failures preserve visible rows instead of displaying an empty directory. A confirmed deleted directory falls back to its nearest available ancestor and clears selection.
 - With a matching ordinary-user GUI and backend build, verify online and offline partitions: nested folders, two tabs with independent selection and scrolling, search and return, parent-directory location from results, and pane toggles. Automated tests and controlled browser fixtures do not replace real IPC acceptance.
 
@@ -132,7 +132,7 @@ npm --prefix ui run tauri -- build --debug --no-bundle
 
 ## NTFS indexing and offline search
 
-1. Register an accessible NTFS partition. The index action defaults to using an existing USN journal. If no journal is found, choose the indexing mode from the partition row, activity panel, or Tasks page. Basic scan is selected by default.
+1. Register an accessible NTFS partition. The index action defaults to using an existing USN journal. If no journal is found, choose the indexing mode from the partition row in Overview or from the Tasks tab. Basic scan is selected by default.
 2. Scan-only mode creates no journal and starts monitoring before enumeration. Changes during a scan trigger validation; results are marked as scan snapshots. Creating a journal requires a separate checkbox: a new journal has a 32 MiB maximum and an 8 MiB allocation delta; existing settings remain unchanged.
 3. Progress shows NTFS enumeration, metadata scanning and replay of changes during scanning. Cancellation is available. Failed/cancelled builds preserve the previous active index; readable data from a failed first build is marked incomplete. Read errors are not evidence of deletion.
 4. Open file search. Matching is case-insensitive and includes paths by default: `aaa` matches `aaa\bbb.exe`; `aaa bbb` requires both words in either order; `"aaa bbb"` matches consecutive text. Filename-only mode and partition filters are available. Drive-letter terms match current online mounts only.

@@ -255,9 +255,12 @@ test.each(["online", "offline"] as const)(
 );
 
 test.each(["keyboard", "edit"])(
-  "%s paste uses the open directory and keeps pending-index feedback",
+  "%s paste checks the current published directory even when the index awaits validation",
   async (source) => {
-    vi.mocked(readDirectory).mockResolvedValue(root);
+    vi.mocked(readDirectory).mockResolvedValue({
+      ...root,
+      needs_validation: true,
+    });
     vi.mocked(invoke).mockImplementation(async (command) =>
       command === "file_paste"
         ? "完成 1 项"
