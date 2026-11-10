@@ -437,6 +437,46 @@ impl Volume {
         )?)
     }
 
+    pub fn exclude_subtrees(&mut self, generation: i64, roots: &[Vec<u8>]) -> Result<bool> {
+        let mut present = Vec::new();
+        for root in roots {
+            if self.has_path(generation, root)? {
+                present.push(root);
+            }
+        }
+        if present.is_empty() {
+            return Ok(false);
+        }
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        for root in present {
+            let is_root: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM paths WHERE generation=?1 AND id=?2 AND parent IS NULL)",
+                params![generation, root],
+                |r| r.get(0),
+            )?;
+            ensure!(!is_root, "不能排除整个分区");
+            tx.execute("WITH RECURSIVE tree(id) AS (SELECT id FROM paths WHERE generation=?1 AND id=?2 UNION SELECT p.id FROM tree t CROSS JOIN paths p ON p.parent=t.id WHERE p.generation=?1) DELETE FROM paths WHERE generation=?1 AND id IN (SELECT id FROM tree)", params![generation,root])?;
+        }
+        tx.execute("DELETE FROM pending_metadata WHERE generation=?1 AND object NOT IN (SELECT object FROM paths WHERE generation=?1)", [generation])?;
+        tx.execute("DELETE FROM objects WHERE generation=?1 AND id NOT IN (SELECT object FROM paths WHERE generation=?1)", [generation])?;
+        tx.execute(
+            "UPDATE generations SET revision=revision+1 WHERE id=?1",
+            [generation],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    pub fn has_object(&self, generation: i64, id: &[u8]) -> Result<bool> {
+        Ok(self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM objects WHERE generation=?1 AND id=?2)",
+            params![generation, id],
+            |row| row.get(0),
+        )?)
+    }
+
     pub fn prune_inventory(&mut self, generation: i64) -> Result<()> {
         ensure!(
             self.active_generation()? != Some(generation),

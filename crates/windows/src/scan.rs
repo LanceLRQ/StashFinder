@@ -1,4 +1,6 @@
 use anyhow::{Context, Result, bail, ensure};
+#[path = "scan_watch.rs"]
+mod watch;
 use std::{
     ffi::OsString,
     fs::{File, OpenOptions},
@@ -32,8 +34,18 @@ pub struct Scanner {
     root: PathBuf,
     session: File,
     notification: HANDLE,
+    filtered: Option<watch::Watch>,
+    excluded: Vec<Vec<u16>>,
 }
 impl Scanner {
+    pub fn open_excluding(path: &Path, excluded: &[PathBuf]) -> Result<Self> {
+        let mut scanner = Self::open(path)?;
+        scanner.excluded = watch::relative_roots(path, excluded)?;
+        if !scanner.excluded.is_empty() {
+            scanner.filtered = Some(watch::Watch::open(&scanner.root)?);
+        }
+        Ok(scanner)
+    }
     pub fn open(path: &Path) -> Result<Self> {
         let root = if path.as_os_str().to_string_lossy().starts_with(r"\\?\") {
             path.to_path_buf()
@@ -60,6 +72,8 @@ impl Scanner {
             root,
             session,
             notification,
+            filtered: None,
+            excluded: Vec::new(),
         })
     }
     pub fn changed(&mut self) -> Result<bool> {
@@ -67,6 +81,9 @@ impl Scanner {
         self.session
             .metadata()
             .context("目录监控会话已失效，需要重新建立监控")?;
+        if let Some(watch) = &mut self.filtered {
+            return watch.changed(&self.excluded);
+        }
         // SAFETY: The owned notification remains open; a zero timeout never blocks the worker.
         match unsafe { WaitForSingleObject(self.notification, 0) } {
             WAIT_TIMEOUT => Ok(false),
@@ -105,6 +122,14 @@ impl Scanner {
         {
             ensure!(!cancelled.load(Ordering::Acquire), "扫描已取消");
             let entry = entry.with_context(|| format!("读取目录项 {}", path.display()))?;
+            let mut name = relative.to_vec();
+            if !name.is_empty() {
+                name.push(92);
+            }
+            name.extend(entry.file_name().encode_wide());
+            if self.excluded.iter().any(|root| watch::under(&name, root)) {
+                continue;
+            }
             let metadata = std::fs::symlink_metadata(entry.path())
                 .with_context(|| format!("读取元数据 {}", entry.path().display()))?;
             let attributes = metadata.file_attributes();

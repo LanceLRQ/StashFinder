@@ -12,6 +12,13 @@ struct FastFixture {
 }
 
 impl Source for FastFixture {
+    fn excluded_roots(&self) -> Vec<u64> {
+        if self.failure == Some("exclude") {
+            vec![20]
+        } else {
+            vec![]
+        }
+    }
     fn root_id(&self) -> u64 {
         5
     }
@@ -229,6 +236,7 @@ fn sequential_build_keeps_hard_links_without_legacy_enumeration() {
 fn default_build_prefers_sequential_and_uses_legacy_only_when_needed() {
     for (mode, failure, expected_fast, expected_inventory, expected_records) in [
         (IndexMode::Journal, None, 1, 0, 3),
+        (IndexMode::Journal, Some("exclude"), 1, 0, 1),
         (IndexMode::Journal, Some("unsupported"), 1, 1, 1),
         (IndexMode::ScanOnly, None, 0, 0, 1),
     ] {
@@ -1064,4 +1072,34 @@ fn directory_removed_during_initial_scan_requires_journal_delete_evidence() {
             assert_eq!(db.active_generation().unwrap(), None);
         }
     }
+}
+
+#[test]
+fn resumed_sync_prunes_existing_runtime_paths_even_without_new_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = Volume::create(&dir.path().join("v.sqlite"), "{}").unwrap();
+    let mut source = FastFixture {
+        failure: None,
+        fast: Cell::new(0),
+        legacy: Cell::new(0),
+        journals: Cell::new(0),
+    };
+    build(
+        &source,
+        &mut db,
+        IndexMode::Journal,
+        &AtomicBool::new(false),
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(db.index_status().unwrap().records, 3);
+    source.failure = Some("exclude");
+    assert!(
+        stashfinder_service::index::synchronize(&source, &mut db, &AtomicBool::new(false)).unwrap()
+    );
+    assert_eq!(db.index_status().unwrap().records, 1);
+    assert!(
+        !stashfinder_service::index::synchronize(&source, &mut db, &AtomicBool::new(false))
+            .unwrap()
+    );
 }

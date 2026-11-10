@@ -172,6 +172,53 @@ pub fn validate_service_root(root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Resolve the registered desktop user's runtime directories, including a service running as SYSTEM.
+pub fn desktop_data_directories(owner: &str) -> Result<Vec<PathBuf>> {
+    use windows::Win32::{Foundation::ERROR_FILE_NOT_FOUND, System::Registry::*};
+    ensure!(
+        owner.starts_with("S-1-")
+            && owner
+                .bytes()
+                .all(|c| c.is_ascii_digit() || c == b'S' || c == b'-'),
+        "桌面账户 SID 无效"
+    );
+    let key = HSTRING::from(format!(
+        r"{owner}\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders"
+    ));
+    let mut paths = Vec::new();
+    for value in ["Local AppData", "AppData"] {
+        let mut buffer = vec![0u16; 32768];
+        let mut size = (buffer.len() * 2) as u32;
+        // SAFETY: The predefined registry handle and bounded output buffer remain valid for the call.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_USERS,
+                &key,
+                &HSTRING::from(value),
+                RRF_RT_REG_SZ,
+                None,
+                Some(buffer.as_mut_ptr().cast()),
+                Some(&mut size),
+            )
+        };
+        if status == ERROR_FILE_NOT_FOUND {
+            continue; // An unloaded profile has no running desktop cache to exclude.
+        }
+        status.ok()?;
+        ensure!(
+            size >= 2 && size.is_multiple_of(2),
+            "用户数据目录注册表长度无效"
+        );
+        buffer.truncate(size as usize / 2 - 1);
+        use std::os::windows::ffi::OsStringExt;
+        paths.push(
+            PathBuf::from(std::ffi::OsString::from_wide(&buffer))
+                .join("io.github.lancelrq.stashfinder"),
+        );
+    }
+    Ok(paths)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

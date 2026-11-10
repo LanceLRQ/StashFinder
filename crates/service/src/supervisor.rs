@@ -55,35 +55,78 @@ fn eligible(asset: &Asset) -> bool {
         )
 }
 
+fn runtime_directories(root: &std::path::Path) -> Result<Vec<PathBuf>> {
+    let mut paths = vec![root.to_path_buf()];
+    if let Some(layout) =
+        stashfinder_windows::portable::Layout::discover(&std::env::current_exe()?)?
+    {
+        if std::fs::canonicalize(&layout.index)? == std::fs::canonicalize(root)? {
+            paths = vec![layout.root.join("data")];
+        }
+    } else {
+        let owner_file = root.join("owner.sid");
+        let owner = if owner_file.try_exists()? {
+            std::fs::read_to_string(owner_file)?
+        } else {
+            stashfinder_windows::ipc::current_user_sid()?
+        };
+        paths.extend(stashfinder_windows::storage::desktop_data_directories(
+            owner.trim(),
+        )?);
+    }
+    Ok(paths)
+}
+
 impl Runner {
     pub fn start(root: PathBuf) -> Self {
-        Self::start_with_source(root, |asset| {
-            let found = volumes::discover()?;
-            let matching = found
-                .iter()
-                .filter(|o| {
-                    asset.registration.observation.identity.compare(&o.identity)
-                        == IdentityMatch::Same
-                })
-                .collect::<Vec<_>>();
-            ensure!(
-                matching.len() == 1 && matching[0].eligible(),
-                "分区已断开、身份变化或无法唯一识别"
-            );
-            let source = VolumeReader::open(&matching[0].candidate_id)?;
-            ensure!(
-                asset
-                    .registration
-                    .observation
-                    .identity
-                    .serial
-                    .as_ref()
-                    .is_some_and(|s| s.source == "ntfs64"
-                        && s.value == format!("{:016x}", source.volume_serial())),
-                "NTFS 序列号与登记不符"
-            );
-            Ok(Box::new(source))
-        })
+        let excluded = runtime_directories(&root);
+        let scan_excluded = excluded
+            .as_ref()
+            .map(Clone::clone)
+            .map_err(ToString::to_string);
+        Self::start_with_sources(
+            root,
+            move |asset| {
+                let found = volumes::discover()?;
+                let matching = found
+                    .iter()
+                    .filter(|o| {
+                        asset.registration.observation.identity.compare(&o.identity)
+                            == IdentityMatch::Same
+                    })
+                    .collect::<Vec<_>>();
+                ensure!(
+                    matching.len() == 1 && matching[0].eligible(),
+                    "分区已断开、身份变化或无法唯一识别"
+                );
+                let mut source = VolumeReader::open(&matching[0].candidate_id)?;
+                source.exclude_directories(
+                    excluded
+                        .as_ref()
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                )?;
+                ensure!(
+                    asset
+                        .registration
+                        .observation
+                        .identity
+                        .serial
+                        .as_ref()
+                        .is_some_and(|s| s.source == "ntfs64"
+                            && s.value == format!("{:016x}", source.volume_serial())),
+                    "NTFS 序列号与登记不符"
+                );
+                Ok(Box::new(source))
+            },
+            move |asset| {
+                scan::Native::open_excluding(
+                    asset,
+                    scan_excluded
+                        .as_ref()
+                        .map_err(|e| anyhow::anyhow!(e.clone()))?,
+                )
+            },
+        )
     }
     pub fn start_with_source(
         root: PathBuf,
@@ -422,6 +465,7 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
     let mut last_check = Instant::now() - Duration::from_secs(3);
     let mut position = 0usize;
     let mut watchers: HashMap<String, Box<dyn scan::Source>> = HashMap::new();
+    let mut observed = HashMap::<String, index::ObservedCursor>::new();
     let mut dirty = HashSet::<String>::new();
     let mut scanned = HashMap::<String, Instant>::new();
     while !shared.stop.load(Ordering::Acquire) {
@@ -536,7 +580,12 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                     }
                     watchers.remove(id);
                     let source = factory(asset)?;
-                    let db = shared.load(id)?;
+                    let mut db = shared.load(id)?;
+                    if let Some(g) = db.active_generation()?
+                        && index::exclude_runtime_paths(source.as_ref(), &mut db, g)?
+                    {
+                        shared.publish(id, &db)?;
+                    }
                     let status = db.index_status()?;
                     let journal = source.journal()?;
                     let Some(journal) = journal else {
@@ -584,6 +633,17 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                                 && c.next <= journal.next =>
                         {
                             if c.next == journal.next && status.phase == "ready" {
+                                return Ok(None);
+                            }
+                            if status.phase == "ready"
+                                && !index::has_relevant_changes(
+                                    source.as_ref(),
+                                    &db,
+                                    observed
+                                        .entry(asset.registration.filesystem_id.clone())
+                                        .or_default(),
+                                )?
+                            {
                                 return Ok(None);
                             }
                             "sync"

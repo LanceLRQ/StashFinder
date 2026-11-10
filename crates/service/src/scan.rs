@@ -7,7 +7,7 @@ use stashfinder_windows::{
 };
 use std::{
     collections::VecDeque,
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -28,6 +28,9 @@ pub struct Native {
 }
 impl Native {
     pub fn open(asset: &Asset) -> Result<Box<dyn Source>> {
+        Self::open_excluding(asset, &[])
+    }
+    pub fn open_excluding(asset: &Asset, excluded: &[PathBuf]) -> Result<Box<dyn Source>> {
         let found = volumes::discover()?;
         let matching = found
             .iter()
@@ -40,7 +43,7 @@ impl Native {
             "扫描分区已断开或身份无法唯一确认"
         );
         Ok(Box::new(Self {
-            scanner: Scanner::open(Path::new(&matching[0].candidate_id))?,
+            scanner: Scanner::open_excluding(Path::new(&matching[0].candidate_id), excluded)?,
             identity: matching[0].identity.clone(),
             candidate: matching[0].candidate_id.clone(),
         }))

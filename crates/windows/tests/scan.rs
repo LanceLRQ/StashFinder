@@ -153,3 +153,31 @@ fn a_watcher_recovers_after_remount_even_without_an_offline_observation() {
         "stale monitors silently missed changes: {missing:?}"
     );
 }
+
+#[test]
+fn excluded_runtime_data_is_not_enumerated_and_does_not_signal_a_rescan() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    std::fs::create_dir(&data).unwrap();
+    std::fs::write(dir.path().join("user.sqlite"), b"user").unwrap();
+    let mut scanner = Scanner::open_excluding(dir.path(), std::slice::from_ref(&data)).unwrap();
+    let mut names = Vec::new();
+    scanner
+        .enumerate(&[], &AtomicBool::new(false), &mut |rows| {
+            names.extend(rows.iter().map(|r| String::from_utf16_lossy(&r.name)));
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(names, vec!["user.sqlite"]);
+    std::fs::write(data.join("catalog.sqlite-wal"), b"internal").unwrap();
+    for _ in 0..20 {
+        std::thread::sleep(Duration::from_millis(10));
+        assert!(!scanner.changed().unwrap());
+    }
+    std::fs::write(dir.path().join("normal.txt"), b"visible").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !scanner.changed().unwrap() {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}

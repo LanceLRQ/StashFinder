@@ -23,6 +23,10 @@ All persistent application data resides in `data` next to the executable:
 
 Data directories are created on first use. The original ZIP contains no indexes, disk registrations, or caches. Only one instance can run from a folder at a time. Exit before copying or backing up the directory; copying a live SQLite main file alone is not a backup.
 
+The current instance's `data` directory is automatically excluded from the file index so database, cache, and WebView writes do not repeatedly trigger synchronization. Existing indexed paths in this directory are removed without deleting actual files; other files alongside the application and ordinary database files elsewhere remain indexed. Excluded-only events do not update the index or persisted cursor. Restart can safely replay this journal tail; journal gaps still use the existing validation or rebuild policy.
+
+Delete-pending files held in NTFS internal storage are not exposed as user files. Already-deleted temporary files that were never indexed do not trigger empty synchronization after deletion evidence is verified; read failures still produce explicit errors.
+
 Offline records remain searchable after moving to another computer. Connected disks need identity checks and index updates. The image-cache limit defaults to 2 GB and can be changed or cleared in settings without deleting indexes or source files. Carry the backend, `portable.json`, and the entire `data` folder along with the GUI.
 
 ## Dependencies and limitations

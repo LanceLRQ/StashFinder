@@ -24,6 +24,12 @@ impl std::fmt::Display for JournalMissing {
 impl std::error::Error for JournalMissing {}
 
 pub trait Source {
+    fn excluded_roots(&self) -> Vec<u64> {
+        Vec::new()
+    }
+    fn excluded_directory(&self, _id: u64) -> Result<bool> {
+        Ok(false)
+    }
     fn verify(&self) -> Result<()> {
         Ok(())
     }
@@ -51,7 +57,151 @@ pub trait Source {
     fn object(&self, id: u64) -> Result<Option<NativeObject>>;
     fn changes(&self, journal: u64, start: i64) -> Result<UsnPage>;
 }
+
+#[derive(Default)]
+pub struct ObservedCursor {
+    boundary: Option<(i64, Vec<u8>, i64, i64)>,
+}
+
+pub fn has_relevant_changes(
+    source: &dyn Source,
+    db: &Volume,
+    observed: &mut ObservedCursor,
+) -> Result<bool> {
+    let generation = db.active_generation()?.context("尚无活动索引")?;
+    let cursor = db.cursor(generation)?.context("索引没有 USN 游标")?;
+    let journal = source.journal()?.context("USN 日志不可用")?;
+    ensure!(
+        cursor.journal == journal.id.to_le_bytes()
+            && cursor.next >= journal.first
+            && cursor.next <= journal.next,
+        "USN 日志发生断档"
+    );
+    let next = match &observed.boundary {
+        Some((g, id, saved, next))
+            if *g == generation
+                && *id == cursor.journal
+                && *saved == cursor.next
+                && *next >= journal.first
+                && *next <= journal.next =>
+        {
+            *next
+        }
+        _ => cursor.next,
+    };
+    let mut next = next;
+    for _ in 0..64 {
+        if next == journal.next {
+            break;
+        }
+        let page = source.changes(journal.id, next)?;
+        ensure!(
+            page.next > next as u64 && page.next <= i64::MAX as u64,
+            "USN 回放未前进"
+        );
+        let mut candidates = BTreeMap::<u64, (u32, bool)>::new();
+        for record in &page.records {
+            ensure!(
+                record.usn >= next && record.usn < page.next as i64,
+                "USN 记录范围无效"
+            );
+            let candidate = candidates.entry(record.id).or_default();
+            candidate.0 |= record.reason;
+            candidate.1 |= !ignored_record(source, db, generation, record)?;
+        }
+        let mut later_deletions = None;
+        for (id, (reason, inspect)) in candidates {
+            if !inspect {
+                continue;
+            }
+            if db.has_object(generation, &id.to_le_bytes())? {
+                return Ok(true);
+            }
+            match source.object(id)? {
+                Some(current) => {
+                    if visible_object(source, current)?.is_some() {
+                        return Ok(true);
+                    }
+                }
+                None => verify_deletion(
+                    source,
+                    journal.id,
+                    page.next as i64,
+                    id,
+                    reason,
+                    &mut later_deletions,
+                    &AtomicBool::new(false),
+                )?,
+            }
+        }
+        next = page.next as i64;
+        if next >= journal.next {
+            break;
+        }
+    }
+    let end = source.journal()?.context("USN 日志不可用")?;
+    ensure!(
+        end.id == journal.id && cursor.next >= end.first && next <= end.next,
+        "USN 日志发生断档"
+    );
+    source.verify()?;
+    observed.boundary = Some((generation, cursor.journal, cursor.next, next));
+    Ok(false)
+}
+
+fn ignored_record(
+    source: &dyn Source,
+    db: &Volume,
+    generation: i64,
+    record: &UsnRecord,
+) -> Result<bool> {
+    if record.id & 0x0000ffffffffffff < 16 && record.id != source.root_id() {
+        return Ok(true);
+    }
+    if source.excluded_roots().contains(&record.id) {
+        return Ok(true);
+    }
+    Ok(source.excluded_directory(record.parent)?
+        && !db.has_object(generation, &record.id.to_le_bytes())?)
+}
+
+fn visible_object(source: &dyn Source, mut current: NativeObject) -> Result<Option<NativeObject>> {
+    if current.entry.id == source.root_id() {
+        return Ok(Some(current));
+    }
+    if source.excluded_roots().contains(&current.entry.id) {
+        return Ok(None);
+    }
+    ensure!(!current.links.is_empty(), "文件链接集合为空，未确认删除");
+    let mut links = Vec::new();
+    for link in current.links {
+        if !source.excluded_directory(link.0)? {
+            links.push(link);
+        }
+    }
+    current.links = links;
+    Ok((!current.links.is_empty()).then_some(current))
+}
+
+pub fn exclude_runtime_paths(
+    source: &dyn Source,
+    db: &mut Volume,
+    generation: i64,
+) -> Result<bool> {
+    let roots = source
+        .excluded_roots()
+        .iter()
+        .map(|id| directory_key(*id))
+        .collect::<Vec<_>>();
+    db.exclude_subtrees(generation, &roots)
+}
 impl Source for VolumeReader {
+    fn excluded_roots(&self) -> Vec<u64> {
+        self.excluded_roots()
+    }
+    fn excluded_directory(&self, id: u64) -> Result<bool> {
+        self.excluded_directory(id)
+    }
     fn verify(&self) -> Result<()> {
         self.verify()
     }
@@ -84,7 +234,15 @@ impl Source for VolumeReader {
         c: &AtomicBool,
         f: &mut dyn FnMut(&[DirectoryEntry]) -> Result<()>,
     ) -> Result<()> {
-        self.directory(id, c, f)
+        self.directory(id, c, |rows| {
+            let roots = self.excluded_roots();
+            let rows = rows
+                .iter()
+                .filter(|r| !roots.contains(&r.id))
+                .cloned()
+                .collect::<Vec<_>>();
+            f(&rows)
+        })
     }
     fn object(&self, id: u64) -> Result<Option<NativeObject>> {
         self.lookup_object(id)
@@ -345,6 +503,7 @@ fn build_strategy_checked(
             }
         }
         let replay_started = Instant::now();
+        exclude_runtime_paths(source, db, generation)?;
         if let Some(journal) = journal {
             progress("replaying");
             let mut next = journal.next;
@@ -364,17 +523,22 @@ fn build_strategy_checked(
                         page.next > next as u64 && page.next <= i64::MAX as u64,
                         "USN 回放未前进"
                     );
-                    let mut ids = BTreeMap::new();
+                    let mut ids = BTreeMap::<u64, (u32, bool)>::new();
                     for record in page.records {
                         ensure!(record.usn >= next, "USN 记录倒退");
-                        *ids.entry(record.id).or_insert(0u32) |= record.reason;
+                        let candidate = ids.entry(record.id).or_default();
+                        candidate.0 |= record.reason;
+                        candidate.1 |= !ignored_record(source, db, generation, &record)?;
                     }
                     let mut objects = Vec::new();
                     let mut entries = Vec::new();
                     let mut removed = Vec::new();
                     let mut added = HashSet::new();
                     let mut later_deletions = None;
-                    for (id, reason) in ids {
+                    for (id, (reason, inspect)) in ids {
+                        if !inspect {
+                            continue;
+                        }
                         ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
                         if id & 0x0000ffffffffffff < 16 && id != source.root_id() {
                             continue;
@@ -382,15 +546,21 @@ fn build_strategy_checked(
                         match source.object(id).with_context(|| {
                             format!("回放文件 {id:016x} 失败，原因 {reason:08x}")
                         })? {
-                            Some(current) => collect_object(
-                                source,
-                                db,
-                                generation,
-                                current,
-                                &mut objects,
-                                &mut entries,
-                                &mut added,
-                            )?,
+                            Some(current) => {
+                                if let Some(current) = visible_object(source, current)? {
+                                    collect_object(
+                                        source,
+                                        db,
+                                        generation,
+                                        current,
+                                        &mut objects,
+                                        &mut entries,
+                                        &mut added,
+                                    )?;
+                                } else {
+                                    removed.push(id.to_le_bytes().to_vec());
+                                }
+                            }
                             None => {
                                 verify_deletion(
                                     source,
@@ -525,6 +695,7 @@ fn collect_sequential(
     }
     let started = Instant::now();
     db.finish_initial_paths(generation, &directory_key(root))?;
+    exclude_runtime_paths(source, db, generation)?;
     Ok((stats, write_time, started.elapsed()))
 }
 
@@ -620,7 +791,7 @@ fn verify_deletion(
     Ok(())
 }
 
-/// Returns false when the persisted journal boundary already matches the source.
+/// Returns false when replay contains no index changes, including excluded-only events.
 pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool) -> Result<bool> {
     let generation = db.active_generation()?.context("尚无活动索引")?;
     let result = (|| -> Result<bool> {
@@ -643,36 +814,44 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
             "USN 日志发生断档，需要重新建库"
         );
         source.verify()?;
+        let pruned = exclude_runtime_paths(source, db, generation)?;
         if cursor.next == boundary.next {
             if db.index_status()?.phase != "ready" {
                 db.finish_incremental(generation)?;
                 return Ok(true);
             }
-            return Ok(false);
+            return Ok(pruned);
         }
         let mut next = cursor.next;
+        let mut changed = pruned;
         // A bounded turn yields to other partitions on a continuously busy volume.
-        for _ in 0..64 {
+        let mut batches = 0;
+        while batches < 64 {
             ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
             let page = source.changes(journal_id, next)?;
             ensure!(
                 page.next > next as u64 && page.next <= i64::MAX as u64,
                 "USN 回放未前进"
             );
-            let mut ids = BTreeMap::new();
+            let mut ids = BTreeMap::<u64, (u32, bool)>::new();
             for record in page.records {
                 ensure!(
                     record.usn >= next && record.usn < page.next as i64,
                     "USN 记录范围无效"
                 );
-                *ids.entry(record.id).or_insert(0u32) |= record.reason;
+                let candidate = ids.entry(record.id).or_default();
+                candidate.0 |= record.reason;
+                candidate.1 |= !ignored_record(source, db, generation, &record)?;
             }
             let mut objects = Vec::new();
             let mut entries = Vec::new();
             let mut removed = Vec::new();
             let mut added = HashSet::new();
             let mut later_deletions = None;
-            for (id, reason) in ids {
+            for (id, (reason, inspect)) in ids {
+                if !inspect {
+                    continue;
+                }
                 ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
                 if id & 0x0000ffffffffffff < 16 && id != source.root_id() {
                     continue;
@@ -681,15 +860,21 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
                     .object(id)
                     .with_context(|| format!("读取变更对象 {id:016x}"))?
                 {
-                    Some(current) => collect_object(
-                        source,
-                        db,
-                        generation,
-                        current,
-                        &mut objects,
-                        &mut entries,
-                        &mut added,
-                    )?,
+                    Some(current) => {
+                        if let Some(current) = visible_object(source, current)? {
+                            collect_object(
+                                source,
+                                db,
+                                generation,
+                                current,
+                                &mut objects,
+                                &mut entries,
+                                &mut added,
+                            )?;
+                        } else if db.has_object(generation, &id.to_le_bytes())? {
+                            removed.push(id.to_le_bytes().to_vec());
+                        }
+                    }
                     None => {
                         verify_deletion(
                             source,
@@ -700,7 +885,9 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
                             &mut later_deletions,
                             cancelled,
                         )?;
-                        removed.push(id.to_le_bytes().to_vec());
+                        if db.has_object(generation, &id.to_le_bytes())? {
+                            removed.push(id.to_le_bytes().to_vec());
+                        }
                     }
                 }
             }
@@ -712,26 +899,37 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
             source.verify()?;
             ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
             next = page.next as i64;
-            db.apply_incremental(
-                generation,
-                Changes {
-                    objects: &objects,
-                    entries: &entries,
-                    removed: &removed,
-                    pending: &[],
-                    cursor: Some(&Cursor {
-                        journal: journal_id.to_le_bytes().to_vec(),
-                        next,
-                    }),
-                    replace_links: true,
-                },
-            )?;
-            if next == end.next {
-                db.finish_incremental(generation)?;
-                return Ok(true);
+            if !objects.is_empty()
+                || !entries.is_empty()
+                || !removed.is_empty()
+                || (changed && next >= boundary.next)
+            {
+                batches += 1;
+                changed = true;
+                db.apply_incremental(
+                    generation,
+                    Changes {
+                        objects: &objects,
+                        entries: &entries,
+                        removed: &removed,
+                        pending: &[],
+                        cursor: Some(&Cursor {
+                            journal: journal_id.to_le_bytes().to_vec(),
+                            next,
+                        }),
+                        replace_links: true,
+                    },
+                )?;
+            }
+            if next >= boundary.next {
+                if changed || db.index_status()?.phase != "ready" {
+                    db.finish_incremental(generation)?;
+                    return Ok(true);
+                }
+                return Ok(false);
             }
         }
-        Ok(true)
+        Ok(changed)
     })();
     if let Err(error) = &result {
         db.mark_stale(generation, &format!("{error:#}"))?;

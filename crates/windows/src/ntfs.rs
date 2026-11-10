@@ -297,6 +297,8 @@ pub struct VolumeReader {
     pub root_id: u64,
     serial: u32,
     serial64: u64,
+    excluded: Vec<u64>,
+    excluded_cache: std::cell::RefCell<std::collections::HashMap<u64, bool>>,
 }
 impl VolumeReader {
     pub fn open(root: &str) -> Result<Self> {
@@ -313,7 +315,67 @@ impl VolumeReader {
             root_id: ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
             serial: info.dwVolumeSerialNumber,
             serial64,
+            excluded: Vec::new(),
+            excluded_cache: Default::default(),
         })
+    }
+    pub fn exclude_directories(&mut self, paths: &[PathBuf]) -> Result<()> {
+        // NTFS can move delete-pending application files into $Extend\$Deleted.
+        for path in paths
+            .iter()
+            .cloned()
+            .chain(std::iter::once(self.root.join("$Extend")))
+        {
+            if !path.try_exists()? {
+                continue;
+            }
+            let info = crate::file_operations::inspect(&path)?;
+            if info.volume64 == Some(self.serial64) {
+                ensure!(
+                    info.attributes & 16 != 0 && info.identity.file != self.root_id,
+                    "运行数据排除路径必须是分区内的目录"
+                );
+                self.excluded.push(info.identity.file);
+            }
+        }
+        self.excluded.sort_unstable();
+        self.excluded.dedup();
+        Ok(())
+    }
+    pub fn excluded_roots(&self) -> Vec<u64> {
+        self.excluded.clone()
+    }
+    pub fn excluded_directory(&self, id: u64) -> Result<bool> {
+        if self.excluded.is_empty() {
+            return Ok(false);
+        }
+        let mut current = id;
+        let mut chain = Vec::new();
+        let excluded = loop {
+            if self.excluded.contains(&current) {
+                break true;
+            }
+            if current == self.root_id {
+                break false;
+            }
+            if let Some(value) = self.excluded_cache.borrow().get(&current) {
+                break *value;
+            }
+            ensure!(!chain.contains(&current), "排除目录父链循环");
+            chain.push(current);
+            let Some(object) = self.lookup_object(current)? else {
+                return Ok(false);
+            };
+            ensure!(
+                object.entry.attributes & 16 != 0 && object.links.len() == 1,
+                "排除目录父链无效"
+            );
+            current = object.links[0].0;
+        };
+        for id in chain {
+            self.excluded_cache.borrow_mut().insert(id, excluded);
+        }
+        Ok(excluded)
     }
     pub fn volume_serial(&self) -> u64 {
         self.serial64
@@ -418,6 +480,7 @@ impl VolumeReader {
         }
     }
     pub fn changes(&self, journal: u64, start: i64) -> Result<UsnPage> {
+        self.excluded_cache.borrow_mut().clear();
         ensure!(start >= 0, "USN 起点无效");
         let mut input = vec![0u8; 40];
         input[..8].copy_from_slice(&start.to_le_bytes());

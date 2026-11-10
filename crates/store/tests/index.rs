@@ -294,3 +294,49 @@ fn failed_incremental_transaction_preserves_paths_pending_and_cursor() {
     assert_eq!(hits.rows[0].size.as_deref(), Some("7"));
     db.publish(g).unwrap();
 }
+
+#[test]
+fn excluding_subtree_keeps_outside_hard_links_and_is_a_noop_on_repeat() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("v.sqlite");
+    let mut db = Volume::create(&file, "{}").unwrap();
+    let g = db.begin_generation().unwrap();
+    db.write_batch(
+        g,
+        &[
+            object(1, true, None),
+            object(2, true, None),
+            object(3, false, Some(7)),
+        ],
+        &[
+            entry(1, 1, None, "\\"),
+            entry(2, 2, Some(1), "data"),
+            entry(3, 3, Some(2), "catalog.sqlite"),
+            entry(4, 3, Some(1), "user.sqlite"),
+        ],
+        &[],
+        None,
+    )
+    .unwrap();
+    db.complete(g).unwrap();
+    db.publish(g).unwrap();
+    assert!(db.exclude_subtrees(g, &[vec![2]]).unwrap());
+    assert!(!db.has_path(g, &[2]).unwrap());
+    assert!(!db.has_path(g, &[3]).unwrap());
+    assert!(db.has_path(g, &[4]).unwrap());
+    assert!(db.has_object(g, &[3]).unwrap());
+    let sql = rusqlite::Connection::open(&file).unwrap();
+    let before: i64 = sql
+        .query_row("SELECT revision FROM generations WHERE id=?1", [g], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!(!db.exclude_subtrees(g, &[vec![2]]).unwrap());
+    let after: i64 = sql
+        .query_row("SELECT revision FROM generations WHERE id=?1", [g], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(before, after);
+    assert_eq!(db.active_generation().unwrap(), Some(g));
+}
