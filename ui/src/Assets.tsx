@@ -625,7 +625,7 @@ export default function Assets({
         </Modal>
       )}
       <footer className="asset-footer">
-        <span role="status">{disabled ? "正在处理设备信息…" : ""}</span>
+        <span role="status">{working ? "正在处理设备信息…" : ""}</span>
         <span>仅扫描已登记分区。离线容量与文件记录保留最后一次快照。</span>
       </footer>
       {rename && (

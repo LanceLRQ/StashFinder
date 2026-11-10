@@ -22,6 +22,7 @@ beforeAll(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.resetAllMocks();
 });
 
@@ -81,12 +82,52 @@ test("registration is a dialog and closing it preserves the overview filter", as
   expect(screen.getByLabelText("连接筛选")).toHaveProperty("value", "offline");
 });
 
-test("device processing updates the reserved overview footer", async () => {
-  vi.mocked(invoke).mockResolvedValue({ ...snapshot(), busy: true });
+test("automatic busy pulses keep the overview footer quiet and block device actions", async () => {
+  vi.useFakeTimers();
+  let data = snapshot();
+  vi.mocked(invoke).mockImplementation(async () => data);
   const { container } = render(<Assets />);
-  const footer = container.querySelector("footer")!;
-  const status = within(footer).getByRole("status");
-  expect(await screen.findByText("正在处理设备信息…")).toBe(status);
+  await act(async () => {});
+  const status = within(container.querySelector("footer")!).getByRole("status");
+  const refresh = screen.getByRole("button", { name: "刷新设备" });
+  const register = screen.getByRole("button", { name: "登记分区" });
+  expect(refresh).toHaveProperty("disabled", false);
+  data = { ...data, busy: true };
+  await act(() => vi.advanceTimersByTimeAsync(document.hidden ? 10000 : 5000));
+  expect(refresh).toHaveProperty("disabled", true);
+  expect(register).toHaveProperty("disabled", true);
+  expect(status.textContent).toBe("");
+  fireEvent.click(refresh);
+  fireEvent.click(register);
+  expect(invoke).not.toHaveBeenCalledWith("asset_command", expect.anything());
+  expect(screen.queryByRole("dialog")).toBeNull();
+  data = { ...data, busy: false, error: "设备枚举失败" };
+  await act(() => vi.advanceTimersByTimeAsync(750));
+  expect(status.textContent).toBe("");
+  expect(screen.getByRole("alert").textContent).toBe("设备枚举失败");
+});
+
+test("manual refresh owns the overview progress until the device command completes", async () => {
+  let finish!: () => void;
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === "asset_snapshot"
+      ? snapshot()
+      : new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+  );
+  const { container } = render(<Assets />);
+  const status = within(container.querySelector("footer")!).getByRole("status");
+  const register = screen.getByRole("button", { name: "登记分区" });
+  await waitFor(() => expect(register).toHaveProperty("disabled", false));
+  const refresh = screen.getByRole("button", { name: "刷新设备" });
+  fireEvent.click(refresh);
+  expect(screen.getByText("正在处理设备信息…")).toBe(status);
+  expect(register).toHaveProperty("disabled", true);
+  expect(refresh).toHaveProperty("disabled", true);
+  await act(async () => finish());
+  expect(status.textContent).toBe("");
+  expect(register).toHaveProperty("disabled", false);
 });
 
 test("groups partitions by disk identity and keeps the last snapshot on service failure", async () => {
