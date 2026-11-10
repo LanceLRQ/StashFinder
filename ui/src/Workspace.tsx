@@ -669,10 +669,7 @@ export default function Workspace({
               onCommands={setCommands}
               onLocate={locate}
               categories={categories}
-              indexVersion={completedTasks
-                .map((t) => `${t.id}:${t.updated}`)
-                .sort()
-                .join("|")}
+              completedTasks={completedTasks}
               context={searchContext}
             />
           ) : (

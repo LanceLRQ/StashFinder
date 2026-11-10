@@ -1,14 +1,33 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 export function virtualScale(total: number, height: number) {
   return Math.max(
     1,
     (total * 64 - height) / Math.max(1, Math.min(total * 64, 8000000) - height),
   );
 }
+export function virtualWindow(
+  total: number,
+  logicalTop: number,
+  height: number,
+) {
+  const scale = virtualScale(total, height);
+  const clamped = Math.min(logicalTop, Math.max(0, total * 64 - height));
+  const start = Math.max(0, Math.floor(clamped / 64) - 8);
+  const end = Math.min(total, start + Math.ceil(height / 64) + 16);
+  return { start, end, top: clamped / scale, logicalTop: clamped };
+}
 export default function VirtualResults({
   total,
   revision,
   onRange,
+  onPosition,
+  restore,
   row,
   onKeyDown,
   onSort,
@@ -18,6 +37,8 @@ export default function VirtualResults({
   total: number;
   revision: number;
   onRange: (start: number, end: number) => void;
+  onPosition: (logicalTop: number, height: number, scrolling: boolean) => void;
+  restore: { logicalTop: number } | null;
   row: (index: number) => ReactNode;
   onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => void;
   onSort?: (field: string) => void;
@@ -30,13 +51,7 @@ export default function VirtualResults({
   const content = Math.min(total * 64, 8000000);
   const scale = virtualScale(total, height);
   const physicalTop = Math.min(top, Math.max(0, content - height));
-  const start = Math.max(
-    0,
-    Math.floor(
-      Math.min(physicalTop * scale, Math.max(0, total * 64 - height)) / 64,
-    ) - 8,
-  );
-  const end = Math.min(total, start + Math.ceil(height / 64) + 16);
+  const { start, end } = virtualWindow(total, physicalTop * scale, height);
   useEffect(() => {
     const element = ref.current;
     if (!element || scale === 1) return;
@@ -49,26 +64,62 @@ export default function VirtualResults({
     element.addEventListener("wheel", wheel, { passive: false });
     return () => element.removeEventListener("wheel", wheel);
   }, [scale]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     setTop(0);
     if (ref.current) ref.current.scrollTop = 0;
   }, [revision]);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!restore || !element) return;
+    const viewportHeight = element.clientHeight || height;
+    element.scrollTop = virtualWindow(
+      total,
+      restore.logicalTop,
+      viewportHeight,
+    ).top;
+    setTop(element.scrollTop);
+    onPosition(
+      element.scrollTop * virtualScale(total, viewportHeight),
+      viewportHeight,
+      false,
+    );
+  }, [restore, total]);
   useEffect(() => {
     onRange(start, end);
   }, [start, end, onRange]);
   useEffect(() => {
-    const measure = () => setHeight(ref.current?.clientHeight || 500);
+    const element = ref.current!;
+    const measure = () =>
+      setHeight((previous) => element.clientHeight || previous);
     measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
   }, []);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (element) onPosition(element.scrollTop * scale, height, false);
+  }, [height, revision]);
   return (
     <div
       className="virtual-results"
       aria-label="搜索结果列表"
       ref={ref}
       tabIndex={0}
-      onScroll={(e) => setTop(e.currentTarget.scrollTop)}
+      onScroll={(e) => {
+        const { scrollTop, clientHeight } = e.currentTarget;
+        setTop(scrollTop);
+        const viewportHeight = clientHeight || height;
+        onPosition(
+          scrollTop * virtualScale(total, viewportHeight),
+          viewportHeight,
+          true,
+        );
+      }}
       onKeyDown={onKeyDown}
     >
       <table aria-rowcount={total + 1}>

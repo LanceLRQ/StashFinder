@@ -43,6 +43,8 @@ test("file lists suppress text selection while rename and search inputs remain e
       <VirtualResults
         total={1}
         revision={0}
+        restore={null}
+        onPosition={() => {}}
         onRange={() => {}}
         onKeyDown={() => {}}
         row={() => (

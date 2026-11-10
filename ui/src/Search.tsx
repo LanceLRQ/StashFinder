@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { indexRequest, type SearchHit } from "./index-api";
+import { indexRequest, type SearchHit, type SearchPage } from "./index-api";
 import { connectionLabel, fileTime, fileSize } from "./browse-api";
 import {
   defaultCategories,
@@ -10,7 +10,7 @@ import {
 } from "./search-options";
 import FileDetails from "./FileDetails";
 import SearchFilters from "./SearchFilters";
-import VirtualResults, { virtualScale } from "./VirtualResults";
+import VirtualResults, { virtualScale, virtualWindow } from "./VirtualResults";
 import FileContextMenu from "./FileContextMenu";
 import RenameInput from "./RenameInput";
 import FileIcon from "./FileIcon";
@@ -28,6 +28,22 @@ import {
 import "./assets.css";
 import "./search.css";
 import "./search-advanced.css";
+type CompletedTask = { partition_id: string; id: string; updated: number };
+const noCompletedTasks: CompletedTask[] = [];
+const refreshDelay = 250;
+const pause = (ms: number) =>
+  new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+async function readBatch(
+  id: number,
+  offset: number,
+  limit: number,
+): Promise<SearchPage> {
+  const reply = await indexRequest({ search_batch: { id, offset, limit } });
+  if (reply.kind !== "search_page") throw Error("搜索分页响应无效");
+  if (reply.data.error) throw Error(reply.data.error);
+  return reply.data;
+}
+
 type Selection = { range: [number, number] | null; toggles: Set<number> };
 const emptySelection = (): Selection => ({ range: null, toggles: new Set() });
 export default function Search({
@@ -41,7 +57,7 @@ export default function Search({
   onLocate,
   categories = defaultCategories,
   context,
-  indexVersion = "",
+  completedTasks = noCompletedTasks,
 }: {
   partitions: { id: string; name: string }[];
   assets?: Asset[];
@@ -53,7 +69,7 @@ export default function Search({
   onLocate?: (hit: SearchHit, folder?: boolean) => void;
   categories?: Category[];
   context?: SearchContext;
-  indexVersion?: string;
+  completedTasks?: CompletedTask[];
 }) {
   function currentHit(hit: SearchHit): SearchHit {
     if (assets === undefined) return hit;
@@ -79,13 +95,6 @@ export default function Search({
   const input = useRef<HTMLInputElement>(null);
   const operations = useFileOperations();
   const [editing, setEditing] = useState<number | null>(null);
-  const lastIndex = useRef(indexVersion);
-  useEffect(() => {
-    if (lastIndex.current !== indexVersion && editing === null) {
-      lastIndex.current = indexVersion;
-      setRevision((n) => n + 1);
-    }
-  }, [indexVersion, editing]);
   const dragging = useRef<{ x: number; y: number; started: boolean } | null>(
     null,
   );
@@ -125,7 +134,29 @@ export default function Search({
   const sequence = useRef(0);
   const [resultVersion, setResultVersion] = useState(0);
   const [range, setRange] = useState<[number, number]>([0, 24]);
-  const fetching = useRef(false);
+  const pendingId = useRef<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState("");
+  const [refreshWanted, setRefreshWanted] = useState(0);
+  const handledRefresh = useRef(0);
+  const viewportPosition = useRef({
+    logicalTop: 0,
+    height: 500,
+    lastScroll: 0,
+  });
+  const [restore, setRestore] = useState<{ logicalTop: number } | null>(null);
+  const onPosition = useCallback(
+    (logicalTop: number, height: number, scrolling: boolean) => {
+      viewportPosition.current = {
+        logicalTop,
+        height,
+        lastScroll: scrolling
+          ? Date.now()
+          : viewportPosition.current.lastScroll,
+      };
+    },
+    [],
+  );
   const viewport = useCallback(
     (a: number, b: number) =>
       setRange((previous) =>
@@ -154,15 +185,153 @@ export default function Search({
         .filter(Boolean),
     ]),
   ]);
-  const scopeKey = JSON.stringify(context);
+  const folder = types.includes("@folder");
+  const scopedPartition = partition.startsWith("@")
+    ? context?.partition
+    : partition;
+  const extensions = JSON.parse(extensionKey) as string[];
+  const queryKey = JSON.stringify({
+    text,
+    names_only: namesOnly,
+    partitions: scopedPartition ? [scopedPartition] : [],
+    options: {
+      ...options,
+      extensions,
+      kind: folder && !extensions.length ? "folder" : null,
+      include_folders: folder && !!extensions.length,
+      scope:
+        context && partition === "@folder"
+          ? {
+              partition_id: context.partition,
+              entry: context.entry,
+              recursive: true,
+            }
+          : null,
+    },
+  });
+  const observedTasks = useRef(
+    new Map(completedTasks.map((task) => [task.id, task.updated])),
+  );
+  useEffect(() => {
+    const relevant = completedTasks.some(
+      (task) =>
+        (!scopedPartition || task.partition_id === scopedPartition) &&
+        observedTasks.current.get(task.id) !== task.updated,
+    );
+    observedTasks.current = new Map(
+      completedTasks.map((task) => [task.id, task.updated]),
+    );
+    if (relevant) setRefreshWanted((n) => n + 1);
+  }, [completedTasks, scopedPartition]);
+
+  function invalidate() {
+    const token = ++sequence.current;
+    const id = pendingId.current ?? queryId.current;
+    pendingId.current = null;
+    queryId.current = null;
+    return { token, id };
+  }
+
+  async function load(token: number, background: boolean) {
+    const start = await indexRequest({ search_start: JSON.parse(queryKey) });
+    if (start.kind !== "search_started") throw Error("搜索响应无效");
+    const id = start.data;
+    if (token !== sequence.current) {
+      void indexRequest({ search_cancel: { id } }).catch(() => {});
+      return;
+    }
+    pendingId.current = id;
+    let page: SearchPage;
+    do {
+      page = await readBatch(id, 0, background ? 1 : 32);
+      if (token !== sequence.current) return;
+      if (!page.done) await pause(100);
+    } while (!page.done && token === sequence.current);
+    if (token !== sequence.current) return;
+
+    let nextCache = new Map(page.rows.map((row, index) => [index, row]));
+    if (background) {
+      while (token === sequence.current) {
+        const position = viewportPosition.current;
+        const wait = refreshDelay - (Date.now() - position.lastScroll);
+        if (wait > 0) {
+          await pause(wait);
+          continue;
+        }
+        const { start, end, logicalTop } = virtualWindow(
+          page.total,
+          position.logicalTop,
+          position.height,
+        );
+        const rows = new Map<number, SearchHit>();
+        let offset = start;
+        while (offset < end) {
+          const batch = await readBatch(
+            id,
+            offset,
+            Math.min(100, end - offset),
+          );
+          if (token !== sequence.current) return;
+          if (position !== viewportPosition.current) break;
+          batch.rows.forEach((row, index) => rows.set(offset + index, row));
+          if (!batch.done || !batch.rows.length)
+            throw Error("搜索结果分页不完整，请重试");
+          if (offset + batch.rows.length >= end) {
+            offset = end;
+          } else {
+            if (batch.next !== offset + batch.rows.length)
+              throw Error("搜索结果分页不完整，请重试");
+            offset = batch.next;
+          }
+        }
+        if (position !== viewportPosition.current) continue;
+        nextCache = rows;
+        setRestore({ logicalTop });
+        anchor.current = cursor.current = Math.floor(logicalTop / 64);
+        break;
+      }
+    } else {
+      anchor.current = cursor.current = 0;
+      setResultVersion((n) => n + 1);
+    }
+    if (token !== sequence.current) return;
+    pendingId.current = null;
+    queryId.current = id;
+    setTotal(page.total);
+    setGroups(page.groups);
+    setMissing(page.missing);
+    setUnavailable(page.unavailable);
+    setCache(nextCache);
+    setSelection(emptySelection());
+    selectedSnapshot.current = null;
+    setMenu(null);
+    setError("");
+    setBusy(false);
+    setRefreshing(false);
+  }
+
+  function fail(token: number, e: unknown, background: boolean) {
+    if (token !== sequence.current) return;
+    const { id } = invalidate();
+    if (id !== null)
+      void indexRequest({ search_cancel: { id } }).catch(() => {});
+    const message = String(e).replace(/^Error: /, "");
+    if (background) setRefreshError(message);
+    else setError(message);
+    setBusy(false);
+    setRefreshing(false);
+  }
+
   useEffect(() => {
     const token = ++sequence.current;
-    let id: number | undefined;
-    queryId.current = null;
+    handledRefresh.current = refreshWanted;
     setBusy(true);
+    setRefreshing(false);
     setError("");
+    setRefreshError("");
     setTotal(0);
     setCache(new Map());
+    setRestore(null);
     setSelection(emptySelection());
     selectedSnapshot.current = null;
     setMenu(null);
@@ -170,128 +339,76 @@ export default function Search({
     setUnavailable([]);
     setGroups(0);
     setMissing(0);
-    fetching.current = false;
-    async function run() {
-      const extensions = JSON.parse(extensionKey) as string[];
-      const folder = types.includes("@folder");
-      const queryOptions = {
-        ...options,
-        extensions,
-        kind: folder && !extensions.length ? "folder" : null,
-        include_folders: folder && !!extensions.length,
-        scope:
-          context && partition === "@folder"
-            ? {
-                partition_id: context.partition,
-                entry: context.entry,
-                recursive: true,
-              }
-            : null,
-      };
-      const start = await indexRequest({
-        search_start: {
-          text,
-          names_only: namesOnly,
-          partitions: partition.startsWith("@")
-            ? context
-              ? [context.partition]
-              : []
-            : partition
-              ? [partition]
-              : [],
-          options: queryOptions,
-        },
-      });
-      if (start.kind !== "search_started") throw Error("搜索响应无效");
-      id = start.data;
-      if (token !== sequence.current) {
-        await indexRequest({ search_cancel: { id } });
-        return;
-      }
-      queryId.current = id;
-      while (token === sequence.current) {
-        const reply = await indexRequest({
-          search_batch: { id, offset: 0, limit: 32 },
-        });
-        if (token !== sequence.current) return;
-        if (reply.kind !== "search_page") throw Error("搜索分页响应无效");
-        const page = reply.data;
-        if (page.error) throw Error(page.error);
-        if (!page.done) {
-          await new Promise((r) => window.setTimeout(r, 100));
-          continue;
-        }
-        setTotal(page.total);
-        setGroups(page.groups);
-        setMissing(page.missing);
-        setUnavailable(page.unavailable);
-        setCache(new Map(page.rows.map((row, i) => [i, row])));
-        setBusy(false);
-        setResultVersion((n) => n + 1);
-        return;
-      }
-    }
     const timer = window.setTimeout(() => {
-      void run().catch((e) => {
-        if (token === sequence.current) {
-          setError(String(e).replace(/^Error: /, ""));
-          setBusy(false);
-        }
-      });
+      if (token === sequence.current)
+        void load(token, false).catch((e) => fail(token, e, false));
     }, 150);
     return () => {
-      sequence.current++;
       window.clearTimeout(timer);
-      if (id !== undefined)
+      const { id } = invalidate();
+      if (id !== null)
         void indexRequest({ search_cancel: { id } }).catch(() => {});
     };
-  }, [
-    text,
-    namesOnly,
-    partition,
-    options,
-    extensionKey,
-    types.includes("@folder"),
-    scopeKey,
-    revision,
-  ]);
+  }, [queryKey, revision]);
+
+  useEffect(() => {
+    if (
+      !active ||
+      busy ||
+      refreshing ||
+      editing !== null ||
+      refreshWanted === handledRefresh.current
+    )
+      return;
+    let timer: number;
+    function startWhenStill() {
+      const wait =
+        refreshDelay - (Date.now() - viewportPosition.current.lastScroll);
+      if (wait > 0) {
+        timer = window.setTimeout(startWhenStill, wait);
+        return;
+      }
+      handledRefresh.current = refreshWanted;
+      const token = ++sequence.current;
+      // The service can invalidate the old ID before the start reply arrives.
+      queryId.current = null;
+      setMenu(null);
+      setRefreshError("");
+      setRefreshing(true);
+      void load(token, true).catch((e) => fail(token, e, true));
+    }
+    timer = window.setTimeout(startWhenStill, refreshDelay);
+    return () => window.clearTimeout(timer);
+  }, [active, busy, refreshing, editing, refreshWanted, queryKey, revision]);
+
   useEffect(() => {
     const id = queryId.current;
     const token = sequence.current;
-    if (id === null || busy || !total || fetching.current) return;
+    if (id === null || !active || busy || refreshing || !total) return;
     let start = range[0];
     const end = Math.min(total, range[1]);
     while (start < end && cache.has(start)) start++;
     if (start >= end) return;
-    fetching.current = true;
     let live = true;
-    void indexRequest({
-      search_batch: { id, offset: start, limit: Math.min(100, end - start) },
-    })
-      .then((reply) => {
+    void readBatch(id, start, Math.min(100, end - start))
+      .then((page) => {
         if (!live || token !== sequence.current) return;
-        if (reply.kind !== "search_page") throw Error("搜索分页响应无效");
-        if (reply.data.error) throw Error(reply.data.error);
-        if (!reply.data.rows.length) throw Error("搜索结果页为空，请重新搜索");
+        if (!page.rows.length) throw Error("搜索结果页为空，请重新搜索");
         setCache((previous) => {
           const next = new Map(
             [...previous].filter(([i]) => i >= range[0] - 100 && i < end + 100),
           );
-          reply.data.rows.forEach((row, i) => next.set(start + i, row));
+          page.rows.forEach((row, i) => next.set(start + i, row));
           return next;
         });
       })
       .catch((e) => {
         if (live && token === sequence.current) setError(String(e));
-      })
-      .finally(() => {
-        if (token === sequence.current) fetching.current = false;
       });
     return () => {
       live = false;
-      fetching.current = false;
     };
-  }, [cache, range, total, busy, resultVersion]);
+  }, [cache, range, total, busy, refreshing, active, resultVersion]);
   const selected = (i: number) =>
     !!selection.range && i >= selection.range[0] && i <= selection.range[1]
       ? !selection.toggles.has(i)
@@ -341,15 +458,13 @@ export default function Search({
     }
   }
   function cancel() {
-    const token = ++sequence.current;
-    if (queryId.current !== null)
-      void indexRequest({ search_cancel: { id: queryId.current } }).catch(
-        (e) => {
-          if (token === sequence.current)
-            setError(`取消请求失败：${String(e).replace(/^Error: /, "")}`);
-        },
-      );
-    queryId.current = null;
+    const { token, id } = invalidate();
+    handledRefresh.current = refreshWanted;
+    if (id !== null)
+      void indexRequest({ search_cancel: { id } }).catch((e) => {
+        if (token === sequence.current)
+          setError(`取消请求失败：${String(e).replace(/^Error: /, "")}`);
+      });
     setBusy(false);
     setError("搜索已取消");
   }
@@ -405,6 +520,7 @@ export default function Search({
     }
   }
   function menuAction(action: MenuAction) {
+    if (queryId.current === null) return;
     if (action === "open") {
       if (selectedRow) open(selectedRow);
       return;
@@ -434,7 +550,7 @@ export default function Search({
     sameParent,
     singleFile: count === 1 && selectedRow?.file.kind === "file",
     folder: count === 1 && selectedRow?.file.kind === "folder",
-    blocked: busy || editing !== null || queryId.current === null,
+    blocked: busy || refreshing || editing !== null || queryId.current === null,
   };
   const dispatch = useFileCommands(facts, menuAction, active, onCommands, [
     { label: "预览窗格", checked: preview, run: () => setPreview((v) => !v) },
@@ -516,6 +632,17 @@ export default function Search({
           {error}
         </p>
       )}
+      {refreshError && (
+        <p role="alert" className="asset-error">
+          后台刷新失败：{refreshError}{" "}
+          <button
+            onClick={() => setRefreshWanted((n) => n + 1)}
+            disabled={refreshing}
+          >
+            重试
+          </button>
+        </p>
+      )}
       {unavailable.length > 0 && (
         <details className="search-unavailable">
           <summary>{unavailable.length} 个分区未参与搜索</summary>
@@ -538,6 +665,8 @@ export default function Search({
           total={total}
           revision={resultVersion}
           onRange={viewport}
+          onPosition={onPosition}
+          restore={restore}
           onKeyDown={(e) => {
             if (fileEditingKey(e)) return;
             if (

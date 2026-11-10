@@ -13,6 +13,7 @@ import Search from "./Search";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.resetAllMocks();
 });
 const hit = {
@@ -180,4 +181,202 @@ test("missing indexes are visible even when no files match", async () => {
   render(<Search partitions={[]} onBack={() => {}} />);
   expect(await screen.findByText("Movies：尚无可搜索索引")).toBeTruthy();
   expect(screen.getByText("没有匹配的文件")).toBeTruthy();
+});
+
+const task = { id: "reindex", partition_id: "p", updated: 1 };
+const tick = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+
+function refreshFixture() {
+  vi.useFakeTimers();
+  let id = 0;
+  const starts: string[] = [];
+  const cancels: number[] = [];
+  const batches: { id: number; offset: number; limit: number }[] = [];
+  const fixture = {
+    starts,
+    cancels,
+    batches,
+    total: 1600,
+    fail: false,
+    delay: (..._batch: [id: number, offset: number]) => 0,
+  };
+  vi.mocked(invoke).mockImplementation(async (_, args: any) => {
+    if (args.action.search_start) {
+      starts.push(args.action.search_start.text);
+      id++;
+      if (fixture.fail) throw Error("索引暂时不可用");
+      return { kind: "search_started", data: id };
+    }
+    if (args.action.search_cancel) {
+      cancels.push(args.action.search_cancel.id);
+      return { kind: "accepted" };
+    }
+    const batch = args.action.search_batch;
+    batches.push(batch);
+    const total = fixture.total;
+    const count = Math.min(
+      batch.limit,
+      batch.id === 1 ? 32 : 4,
+      total - batch.offset,
+    );
+    const delay = fixture.delay(batch.id, batch.offset);
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    const rows = Array.from({ length: count }, (_, i) => ({
+      ...hit,
+      file: { ...hit.file, name: `query-${batch.id}-${batch.offset + i}.txt` },
+    }));
+    return {
+      kind: "search_page",
+      data: {
+        ...page,
+        id: batch.id,
+        total,
+        rows,
+        next: batch.offset + count < total ? batch.offset + count : null,
+      },
+    };
+  });
+  return fixture;
+}
+
+test("defers and combines relevant task updates until the visible search stops scrolling", async () => {
+  const { starts } = refreshFixture();
+  const other = { id: "other", partition_id: "q", updated: 1 };
+  const pruned = { id: "pruned", partition_id: "p", updated: 1 };
+  const partitions = [{ id: "p", name: "Movies" }];
+  const view = render(
+    <Search partitions={partitions} completedTasks={[task, other, pruned]} />,
+  );
+  fireEvent.change(screen.getByRole("combobox", { name: "分区范围" }), {
+    target: { value: "p" },
+  });
+  await tick(150);
+  expect(starts).toHaveLength(1);
+  view.rerender(
+    <Search
+      partitions={partitions}
+      completedTasks={[{ ...other, updated: 2 }, task]}
+    />,
+  );
+  await tick(400);
+  expect(starts).toHaveLength(1);
+  view.rerender(
+    <Search
+      partitions={partitions}
+      active={false}
+      completedTasks={[{ ...task, updated: 2 }]}
+    />,
+  );
+  await tick(400);
+  expect(starts).toHaveLength(1);
+  view.rerender(
+    <Search
+      partitions={partitions}
+      completedTasks={[{ ...task, updated: 3 }]}
+    />,
+  );
+  const list = screen.getByLabelText("搜索结果列表");
+  for (const scrollTop of [31000, 32000, 33000]) {
+    fireEvent.scroll(list, { target: { scrollTop } });
+    await tick(200);
+    expect(starts).toHaveLength(1);
+  }
+  await tick(50);
+  expect(starts).toHaveLength(2);
+  expect(list.scrollTop).toBe(33000);
+});
+
+test("keeps the old viewport through short pages and ignores late old pagination", async () => {
+  const fixture = refreshFixture();
+  const partitions = [{ id: "p", name: "Movies" }];
+  const view = render(
+    <Search partitions={partitions} completedTasks={[task]} />,
+  );
+  await tick(150);
+  const list = screen.getByLabelText("搜索结果列表");
+  fireEvent.scroll(list, { target: { scrollTop: 32000 } });
+  await tick(0);
+  expect(screen.getByText("query-1-492.txt")).toBeTruthy();
+  fireEvent.click(screen.getByText("query-1-492.txt").closest("tr")!);
+  fixture.delay = (id, offset) => (id === 2 && offset > 0 ? 30 : 0);
+  view.rerender(
+    <Search
+      partitions={partitions}
+      completedTasks={[{ ...task, updated: 2 }]}
+    />,
+  );
+  await tick(250);
+  expect(screen.getByText("1,600 条结果")).toBeTruthy();
+  expect(screen.getByText("query-1-492.txt")).toBeTruthy();
+  expect(screen.queryByText("正在搜索…")).toBeNull();
+  expect(list.scrollTop).toBe(32000);
+  fireEvent.contextMenu(screen.getByText("query-1-492.txt").closest("tr")!);
+  expect(screen.getByRole("menuitem", { name: "复制路径" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  await tick(240);
+  expect(
+    fixture.batches.filter(({ id }) => id === 2).map(({ offset }) => offset),
+  ).toEqual([0, 492, 496, 500, 504, 508, 512]);
+  expect(screen.getByText("query-2-515.txt")).toBeTruthy();
+  expect(screen.queryByText("query-1-492.txt")).toBeNull();
+  expect(screen.queryByText("已选择 1 项")).toBeNull();
+  expect(list.scrollTop).toBe(32000);
+  fixture.delay = (id, offset) => (id === 2 && offset > 0 ? 600 : 0);
+  fireEvent.scroll(list, { target: { scrollTop: 64000 } });
+  view.rerender(
+    <Search
+      partitions={partitions}
+      completedTasks={[{ ...task, updated: 3 }]}
+    />,
+  );
+  fixture.total = 50;
+  await tick(250);
+  expect(screen.getByText("50 条结果")).toBeTruthy();
+  expect(list.scrollTop).toBe(2700);
+  await tick(600);
+  expect(screen.getByText("query-3-49.txt")).toBeTruthy();
+  expect(screen.queryByText(/query-2-99/)).toBeNull();
+});
+
+test("keeps failed background results retryable and a new query supersedes the retry", async () => {
+  const fixture = refreshFixture();
+  const partitions = [{ id: "p", name: "Movies" }];
+  const view = render(
+    <Search partitions={partitions} completedTasks={[task]} />,
+  );
+  await tick(150);
+  const list = screen.getByLabelText("搜索结果列表");
+  fireEvent.scroll(list, { target: { scrollTop: 32000 } });
+  await tick(0);
+  fixture.fail = true;
+  view.rerender(
+    <Search
+      partitions={partitions}
+      completedTasks={[{ ...task, updated: 2 }]}
+    />,
+  );
+  await tick(250);
+  expect(screen.getByRole("alert").textContent).toContain("索引暂时不可用");
+  expect(screen.getByText("query-1-492.txt")).toBeTruthy();
+  expect(list.scrollTop).toBe(32000);
+  fixture.fail = false;
+  fixture.delay = (id, offset) => (id === 3 && offset > 0 ? 600 : 0);
+  fireEvent.click(screen.getByRole("button", { name: "重试" }));
+  await tick(250);
+  expect(fixture.starts).toHaveLength(3);
+  expect(screen.getByText("query-1-492.txt")).toBeTruthy();
+  fireEvent.change(screen.getByRole("searchbox"), {
+    target: { value: "changed" },
+  });
+  expect(screen.getByText("正在搜索…")).toBeTruthy();
+  await tick(150);
+  expect(fixture.starts.at(-1)).toBe("changed");
+  expect(fixture.cancels).toContain(3);
+  expect(list.scrollTop).toBe(0);
+  await tick(600);
+  expect(screen.getByText("query-4-0.txt")).toBeTruthy();
+  expect(screen.queryByText(/query-3-/)).toBeNull();
 });
