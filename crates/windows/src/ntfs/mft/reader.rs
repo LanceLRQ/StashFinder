@@ -13,6 +13,53 @@ use std::{
 const BLOCK_BYTES: usize = 64 * 1024;
 const CACHE_BYTES: usize = 4 * 1024 * 1024;
 
+pub fn read_mft_object(
+    disk: &mut dyn ReadAt,
+    geometry: &Geometry,
+    reference: u64,
+) -> Result<NativeObject> {
+    let mut scanner = Scanner {
+        disk,
+        geometry,
+        cancelled: &AtomicBool::new(false),
+        stats: FastScanStats::default(),
+    };
+    let mut record = scanner.live_record(reference)?;
+    ensure!(record.base == 0, "目标不是 MFT 基记录");
+    let list = scanner.list(&mut record)?;
+    let mut extensions = HashMap::new();
+    for entry in list {
+        if entry.reference == reference {
+            ensure!(
+                record.attributes.iter().any(|attr| entry.matches(attr)),
+                "基记录属性列表不匹配"
+            );
+            continue;
+        }
+        if let std::collections::hash_map::Entry::Vacant(slot) = extensions.entry(entry.reference) {
+            let extension = scanner.live_record(entry.reference)?;
+            ensure!(extension.base == reference, "属性扩展记录身份不匹配");
+            ensure!(
+                !extension.attributes.iter().any(|attr| attr.kind == 0x20),
+                "属性扩展记录包含嵌套列表"
+            );
+            slot.insert(extension);
+        }
+        let extension = extensions
+            .get_mut(&entry.reference)
+            .expect("extension is loaded");
+        let index = extension
+            .attributes
+            .iter()
+            .position(|attr| entry.matches(attr))
+            .context("扩展属性列表不匹配")?;
+        record
+            .attributes
+            .push(extension.attributes.swap_remove(index));
+    }
+    record.into_object()
+}
+
 pub trait ReadAt {
     fn read_exact_at(&mut self, offset: u64, out: &mut [u8]) -> Result<()>;
 
@@ -66,6 +113,22 @@ struct Scanner<'a> {
 }
 
 impl Scanner<'_> {
+    fn live_record(&mut self, reference: u64) -> Result<Record> {
+        let mut bytes = vec![0; self.geometry.record_bytes];
+        let found = self
+            .disk
+            .bootstrap_record(reference, &mut bytes)?
+            .context("MFT 定点读取不可用")?;
+        ensure!(
+            found & SEGMENT_MASK == reference & SEGMENT_MASK,
+            "MFT 定点读取返回不同记录"
+        );
+        let record = decode_record(&mut bytes, reference & SEGMENT_MASK, self.geometry)?
+            .context("MFT 记录未使用")?;
+        ensure!(record.reference == reference, "MFT 记录序列号已变化");
+        Ok(record)
+    }
+
     fn check_cancelled(&self) -> Result<()> {
         ensure!(!self.cancelled.load(Ordering::Relaxed), "索引已取消");
         Ok(())

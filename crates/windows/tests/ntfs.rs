@@ -2,6 +2,30 @@ use stashfinder_windows::ntfs::{decode_directory, decode_usn, read_directory};
 use std::sync::atomic::AtomicBool;
 
 #[test]
+#[ignore = "requires an elevated process and an explicitly selected live NTFS object"]
+fn live_exclusive_object_metadata_is_read_without_opening_its_contents() {
+    let root = std::env::var("STASHFINDER_TEST_NTFS_VOLUME").unwrap();
+    let id = u64::from_str_radix(&std::env::var("STASHFINDER_TEST_NTFS_ID").unwrap(), 16).unwrap();
+    let name = std::env::var("STASHFINDER_TEST_NTFS_NAME").unwrap();
+    let source = stashfinder_windows::ntfs::VolumeReader::open(&root).unwrap();
+    let object = source.lookup_object(id).unwrap().unwrap();
+    assert_eq!(object.entry.id, id);
+    assert!(
+        object
+            .links
+            .iter()
+            .any(|(_, value)| String::from_utf16_lossy(value) == name)
+    );
+    assert!(object.entry.size > 0);
+    assert!(object.entry.created > 0);
+    source.verify().unwrap();
+    println!(
+        "{:016x} size={} links={:?}",
+        object.entry.id, object.entry.size, object.links
+    );
+}
+
+#[test]
 fn journal_uses_the_stricter_valid_start_and_rejects_truncated_bounds() {
     let mut bytes = vec![0u8; 56];
     bytes[..8].copy_from_slice(&7u64.to_le_bytes());

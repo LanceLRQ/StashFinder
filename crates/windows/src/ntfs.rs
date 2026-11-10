@@ -185,6 +185,7 @@ impl mft::ReadAt for RawMetadata<'_> {
         let length = read_field::<u32>(&data, 8)? as usize;
         ensure!(length == out.len(), "MFT 辅助记录尺寸不匹配");
         out.copy_from_slice(data.get(12..12 + length).context("MFT 辅助记录截断")?);
+        mft::prepare_control_record(out)?;
         Ok(Some(read_field(&data, 0)?))
     }
 }
@@ -537,6 +538,24 @@ impl VolumeReader {
                     || code == Some(ERROR_PATH_NOT_FOUND.to_hresult())
                 {
                     return Ok(None);
+                }
+                if code == Some(ERROR_SHARING_VIOLATION.to_hresult()) {
+                    // System-owned files may deny file handles while their metadata remains readable.
+                    let data = self.handle.ioctl(FSCTL_GET_NTFS_VOLUME_DATA, &[])?;
+                    ensure!(
+                        read_field::<u64>(&data, 0)? == self.serial64,
+                        "卷文件系统身份已变化"
+                    );
+                    let geometry = mft::Geometry::from_volume_data(&data)?
+                        .context("此 NTFS 版本不支持独占文件元数据读取")?;
+                    let mut disk = RawMetadata {
+                        handle: &self.handle,
+                        sector: geometry.sector_bytes,
+                        scratch: Vec::new(),
+                    };
+                    return mft::read_mft_object(&mut disk, &geometry, id)
+                        .map(Some)
+                        .with_context(|| format!("读取独占文件 MFT {id:016x}"));
                 }
                 if code == Some(ERROR_INVALID_PARAMETER.to_hresult()) {
                     // NTFS can reject a stale sequence number with INVALID_PARAMETER.

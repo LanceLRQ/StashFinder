@@ -1,7 +1,8 @@
 mod reader;
 mod record;
 
-pub use reader::{FastScanStats, ReadAt, scan_mft};
+pub use reader::{FastScanStats, ReadAt, read_mft_object, scan_mft};
+pub use record::prepare_control_record;
 pub use record::{Attribute, AttributeValue, DataRun, Record, decode_record, decode_runs};
 
 use crate::volumes::read_field;

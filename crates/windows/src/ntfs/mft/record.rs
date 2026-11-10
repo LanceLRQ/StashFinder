@@ -189,6 +189,30 @@ pub(super) fn utf16(bytes: &[u8]) -> Vec<u16> {
         .collect()
 }
 
+/// Normalize kernel-restored control-code records for the strict on-disk decoder.
+pub fn prepare_control_record(bytes: &mut [u8]) -> Result<()> {
+    let usa = usize::from(read_field::<u16>(bytes, 4)?);
+    let count = usize::from(read_field::<u16>(bytes, 6)?);
+    ensure!(
+        bytes.len() >= 512
+            && bytes.len().is_multiple_of(512)
+            && usa >= 42
+            && usa.is_multiple_of(2)
+            && count == bytes.len() / 512 + 1
+            && usa + count * 2 <= 510,
+        "MFT 控制记录修复数组无效"
+    );
+    let signature = read_field::<u16>(bytes, usa)?;
+    let protected = (1..count).all(|i| bytes[i * 512 - 2..i * 512] == signature.to_le_bytes());
+    let restored =
+        (1..count).all(|i| bytes[i * 512 - 2..i * 512] == bytes[usa + i * 2..usa + i * 2 + 2]);
+    ensure!(protected || restored, "MFT 控制记录扇区尾部不一致");
+    for i in 1..count {
+        bytes[i * 512 - 2..i * 512].copy_from_slice(&signature.to_le_bytes());
+    }
+    Ok(())
+}
+
 pub fn decode_record(
     bytes: &mut [u8],
     ordinal: u64,
