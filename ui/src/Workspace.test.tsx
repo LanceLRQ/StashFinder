@@ -7,7 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import Workspace from "./Workspace";
 import FileOperations from "./FileOperations";
 import DirectoryTree from "./DirectoryTree";
@@ -20,6 +20,14 @@ vi.mock("./browse-api", async (original) => ({
   readDirectory: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+beforeAll(() => {
+  HTMLDialogElement.prototype.showModal = function () {
+    this.open = true;
+  };
+  HTMLDialogElement.prototype.close = function () {
+    this.open = false;
+  };
+});
 afterEach(() => {
   cleanup();
   localStorage.clear();
@@ -106,6 +114,69 @@ function setup() {
     />,
   );
 }
+test("refreshes the current directory once from either workspace entry", async () => {
+  setup();
+  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
+    target: { value: "p" },
+  });
+  const row = await screen.findByRole("row", { name: /notes.txt/ });
+  const reads = () =>
+    vi
+      .mocked(readDirectory)
+      .mock.calls.filter(([request]) => !request.folders_only).length;
+  const initial = reads();
+  fireEvent.click(screen.getByRole("button", { name: "查看" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "刷新当前页" }));
+  await waitFor(() => expect(reads()).toBe(initial + 1));
+  fireEvent.keyDown(row, { key: "F5" });
+  await waitFor(() => expect(reads()).toBe(initial + 2));
+  expect(screen.queryByRole("button", { name: "刷新目录" })).toBeNull();
+  expect(screen.queryByText("视图")).toBeNull();
+});
+
+test("keeps partition switching reachable when the tree and breadcrumbs are hidden", async () => {
+  const view = setup();
+  const backup = {
+    ...asset,
+    registration: {
+      ...asset.registration,
+      partition_id: "backup",
+      name: "Backup",
+    },
+  };
+  view.rerender(
+    <Workspace
+      assets={[asset, backup]}
+      includePath
+      request={{ text: "", revision: 0 }}
+    />,
+  );
+  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
+    target: { value: "p" },
+  });
+  await screen.findByRole("row", { name: /notes.txt/ });
+  expect(
+    within(screen.getByRole("navigation", { name: "目录位置" })).getByRole(
+      "combobox",
+      { name: "浏览分区" },
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByRole("complementary", { name: "预览窗格" })).toBeNull();
+  for (const name of ["目录树", "面包屑"]) {
+    fireEvent.click(screen.getByRole("button", { name: "查看" }));
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name }));
+  }
+  expect(screen.queryByRole("combobox", { name: "浏览分区" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "文件" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "切换浏览分区…" }));
+  const dialog = screen.getByRole("dialog", { name: "切换浏览分区" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Backup" }));
+  await screen.findByRole("tab", { name: "Backup", selected: true });
+  expect(readDirectory).toHaveBeenCalledWith(
+    expect.objectContaining({ partition_id: "backup" }),
+  );
+});
+
 test("published index changes refresh the current directory without changing its location", async () => {
   const view = setup();
   fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
@@ -384,7 +455,7 @@ test("rejects stale pagination without discarding visible rows and refreshes the
   expect(readDirectory).toHaveBeenCalledWith(
     expect.objectContaining({ generation: "1", revision: "2", offset: 2 }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "刷新目录" }));
+  fireEvent.keyDown(screen.getByRole("tabpanel"), { key: "F5" });
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
 });
 test("ignores late directory responses and navigates to the nearest surviving ancestor", async () => {
@@ -402,7 +473,7 @@ test("ignores late directory responses and navigates to the nearest surviving an
         })
       : root,
   );
-  fireEvent.click(screen.getByRole("button", { name: "刷新目录" }));
+  fireEvent.keyDown(screen.getByRole("tabpanel"), { key: "F5" });
   await waitFor(() => expect(finish).toBeTruthy());
   fireEvent.click(screen.getByRole("button", { name: "上一级" }));
   await screen.findByRole("row", { name: /notes.txt/ });
@@ -422,13 +493,17 @@ test("shows offline metadata and allows panes and breadcrumbs to be hidden", asy
     target: { value: "p" },
   });
   fireEvent.click(await screen.findByRole("row", { name: /notes.txt/ }));
+  const toggle = (name: string) => {
+    fireEvent.click(screen.getByRole("button", { name: "查看" }));
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name }));
+  };
+  toggle("预览窗格");
   const preview = screen.getByRole("complementary", { name: "预览窗格" });
   expect(within(preview).getByText("离线")).toBeTruthy();
   expect(within(preview).getAllByText("未知").length).toBeGreaterThan(0);
-  fireEvent.click(screen.getByText("视图"));
-  fireEvent.click(screen.getByRole("checkbox", { name: "预览窗格" }));
-  fireEvent.click(screen.getByRole("checkbox", { name: "面包屑" }));
-  fireEvent.click(screen.getByRole("checkbox", { name: "目录树" }));
+  toggle("预览窗格");
+  toggle("面包屑");
+  toggle("目录树");
   expect(screen.queryByRole("complementary", { name: "预览窗格" })).toBeNull();
   expect(screen.queryByRole("navigation", { name: "目录位置" })).toBeNull();
   expect(screen.queryByRole("navigation", { name: "目录树" })).toBeNull();

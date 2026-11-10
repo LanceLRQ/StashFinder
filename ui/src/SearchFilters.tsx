@@ -13,6 +13,8 @@ export default function SearchFilters({
   setTypes,
   custom,
   setCustom,
+  namesOnly,
+  setNamesOnly,
 }: {
   options: SearchOptions;
   setOptions: (o: SearchOptions) => void;
@@ -21,6 +23,8 @@ export default function SearchFilters({
   setTypes: (s: string[]) => void;
   custom: string;
   setCustom: (s: string) => void;
+  namesOnly: boolean;
+  setNamesOnly: (value: boolean) => void;
 }) {
   const update = (key: keyof SearchOptions, value: unknown) =>
     setOptions({ ...options, [key]: value });
@@ -82,6 +86,14 @@ export default function SearchFilters({
       <details className="view-menu search-filters">
         <summary>筛选{count ? ` ${count}` : ""}</summary>
         <div>
+          <label>
+            <input
+              type="checkbox"
+              checked={namesOnly}
+              onChange={(e) => setNamesOnly(e.target.checked)}
+            />
+            仅文件名
+          </label>
           <label>
             匹配
             <select

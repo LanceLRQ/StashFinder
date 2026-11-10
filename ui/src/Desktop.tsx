@@ -37,6 +37,7 @@ export default function Desktop() {
     revision: number;
   }>();
   const tasks = useTasks(true);
+  const [taskRefreshBlocked, setTaskRefreshBlocked] = useState(false);
   const [indexChoice, setIndexChoice] = useState("");
   const assets = snapshot?.assets ?? noAssets;
   const partitions = assets.map((a) => ({
@@ -114,6 +115,7 @@ export default function Desktop() {
               refresh: () => deviceControls.current?.refresh(),
               retry: () => deviceControls.current?.retry(),
             }}
+            taskRefresh={taskRefreshBlocked ? undefined : tasks.refresh}
             notice={
               preferenceError && (
                 <p role="alert" className="desktop-error preference-error">
@@ -146,6 +148,7 @@ export default function Desktop() {
                   data={tasks.data}
                   error={tasks.error}
                   onRefresh={tasks.refresh}
+                  onRefreshBlocked={setTaskRefreshBlocked}
                   onChooseIndex={setIndexChoice}
                   partitions={partitions}
                 />

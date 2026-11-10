@@ -87,7 +87,7 @@ export default function BrowsePane({
   const [notice, setNotice] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [tree, setTree] = useState(true);
-  const [preview, setPreview] = useState(true);
+  const [preview, setPreview] = useState(false);
   const [breadcrumb, setBreadcrumb] = useState(true);
   const [searchText, setSearchText] = useState("");
   const composing = useRef(false);
@@ -295,15 +295,22 @@ export default function BrowsePane({
       !!online && !!page && !page.partial && !asset?.error && !busy && !error,
     blocked: editing !== null,
   };
-  const dispatch = useFileCommands(facts, menuAction, active, onCommands, [
-    { label: "目录树", checked: tree, run: () => setTree((v) => !v) },
-    { label: "预览窗格", checked: preview, run: () => setPreview((v) => !v) },
-    {
-      label: "面包屑",
-      checked: breadcrumb,
-      run: () => setBreadcrumb((v) => !v),
-    },
-  ]);
+  const dispatch = useFileCommands(
+    facts,
+    menuAction,
+    active,
+    onCommands,
+    [
+      { label: "目录树", checked: tree, run: () => setTree((v) => !v) },
+      { label: "预览窗格", checked: preview, run: () => setPreview((v) => !v) },
+      {
+        label: "面包屑",
+        checked: breadcrumb,
+        run: () => setBreadcrumb((v) => !v),
+      },
+    ],
+    asset && !busy && editing === null ? reload : undefined,
+  );
   function fileKeys(e: React.KeyboardEvent) {
     return fileKey(e, dispatch, () => {
       const rect = (e.target as HTMLElement).getBoundingClientRect();
@@ -337,14 +344,34 @@ export default function BrowsePane({
       },
     );
   }
+  const partitionSelect = (
+    <select
+      aria-label="浏览分区"
+      value=""
+      onChange={(e) => {
+        const next = e.target.value;
+        if (next === partition) navigate(null);
+        else onChoose(next);
+      }}
+    >
+      <option value="" disabled>
+        {asset?.registration.name ?? "选择分区"}
+      </option>
+      {assets.map(({ registration }) => (
+        <option
+          key={registration.partition_id}
+          value={registration.partition_id}
+        >
+          {registration.name}
+          {registration.partition_id === partition ? "（根目录）" : ""}
+        </option>
+      ))}
+    </select>
+  );
   return (
     <div
       className="browse-pane"
       onKeyDown={(e) => {
-        if (e.key === "F5") {
-          e.preventDefault();
-          reload();
-        }
         if (
           e.altKey &&
           e.key === "ArrowUp" &&
@@ -380,75 +407,19 @@ export default function BrowsePane({
             }
           }}
         />
-        <select
-          aria-label="浏览分区"
-          value={partition || ""}
-          onChange={(e) => onChoose(e.target.value)}
-        >
-          <option value="" disabled>
-            选择分区
-          </option>
-          {assets.map((a) => (
-            <option
-              key={a.registration.partition_id}
-              value={a.registration.partition_id}
-            >
-              {a.registration.name}
-            </option>
-          ))}
-        </select>
-        <button
-          aria-label="刷新目录"
-          title="刷新目录 (F5)"
-          disabled={!asset}
-          onClick={reload}
-        >
-          刷新
-        </button>
-        <details className="view-menu">
-          <summary>视图</summary>
-          <div>
-            <label>
-              <input
-                type="checkbox"
-                checked={tree}
-                onChange={(e) => setTree(e.target.checked)}
-              />
-              目录树
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={preview}
-                onChange={(e) => setPreview(e.target.checked)}
-              />
-              预览窗格
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={breadcrumb}
-                onChange={(e) => setBreadcrumb(e.target.checked)}
-              />
-              面包屑
-            </label>
-          </div>
-        </details>
-        <span className="browse-count" role="status">
-          {busy
-            ? "正在读取…"
-            : selection.length
-              ? `已选择 ${selection.length} 项`
-              : page
-                ? `${page.entries.length}${page.next !== null ? "+" : ""} 项`
-                : ""}
-        </span>
       </div>
       {!asset ? (
         <div className="browse-body">
           {tree && <nav className="directory-tree" aria-label="目录树" />}
-          <div className="search-empty directory-main">
-            {emptyState ?? <p>选择已登记分区以浏览文件</p>}
+          <div className="directory-main">
+            {breadcrumb && assets.length > 0 && (
+              <nav className="breadcrumbs" aria-label="目录位置">
+                {partitionSelect}
+              </nav>
+            )}
+            <div className="search-empty">
+              {emptyState ?? <p>选择已登记分区以浏览文件</p>}
+            </div>
           </div>
         </div>
       ) : (
@@ -512,19 +483,15 @@ export default function BrowsePane({
                   >
                     ↑
                   </button>
-                  {(page?.ancestors || [{ entry: [], name: "" }]).map(
-                    (a, i) => (
-                      <span key={a.entry.join(",")}>
-                        {i > 0 && <span aria-hidden="true"> / </span>}
-                        <button
-                          title={i ? a.name : asset.registration.name}
-                          onClick={() => navigate(i ? a.entry : null)}
-                        >
-                          {i ? a.name : asset.registration.name}
-                        </button>
-                      </span>
-                    ),
-                  )}
+                  {partitionSelect}
+                  {page?.ancestors.slice(1).map((a) => (
+                    <span key={a.entry.join(",")}>
+                      <span aria-hidden="true"> / </span>
+                      <button title={a.name} onClick={() => navigate(a.entry)}>
+                        {a.name}
+                      </button>
+                    </span>
+                  ))}
                 </nav>
               )}
               {page && (
@@ -606,7 +573,14 @@ export default function BrowsePane({
             )}
           </div>
           <footer className="browse-status">
-            {count > 0 && <span>已选择 {count.toLocaleString()} 项</span>}
+            <span role="status">
+              {busy
+                ? "正在读取…"
+                : count > 0
+                  ? `已选择 ${count.toLocaleString()} 项`
+                  : page &&
+                    `${(page.total ?? page.entries.length).toLocaleString()} 项`}
+            </span>
             <span>
               {connectionLabel[asset.connection] || "状态未确认"}
               {asset.connection === "online" && asset.mounts.length > 0

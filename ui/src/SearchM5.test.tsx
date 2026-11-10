@@ -8,8 +8,11 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { useState, type ComponentProps } from "react";
 import Search from "./Search";
+import AppMenu from "./AppMenu";
 import FileOperations from "./FileOperations";
+import type { FileCommandContext } from "./file-operations";
 import type { Asset } from "./asset-api";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => {
@@ -17,13 +20,31 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
+function SearchWithView(props: ComponentProps<typeof Search>) {
+  const [commands, setCommands] = useState<FileCommandContext | null>(null);
+  return (
+    <>
+      <AppMenu
+        groups={[
+          { label: "查看", accessKey: "v", items: commands?.views ?? [] },
+        ]}
+      />
+      <Search {...props} onCommands={setCommands} />
+    </>
+  );
+}
+
+function openPreview() {
+  fireEvent.click(screen.getByRole("button", { name: "查看" }));
+  fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "预览窗格" }));
+}
+
 test("multi-selection preview uses shared facts only when the full selection is loaded", async () => {
   mock();
-  render(<Search partitions={[]} />);
+  render(<SearchWithView partitions={[]} />);
   fireEvent.click(await screen.findByText("file-0.txt"));
   fireEvent.click(screen.getByText("file-1.txt"), { shiftKey: true });
-  fireEvent.click(screen.getByText("视图"));
-  fireEvent.click(screen.getByLabelText("预览窗格"));
+  openPreview();
   const preview = within(
     screen.getByRole("complementary", { name: "预览窗格" }),
   );
@@ -121,18 +142,19 @@ test("device changes refresh cached result status and menus without restarting t
     mounts: ["E:\\"],
     error: null,
   } as Asset;
-  const { rerender } = render(<Search partitions={[]} assets={[asset]} />);
+  const { rerender } = render(
+    <SearchWithView partitions={[]} assets={[asset]} />,
+  );
   const item = await screen.findByText("file-0.txt");
   fireEvent.click(item);
-  fireEvent.click(screen.getByText("视图"));
-  fireEvent.click(screen.getByLabelText("预览窗格"));
+  openPreview();
   const list = screen.getByLabelText("搜索结果列表");
   fireEvent.scroll(list, { target: { scrollLeft: 120 } });
   const starts = vi
     .mocked(invoke)
     .mock.calls.filter(([, args]: any) => args?.action?.search_start).length;
   rerender(
-    <Search
+    <SearchWithView
       partitions={[]}
       assets={[{ ...asset, connection: "offline", mounts: [] }]}
     />,
@@ -152,7 +174,10 @@ test("device changes refresh cached result status and menus without restarting t
     screen.getByRole("menuitem", { name: /复制文件/ }).getAttribute("disabled"),
   ).not.toBeNull();
   rerender(
-    <Search partitions={[]} assets={[{ ...asset, mounts: ["Z:\\"] }]} />,
+    <SearchWithView
+      partitions={[]}
+      assets={[{ ...asset, mounts: ["Z:\\"] }]}
+    />,
   );
   expect(within(row).getByText("在线")).toBeTruthy();
   expect(within(row).getByText(/Z:\\/)).toBeTruthy();
@@ -160,7 +185,7 @@ test("device changes refresh cached result status and menus without restarting t
     screen.getByRole("menuitem", { name: /复制文件/ }).getAttribute("disabled"),
   ).toBeNull();
   rerender(
-    <Search
+    <SearchWithView
       partitions={[]}
       assets={[
         {

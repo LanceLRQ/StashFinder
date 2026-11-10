@@ -208,14 +208,6 @@
   min-width: 150px;
   flex: 1;
 }
-.browse-toolbar select {
-  max-width: 150px;
-}
-.browse-count {
-  color: #647082;
-  font-size: 12px;
-  white-space: nowrap;
-}
 .view-menu {
   position: relative;
   flex-shrink: 0;
@@ -325,6 +317,21 @@
   text-overflow: ellipsis;
   overflow: hidden;
   vertical-align: middle;
+}
+.breadcrumbs select {
+  max-width: 200px;
+}
+.browse-partitions {
+  display: grid;
+  gap: 4px;
+  padding: 0;
+  list-style: none;
+  max-height: 50vh;
+  overflow: auto;
+}
+.browse-partitions button {
+  width: 100%;
+  text-align: left;
 }
 .directory-list {
   flex: 1;

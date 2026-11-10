@@ -130,6 +130,7 @@ export type FileCommandContext = {
   enabled: (action: MenuAction) => boolean;
   dispatch: (action: MenuAction) => void;
   views: ViewOption[];
+  refresh?: () => void;
 };
 export function useFileCommands(
   facts: CommandFacts,
@@ -137,10 +138,11 @@ export function useFileCommands(
   active: boolean,
   onContext: ((context: FileCommandContext | null) => void) | undefined,
   views: ViewOption[],
+  refresh?: () => void,
 ) {
-  const current = useRef({ facts, run, active, views });
+  const current = useRef({ facts, run, active, views, refresh });
   useLayoutEffect(() => {
-    current.current = { facts, run, active, views };
+    current.current = { facts, run, active, views, refresh };
   });
   const enabled = (action: MenuAction) =>
     current.current.active && commandEnabled(action, current.current.facts);
@@ -151,18 +153,24 @@ export function useFileCommands(
     .map((id) => Number(commandEnabled(id, facts)))
     .join("");
   const checked = views.map((view) => Number(view.checked)).join("");
+  const canRefresh = refresh !== undefined;
   useLayoutEffect(() => {
     if (!active || !onContext) return;
     onContext({
       enabled,
       dispatch,
+      refresh: canRefresh
+        ? () => {
+            if (current.current.active) current.current.refresh?.();
+          }
+        : undefined,
       views: current.current.views.map((view, index) => ({
         ...view,
         run: () => current.current.views[index]?.run(),
       })),
     });
     return () => onContext(null);
-  }, [active, onContext, availability, checked]);
+  }, [active, onContext, availability, checked, canRefresh]);
   return dispatch;
 }
 

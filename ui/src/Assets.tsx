@@ -310,12 +310,6 @@ export default function Assets({
           <option value="offline">离线</option>
           <option value="attention">需关注</option>
         </select>
-        <button disabled={disabled} onClick={() => void command("refresh")}>
-          刷新设备
-        </button>
-        <button disabled={!data || disabled} onClick={openRegistration}>
-          登记分区
-        </button>
         <div className="asset-stats" aria-label="已登记资产统计">
           <span>
             硬盘 <b>{data ? groups.size : "—"}</b>
@@ -347,7 +341,10 @@ export default function Assets({
           {data && !data.busy && !data.error && !data.assets.length && (
             <div className="asset-empty">
               <h2>尚未登记分区</h2>
-              <p>选择“登记分区”后建立文件索引，离线时仍可搜索。</p>
+              <p>登记后建立文件索引，离线时仍可搜索。</p>
+              <button disabled={disabled} onClick={openRegistration}>
+                登记分区…
+              </button>
             </div>
           )}
           {Array.from(groups, ([id, assets]) => (

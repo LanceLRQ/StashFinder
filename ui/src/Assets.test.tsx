@@ -9,7 +9,8 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import Assets, { type AssetSnapshot } from "./Assets";
+import { createRef } from "react";
+import Assets, { type AssetControls, type AssetSnapshot } from "./Assets";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeAll(() => {
@@ -27,8 +28,7 @@ afterEach(() => {
 });
 
 async function openRegistration() {
-  const button = screen.getByRole("button", { name: "登记分区" });
-  await waitFor(() => expect(button).toHaveProperty("disabled", false));
+  const button = await screen.findByRole("button", { name: "登记分区…" });
   fireEvent.click(button);
 }
 
@@ -86,19 +86,17 @@ test("automatic busy pulses keep the overview footer quiet and block device acti
   vi.useFakeTimers();
   let data = snapshot();
   vi.mocked(invoke).mockImplementation(async () => data);
-  const { container } = render(<Assets />);
+  const controls = createRef<AssetControls>();
+  const { container } = render(<Assets ref={controls} />);
   await act(async () => {});
   const status = within(container.querySelector("footer")!).getByRole("status");
-  const refresh = screen.getByRole("button", { name: "刷新设备" });
-  const register = screen.getByRole("button", { name: "登记分区" });
-  expect(refresh).toHaveProperty("disabled", false);
   data = { ...data, busy: true };
   await act(() => vi.advanceTimersByTimeAsync(document.hidden ? 10000 : 5000));
-  expect(refresh).toHaveProperty("disabled", true);
-  expect(register).toHaveProperty("disabled", true);
   expect(status.textContent).toBe("");
-  fireEvent.click(refresh);
-  fireEvent.click(register);
+  act(() => {
+    controls.current!.refresh();
+    controls.current!.register();
+  });
   expect(invoke).not.toHaveBeenCalledWith("asset_command", expect.anything());
   expect(screen.queryByRole("dialog")).toBeNull();
   data = { ...data, busy: false, error: "设备枚举失败" };
@@ -116,18 +114,28 @@ test("manual refresh owns the overview progress until the device command complet
           finish = resolve;
         }),
   );
-  const { container } = render(<Assets />);
+  const controls = createRef<AssetControls>();
+  const { container } = render(<Assets ref={controls} />);
   const status = within(container.querySelector("footer")!).getByRole("status");
-  const register = screen.getByRole("button", { name: "登记分区" });
-  await waitFor(() => expect(register).toHaveProperty("disabled", false));
-  const refresh = screen.getByRole("button", { name: "刷新设备" });
-  fireEvent.click(refresh);
+  await screen.findByRole("button", { name: "登记分区…" });
+  act(() => controls.current!.refresh());
   expect(screen.getByText("正在处理设备信息…")).toBe(status);
-  expect(register).toHaveProperty("disabled", true);
-  expect(refresh).toHaveProperty("disabled", true);
+  act(() => {
+    controls.current!.refresh();
+    controls.current!.register();
+  });
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "asset_command"),
+  ).toHaveLength(1);
+  expect(screen.queryByRole("dialog")).toBeNull();
   await act(async () => finish());
   expect(status.textContent).toBe("");
-  expect(register).toHaveProperty("disabled", false);
+  expect(screen.getByRole("button", { name: "登记分区…" })).toHaveProperty(
+    "disabled",
+    false,
+  );
 });
 
 test("groups partitions by disk identity and keeps the last snapshot on service failure", async () => {
@@ -154,7 +162,8 @@ test("groups partitions by disk identity and keeps the last snapshot on service 
   vi.mocked(invoke).mockImplementation(async (command) =>
     command === "asset_snapshot" ? data : undefined,
   );
-  render(<Assets />);
+  const controls = createRef<AssetControls>();
+  render(<Assets ref={controls} />);
   await screen.findByText("Movies");
   expect(
     screen.getAllByRole("heading", { name: /USB Test Disk/ }),
@@ -164,7 +173,7 @@ test("groups partitions by disk identity and keeps the last snapshot on service 
     within(screen.getByText("Backup").closest("tr")!).getByText("未知 / 未知"),
   ).toBeTruthy();
   vi.mocked(invoke).mockRejectedValue("服务连接中断");
-  fireEvent.click(screen.getByRole("button", { name: "刷新设备" }));
+  act(() => controls.current!.refresh());
   await screen.findAllByText("服务连接中断");
   expect(screen.getByText("Movies")).toBeTruthy();
   expect(
@@ -304,15 +313,10 @@ test("late initial response cannot overwrite a newer snapshot", async () => {
     }
     return fresh;
   });
-  render(<Assets />);
-  fireEvent.click(screen.getByRole("button", { name: "刷新设备" }));
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "登记分区" })).toHaveProperty(
-      "disabled",
-      false,
-    ),
-  );
-  fireEvent.click(screen.getByRole("button", { name: "登记分区" }));
+  const controls = createRef<AssetControls>();
+  render(<Assets ref={controls} />);
+  act(() => controls.current!.refresh());
+  await openRegistration();
   expect(await screen.findByRole("heading", { name: /新设备/ })).toBeTruthy();
   await act(async () => {
     resolveInitial(old);

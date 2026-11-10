@@ -97,6 +97,7 @@ export default function Workspace({
   searchReady = true,
   startupReady,
   device,
+  taskRefresh,
   panels,
   notice,
 }: {
@@ -119,6 +120,7 @@ export default function Workspace({
     working: boolean;
     error: string;
   };
+  taskRefresh?: () => void;
   panels?: Partial<Record<AuxiliaryPage, ReactNode>>;
   notice?: ReactNode;
 }) {
@@ -127,6 +129,7 @@ export default function Workspace({
   const [query, setQuery] = useState({ text: "", revision: 0 });
   const sequence = useRef(1);
   const root = useRef<HTMLDivElement>(null);
+  const partitionPicker = useRef<HTMLDialogElement>(null);
   const returnTo = useRef(1);
   const locations = useRef(new Map<number, DirectoryPage>());
   const searchFocus = useRef(false);
@@ -137,6 +140,17 @@ export default function Workspace({
   > | null>(null);
   const [searchContext, setSearchContext] = useState<SearchContext>();
   const [commands, setCommands] = useState<FileCommandContext | null>(null);
+  const currentTab = tabs.find((tab) => tab.id === active);
+  const refreshCurrent =
+    currentTab?.kind === "overview"
+      ? device && !device.busy
+        ? device.refresh
+        : undefined
+      : currentTab?.kind === "tasks"
+        ? taskRefresh
+        : currentTab?.kind === "browse" || currentTab?.kind === "search"
+          ? commands?.refresh
+          : undefined;
   const location = useCallback(
     (id: number, page: DirectoryPage, partition: string, isActive: boolean) => {
       locations.current.set(id, page);
@@ -333,6 +347,27 @@ export default function Workspace({
     );
     setActive(tab.id);
   }
+  function choosePartition(id: number, partition: string) {
+    const chosen = assets.find(
+      (a) => a.registration.partition_id === partition,
+    );
+    if (!chosen) return;
+    startupDone.current = true;
+    setTabs((previous) =>
+      previous.map((tab) =>
+        tab.kind === "browse" && tab.id === id
+          ? {
+              ...tab,
+              partition,
+              filesystem: chosen.registration.filesystem_id,
+              parent: null,
+              focusEntry: undefined,
+              title: chosen.registration.name,
+            }
+          : tab,
+      ),
+    );
+  }
   function locate(
     hit: Pick<
       SearchHit,
@@ -369,6 +404,17 @@ export default function Workspace({
         )
       )
         return;
+      if (
+        e.key === "F5" &&
+        !e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.shiftKey
+      ) {
+        e.preventDefault();
+        if (!e.repeat) refreshCurrent?.();
+        return;
+      }
       if (e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
         const input = root.current.querySelector(
@@ -419,7 +465,7 @@ export default function Workspace({
     }
     document.addEventListener("keydown", keyDown);
     return () => document.removeEventListener("keydown", keyDown);
-  }, [active, tabs, assets, commands]);
+  }, [active, tabs, assets, commands, refreshCurrent]);
   useEffect(() => {
     root.current
       ?.querySelector('[role="tab"][aria-selected="true"]')
@@ -440,6 +486,15 @@ export default function Workspace({
       items: [
         { label: "新建浏览标签页", shortcut: "Ctrl+T", run: add },
         { label: "关闭标签页", shortcut: "Ctrl+W", run: () => close(active) },
+        ...(currentTab?.kind === "browse"
+          ? [
+              {
+                label: "切换浏览分区…",
+                disabled: !assets.length,
+                run: () => partitionPicker.current?.showModal(),
+              },
+            ]
+          : []),
         ...(device
           ? [
               {
@@ -466,7 +521,15 @@ export default function Workspace({
       label: "查看",
       accessKey: "v",
       items: [
-        { label: "概览（硬盘）", run: () => openPage("overview") },
+        ...(panels?.overview
+          ? [{ label: "概览（硬盘）", run: () => openPage("overview") }]
+          : []),
+        {
+          label: "刷新当前页",
+          shortcut: "F5",
+          disabled: !refreshCurrent,
+          run: () => refreshCurrent?.(),
+        },
         ...(commands?.views ?? []),
       ],
     },
@@ -474,8 +537,12 @@ export default function Workspace({
       label: "工具",
       accessKey: "t",
       items: [
-        { label: "任务", run: () => openPage("tasks") },
-        { label: "设置", run: () => openPage("settings") },
+        ...(panels?.tasks
+          ? [{ label: "任务", run: () => openPage("tasks") }]
+          : []),
+        ...(panels?.settings
+          ? [{ label: "设置", run: () => openPage("settings") }]
+          : []),
         ...(panels?.development
           ? [{ label: "开发验证", run: () => openPage("development") }]
           : []),
@@ -529,7 +596,31 @@ export default function Workspace({
           </button>
         </div>
       </WindowChrome>
-      {panels && <AppMenu groups={groups} />}
+      <AppMenu groups={groups} />
+      <dialog
+        ref={partitionPicker}
+        className="asset-dialog"
+        aria-labelledby="browse-partition-title"
+      >
+        <h2 id="browse-partition-title">切换浏览分区</h2>
+        <ul className="browse-partitions">
+          {assets.map(({ registration }) => (
+            <li key={registration.partition_id}>
+              <button
+                onClick={() => {
+                  partitionPicker.current?.close();
+                  choosePartition(active, registration.partition_id);
+                }}
+              >
+                {registration.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+        <form method="dialog">
+          <button>取消</button>
+        </form>
+      </dialog>
       {notice}
       {device?.error && active !== pages.overview.id && (
         <p className="browse-message desktop-error" role="alert">
@@ -623,26 +714,7 @@ export default function Workspace({
                     search(text);
                   }}
                   onTitle={title}
-                  onChoose={(partition) => {
-                    startupDone.current = true;
-                    const chosen = assets.find(
-                      (a) => a.registration.partition_id === partition,
-                    )!;
-                    setTabs((previous) =>
-                      previous.map((t) =>
-                        t.kind === "browse" && t.id === tab.id
-                          ? {
-                              ...t,
-                              partition,
-                              filesystem: chosen.registration.filesystem_id,
-                              parent: null,
-                              focusEntry: undefined,
-                              title: chosen.registration.name,
-                            }
-                          : t,
-                      ),
-                    );
-                  }}
+                  onChoose={(partition) => choosePartition(tab.id, partition)}
                 />
               )}
             </section>

@@ -552,9 +552,16 @@ export default function Search({
     folder: count === 1 && selectedRow?.file.kind === "folder",
     blocked: busy || refreshing || editing !== null || queryId.current === null,
   };
-  const dispatch = useFileCommands(facts, menuAction, active, onCommands, [
-    { label: "预览窗格", checked: preview, run: () => setPreview((v) => !v) },
-  ]);
+  const dispatch = useFileCommands(
+    facts,
+    menuAction,
+    active,
+    onCommands,
+    [{ label: "预览窗格", checked: preview, run: () => setPreview((v) => !v) }],
+    !busy && !refreshing && editing === null
+      ? () => setRevision((n) => n + 1)
+      : undefined,
+  );
   return (
     <div className="assets-app search-app">
       {onBack && <button onClick={onBack}>硬盘管理</button>}
@@ -594,31 +601,10 @@ export default function Search({
           setTypes={setTypes}
           custom={custom}
           setCustom={setCustom}
+          namesOnly={namesOnly}
+          setNamesOnly={setNamesOnly}
         />
-        <details className="view-menu">
-          <summary>视图</summary>
-          <div>
-            <label>
-              <input
-                type="checkbox"
-                checked={preview}
-                onChange={(e) => setPreview(e.target.checked)}
-              />
-              预览窗格
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={namesOnly}
-                onChange={(e) => setNamesOnly(e.target.checked)}
-              />
-              仅文件名
-            </label>
-          </div>
-        </details>
-        <button onClick={busy ? cancel : () => setRevision((n) => n + 1)}>
-          {busy ? "取消搜索" : "重新搜索"}
-        </button>
+        {busy && <button onClick={cancel}>取消搜索</button>}
         <span className="search-summary" role="status">
           {busy
             ? "正在搜索…"

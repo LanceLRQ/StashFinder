@@ -13,6 +13,7 @@ export default function Tasks({
   error,
   partitions,
   onRefresh,
+  onRefreshBlocked,
   onChooseIndex,
   focusTask,
 }: {
@@ -25,6 +26,7 @@ export default function Tasks({
     canChooseIndex: boolean;
   }[];
   onRefresh: () => void;
+  onRefreshBlocked?: (blocked: boolean) => void;
   onChooseIndex: (partitionId: string) => void;
   focusTask?: string;
 }) {
@@ -36,6 +38,10 @@ export default function Tasks({
   const [actionError, setActionError] = useState("");
   const target = useRef<HTMLButtonElement>(null);
   const focused = useRef<string>(undefined);
+  useLayoutEffect(() => {
+    onRefreshBlocked?.(sending);
+    return () => onRefreshBlocked?.(false);
+  }, [onRefreshBlocked, sending]);
   useLayoutEffect(() => {
     if (!focusTask) {
       focused.current = undefined;
@@ -109,9 +115,6 @@ export default function Tasks({
               ? `自动更新${data.automatic ? "开启" : "关闭"}`
               : "正在读取"}
         </span>
-        <button onClick={onRefresh} disabled={sending}>
-          刷新
-        </button>
       </div>
       {(error || actionError) && (
         <p className="desktop-error" role="alert">

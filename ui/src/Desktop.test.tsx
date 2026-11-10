@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -39,6 +40,17 @@ beforeEach(() => {
       };
     if (command === "service_status") throw new Error("服务未启动");
     if (command === "app_version") return "0.1.0";
+    if (args?.action?.task_page)
+      return {
+        kind: "tasks",
+        data: {
+          version: 1,
+          row: null,
+          next: null,
+          automatic: true,
+          paused: [],
+        },
+      };
     if (args?.action?.search_start) return { kind: "search_started", data: 1 };
     if (args?.action?.search_batch)
       return {
@@ -70,6 +82,104 @@ function menu(group: string, action: string) {
   fireEvent.click(screen.getByRole("button", { name: group }));
   fireEvent.click(screen.getByRole("menuitem", { name: action }));
 }
+
+test("refreshes the active search from the menu and F5 without intercepting IME", async () => {
+  render(<Desktop />);
+  fireEvent.change(screen.getByRole("searchbox"), {
+    target: { value: "film" },
+  });
+  const input = await screen.findByRole("searchbox");
+  await screen.findByText("没有匹配的文件");
+  const starts = () =>
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([, args]: any) => args?.action?.search_start).length;
+  const initial = starts();
+  input.focus();
+  fireEvent.keyDown(input, { altKey: true, key: "v" });
+  fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+  expect(document.activeElement).toBe(input);
+  menu("查看", "刷新当前页");
+  await waitFor(() => expect(starts()).toBe(initial + 1));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "取消搜索" })).toBeNull(),
+  );
+  fireEvent.keyDown(input, { key: "F5", isComposing: true });
+  expect(screen.queryByRole("button", { name: "取消搜索" })).toBeNull();
+  fireEvent.keyDown(input, { key: "F5" });
+  expect(screen.getByRole("button", { name: "取消搜索" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "查看" }));
+  expect(screen.getByRole("menuitem", { name: "刷新当前页" })).toHaveProperty(
+    "ariaDisabled",
+    "true",
+  );
+  fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+  await waitFor(() => expect(starts()).toBe(initial + 2));
+  expect(screen.queryByRole("button", { name: "重新搜索" })).toBeNull();
+  expect(screen.queryByText("视图")).toBeNull();
+}, 12000);
+
+test("routes overview and task refresh to their own actions without toolbar duplicates", async () => {
+  const original = vi.mocked(invoke).getMockImplementation()!;
+  let finishRefresh: (() => void) | undefined;
+  vi.mocked(invoke).mockImplementation((command, args: any) => {
+    if (
+      command === "asset_command" &&
+      args.action === "refresh" &&
+      !finishRefresh
+    )
+      return new Promise<void>((resolve) => {
+        finishRefresh = resolve;
+      });
+    return original(command, args);
+  });
+  render(<Desktop />);
+  await screen.findByRole("button", { name: "登记分区…" });
+  const deviceRefreshes = () =>
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(
+        ([cmd, args]: any) =>
+          cmd === "asset_command" && args.action === "refresh",
+      ).length;
+  const taskRefreshes = () =>
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([, args]: any) => args?.action?.task_page).length;
+  menu("查看", "概览（硬盘）");
+  const overview = screen.getByRole("tabpanel", { name: "概览" });
+  menu("查看", "刷新当前页");
+  expect(deviceRefreshes()).toBe(1);
+  expect(within(overview).getByText("正在处理设备信息…")).toBeTruthy();
+  fireEvent.keyDown(overview, { key: "F5" });
+  expect(deviceRefreshes()).toBe(1);
+  await act(async () => finishRefresh!());
+  await waitFor(() =>
+    expect(
+      within(overview).getByRole("button", { name: "登记分区…" }),
+    ).toHaveProperty("disabled", false),
+  );
+  fireEvent.keyDown(overview, { key: "F5" });
+  expect(deviceRefreshes()).toBe(2);
+  expect(
+    within(overview).queryByRole("button", { name: "刷新设备" }),
+  ).toBeNull();
+  expect(
+    within(overview).queryByRole("button", { name: "登记分区" }),
+  ).toBeNull();
+  expect(
+    await within(overview).findByRole("button", { name: "登记分区…" }),
+  ).toBeTruthy();
+  menu("工具", "任务");
+  const tasks = screen.getByRole("tabpanel", { name: "任务" });
+  const initial = taskRefreshes();
+  menu("查看", "刷新当前页");
+  expect(taskRefreshes()).toBe(initial + 1);
+  fireEvent.keyDown(tasks, { key: "F5" });
+  expect(taskRefreshes()).toBe(initial + 2);
+  expect(deviceRefreshes()).toBe(2);
+  expect(within(tasks).queryByRole("button", { name: "刷新" })).toBeNull();
+});
 
 test("starts in files and keeps the search input when switching to a singleton overview", async () => {
   render(<Desktop />);
@@ -130,7 +240,7 @@ test("shows files immediately with legacy preferences and applies the search def
   fireEvent.change(screen.getByRole("searchbox", { name: "搜索文件或路径" }), {
     target: { value: "test" },
   });
-  fireEvent.click(within(screen.getByRole("tabpanel")).getByText("视图"));
+  fireEvent.click(within(screen.getByRole("tabpanel")).getByText("筛选"));
   expect(screen.getByRole("checkbox", { name: "仅文件名" })).toHaveProperty(
     "checked",
     true,
