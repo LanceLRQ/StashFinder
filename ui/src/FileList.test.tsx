@@ -77,3 +77,38 @@ test("virtualizes loaded directory rows and keeps selection indexes across scrol
   expect(select.mock.lastCall?.[0]).toHaveLength(3000);
   expect(screen.getAllByRole("row").length).toBeLessThan(60);
 });
+
+test("fills a tall directory viewport and exposes absolute positions for its windowed rows", () => {
+  const rows = Array.from({ length: 300 }, (_, index) => ({
+    entry: [index % 256, Math.floor(index / 256)],
+    parent: [0],
+    object: [index % 256, Math.floor(index / 256)],
+    name: `item-${index}.txt`,
+    path: `item-${index}.txt`,
+    kind: "file",
+    attributes: 0,
+    size: null,
+    created: null,
+    modified: null,
+  }));
+  render(
+    <FileList
+      rows={rows}
+      selection={[]}
+      onSelect={() => {}}
+      onOpen={() => {}}
+      next={null}
+      busy={false}
+      onMore={() => {}}
+    />,
+  );
+  const list = screen.getByLabelText("目录文件列表");
+  Object.defineProperty(list, "clientHeight", { value: 2040 });
+  fireEvent.scroll(list, { target: { scrollTop: 3400 } });
+  const visible = screen.getByRole("row", { name: /item-159.txt/ });
+  expect(visible.getAttribute("aria-rowindex")).toBe("161");
+  expect(
+    screen.getByRole("table", { name: "文件" }).getAttribute("aria-rowcount"),
+  ).toBe("301");
+  expect(screen.getAllByRole("row").length).toBeLessThan(90);
+});

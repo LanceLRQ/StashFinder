@@ -10,7 +10,8 @@ import {
 } from "./search-options";
 import FileDetails from "./FileDetails";
 import SearchFilters from "./SearchFilters";
-import VirtualResults, { virtualScale, virtualWindow } from "./VirtualResults";
+import VirtualResults, { searchDetailsLayout } from "./VirtualResults";
+import { virtualScale, virtualWindow } from "./DetailsViewport";
 import FileContextMenu from "./FileContextMenu";
 import RenameInput from "./RenameInput";
 import FileIcon from "./FileIcon";
@@ -262,6 +263,7 @@ export default function Search({
           page.total,
           position.logicalTop,
           position.height,
+          searchDetailsLayout,
         );
         const rows = new Map<number, SearchHit>();
         let offset = start;
@@ -287,7 +289,9 @@ export default function Search({
         if (position !== viewportPosition.current) continue;
         nextCache = rows;
         setRestore({ logicalTop });
-        anchor.current = cursor.current = Math.floor(logicalTop / 64);
+        anchor.current = cursor.current = Math.floor(
+          logicalTop / searchDetailsLayout.rowHeight,
+        );
         break;
       }
     } else {
@@ -686,11 +690,15 @@ export default function Search({
               );
               choose(i, e.shiftKey, false);
               const height = e.currentTarget.clientHeight || 500;
-              const scale = virtualScale(total, height);
-              const offset = (i * 64) / scale;
+              const { rowHeight } = searchDetailsLayout;
+              const scale = virtualScale(total, height, rowHeight);
+              const logicalOffset = i * rowHeight;
               const virtualTop = e.currentTarget.scrollTop * scale;
-              if (i * 64 < virtualTop || i * 64 > virtualTop + height - 100)
-                e.currentTarget.scrollTop = offset;
+              if (
+                logicalOffset < virtualTop ||
+                logicalOffset > virtualTop + height - 100
+              )
+                e.currentTarget.scrollTop = logicalOffset / scale;
             }
             if (e.key === "Enter" && selectedRow) open(selectedRow);
           }}

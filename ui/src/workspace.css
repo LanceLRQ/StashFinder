@@ -333,15 +333,7 @@
   width: 100%;
   text-align: left;
 }
-.directory-list {
-  flex: 1;
-  overflow: auto;
-  outline-offset: -2px;
-}
 .directory-list table {
-  border-collapse: collapse;
-  table-layout: fixed;
-  width: 100%;
   min-width: 440px;
   font-size: 13px;
 }
@@ -357,7 +349,7 @@
 }
 .directory-list td,
 .directory-list th {
-  height: 34px;
+  height: var(--details-row-height);
   padding: 6px 12px;
   white-space: nowrap;
   overflow: hidden;

@@ -59,22 +59,23 @@ test("multi-selection preview uses shared facts only when the full selection is 
   expect(preview.queryByText("离线")).toBeNull();
   expect(preview.queryByText("状态未确认")).toBeNull();
 });
-function mock(connection = "offline") {
+function mock(connection = "offline", total = 10_000_000) {
   vi.mocked(invoke).mockImplementation(async (command, args: any) => {
     if (command === "file_prepare") throw Error("selection rejected");
     if (args.action.search_start) return { kind: "search_started", data: 1 };
     if (args.action.search_batch) {
       const { offset, limit } = args.action.search_batch;
+      const rowCount = Math.min(limit, 20, total - offset);
       return {
         kind: "search_page",
         data: {
           id: 1,
           done: true,
-          total: 10000000,
+          total,
           groups: 3,
           missing: 2,
-          next: offset + limit,
-          rows: Array.from({ length: Math.min(limit, 20) }, (_, i) => ({
+          next: offset + rowCount < total ? offset + rowCount : null,
+          rows: Array.from({ length: rowCount }, (_, i) => ({
             partition_id: "p",
             filesystem_id: "fs",
             partition_name: "Movies",
@@ -229,6 +230,47 @@ test("keeps DOM rows bounded and requests distant result positions", async () =>
   fireEvent.keyDown(list, { ctrlKey: true, key: "a" });
   expect(await screen.findByText("已选择 10,000,000 项")).toBeTruthy();
 });
+test.each([1600, 1_000_000])(
+  "keeps %i search results continuous across fractional rows and the end",
+  async (total) => {
+    mock("offline", total);
+    render(<Search partitions={[]} />);
+    await screen.findByText("file-0.txt");
+    const list = screen.getByLabelText("搜索结果列表");
+    const height = 500;
+    const content = Math.min(total * 64, 8_000_000);
+    const scale = (total * 64 - height) / (content - height);
+    const middle = total / 2;
+    const logicalTop = middle * 64 + 17;
+    const physicalTop = logicalTop / scale;
+    Object.defineProperty(list, "clientHeight", { value: height });
+    fireEvent.scroll(list, { target: { scrollTop: physicalTop } });
+    await screen.findByText(`file-${middle}.txt`);
+    const table = within(list).getByRole("table");
+    const spacers = () =>
+      Array.from(
+        table.querySelectorAll<HTMLTableRowElement>(
+          'tbody tr[aria-hidden="true"]',
+        ),
+      );
+    const rendered = () =>
+      table.querySelectorAll("tbody tr[aria-rowindex]").length;
+    const [before, after] = spacers();
+    expect(parseFloat(before.style.height)).toBeCloseTo(
+      physicalTop - 8 * 64 - 17,
+    );
+    expect(
+      parseFloat(before.style.height) +
+        rendered() * 64 +
+        parseFloat(after.style.height),
+    ).toBeCloseTo(content);
+    fireEvent.scroll(list, { target: { scrollTop: content - height } });
+    await screen.findByText(`file-${total - 1}.txt`);
+    expect(table.getAttribute("aria-rowcount")).toBe(String(total + 1));
+    expect(rendered()).toBeLessThan(70);
+    expect(screen.queryByRole("button", { name: "加载更多文件" })).toBeNull();
+  },
+);
 test("copies the full selection descriptor instead of the visible result cache", async () => {
   mock("online");
   render(

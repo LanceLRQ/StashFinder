@@ -1,0 +1,17 @@
+.details-viewport {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  overflow-anchor: none;
+  outline-offset: -2px;
+}
+.details-viewport table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.details-viewport .details-spacer td {
+  height: 0;
+  padding: 0;
+  border: 0;
+}

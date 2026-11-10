@@ -1,15 +1,5 @@
-.virtual-results {
-  flex: 1;
-  min-width: 0;
-  overflow: auto;
-  overflow-anchor: none;
-  outline-offset: -2px;
-}
 .virtual-results table {
-  width: 100%;
   min-width: 900px;
-  table-layout: fixed;
-  border-collapse: collapse;
   font-size: 12px;
 }
 .virtual-results thead {
@@ -60,13 +50,9 @@
 .virtual-results th:nth-child(7) {
   width: 65px;
 }
-.virtual-results tr[aria-hidden] td {
-  padding: 0;
-  border: 0;
-}
 .virtual-result-row {
-  height: 64px;
-  max-height: 64px;
+  height: var(--details-row-height);
+  max-height: var(--details-row-height);
 }
 .search-app .virtual-results .virtual-result-row td {
   padding: 6px 10px;
