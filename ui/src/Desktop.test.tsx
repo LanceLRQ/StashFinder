@@ -91,6 +91,23 @@ test("starts in files and keeps the search input when switching to a singleton o
   expect(screen.getAllByRole("main")).toHaveLength(1);
 });
 
+test("keeps task activity out of the overview and reuses the tasks tab", async () => {
+  render(<Desktop />);
+  await screen.findByRole("button", { name: "登记分区…" });
+  menu("查看", "概览（硬盘）");
+  expect(screen.queryByRole("heading", { name: "任务动态" })).toBeNull();
+  menu("工具", "任务");
+  expect(screen.getByRole("button", { name: /最近动态/ })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /历史/ }));
+  menu("查看", "概览（硬盘）");
+  menu("工具", "任务");
+  expect(screen.getAllByRole("tab", { name: "任务" })).toHaveLength(1);
+  expect(screen.getByRole("button", { name: /历史/ })).toHaveProperty(
+    "ariaPressed",
+    "true",
+  );
+});
+
 test("shows files immediately with legacy preferences and applies the search default", async () => {
   const original = vi.mocked(invoke).getMockImplementation()!;
   vi.mocked(invoke).mockImplementation((command, args) =>

@@ -7,7 +7,7 @@ import Settings from "./Settings";
 import type { Asset, AssetSnapshot } from "./asset-api";
 import Tasks from "./Tasks";
 import { IndexModeDialog } from "./IndexControls";
-import { taskKinds, taskLabels, useTasks } from "./task-api";
+import { useTasks } from "./task-api";
 import {
   defaultPreferences,
   readPreferences,
@@ -37,7 +37,6 @@ export default function Desktop() {
     revision: number;
   }>();
   const tasks = useTasks(true);
-  const [taskRequest, setTaskRequest] = useState({ id: "", revision: 0 });
   const [indexChoice, setIndexChoice] = useState("");
   const assets = snapshot?.assets ?? noAssets;
   const partitions = assets.map((a) => ({
@@ -86,70 +85,6 @@ export default function Desktop() {
     saveLock.current = false;
   }
 
-  function openTasks(id: string) {
-    setTaskRequest((previous) => ({ id, revision: previous.revision + 1 }));
-  }
-  const activity = (
-    <>
-      <div className="activity-heading">
-        <h2>任务动态</h2>
-        <button
-          onClick={() => {
-            openTasks("");
-          }}
-        >
-          全部
-        </button>
-      </div>
-      {tasks.error && (
-        <p className="desktop-error" role="alert">
-          {tasks.error}
-        </p>
-      )}
-      {tasks.data?.tasks.slice(0, 5).map((task) => (
-        <div className="activity-row" key={task.id}>
-          <button
-            className="task-name"
-            onClick={() => {
-              openTasks(task.id);
-            }}
-          >
-            {partitions.find((p) => p.id === task.partition_id)?.name ||
-              task.partition_id}
-          </button>
-          <span>
-            {taskKinds[task.kind] || task.kind} ·{" "}
-            {taskLabels[task.state] || task.state}
-          </span>
-          <small>{new Date(task.updated * 1000).toLocaleString()}</small>
-          {task.state === "needs_confirmation" ? (
-            <>
-              <p className="desktop-error">此分区没有 USN 日志</p>
-              <button
-                disabled={
-                  !!tasks.error ||
-                  !partitions.some(
-                    (p) => p.id === task.partition_id && p.canChooseIndex,
-                  )
-                }
-                onClick={() => setIndexChoice(task.partition_id)}
-              >
-                选择索引方式…
-              </button>
-            </>
-          ) : (
-            task.error && <p className="desktop-error">{task.error}</p>
-          )}
-        </div>
-      ))}
-      {tasks.data && !tasks.data.tasks.length && (
-        <p className="stage-note">当前没有任务</p>
-      )}
-      {!tasks.data && !tasks.error && (
-        <p className="stage-note">正在读取任务…</p>
-      )}
-    </>
-  );
   return (
     <Visuals>
       <FileOperations>
@@ -160,7 +95,6 @@ export default function Desktop() {
             categories={preferences.categories}
             request={searchRequest}
             searchReady={loaded}
-            taskRevision={taskRequest.revision}
             browseRequest={browseRequest}
             completedTasks={tasks.data?.tasks.filter(
               (t) => t.state === "completed",
@@ -203,15 +137,12 @@ export default function Desktop() {
                       revision: (previous?.revision ?? 0) + 1,
                     }))
                   }
-                  activity={activity}
                   onSnapshot={setSnapshot}
                   onStatus={setDeviceStatus}
                 />
               ),
               tasks: (
                 <Tasks
-                  key={taskRequest.revision}
-                  focusTask={taskRequest.id}
                   data={tasks.data}
                   error={tasks.error}
                   onRefresh={tasks.refresh}

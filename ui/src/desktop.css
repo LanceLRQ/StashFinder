@@ -124,43 +124,7 @@ input[type="radio"] {
   overflow: auto;
   padding: 20px 22px;
 }
-.overview-activity {
-  flex: 0 0 240px;
-  border-left: 1px solid #dce1e7;
-  border-top: 1px solid #dce1e7;
-  padding: 16px;
-  overflow: auto;
-}
-.activity-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.activity-heading h2 {
-  font-size: 14px;
-  font-weight: 600;
-  margin: 0;
-}
-.activity-heading button {
-  padding: 4px 6px;
-  border: 0;
-}
-.activity-row {
-  border-bottom: 1px solid #e1e5eb;
-  padding: 18px 0;
-  display: grid;
-  gap: 6px;
-  overflow-wrap: anywhere;
-}
-.activity-row strong {
-  font-weight: 600;
-}
-.activity-row small,
-.stage-note {
-  color: #647082;
-  font-size: 12px;
-}
+
 .stage-note {
   margin: 12px 0;
 }
@@ -294,17 +258,6 @@ input[type="radio"] {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 20px;
-}
-.tasks-page .activity-row {
-  grid-template-columns: minmax(120px, 1fr) minmax(180px, 1.3fr) minmax(
-      180px,
-      1fr
-    );
-  align-items: center;
-}
-.tasks-page .activity-row p {
-  grid-column: 2 / -1;
-  margin: 0;
 }
 .desktop .disk-group {
   border: 1px solid #dce1e7;
@@ -461,9 +414,6 @@ input[type="radio"] {
   overflow-wrap: anywhere;
 }
 @media (max-width: 1150px) {
-  .overview-activity {
-    flex-basis: 210px;
-  }
   .asset-toolbar {
     padding: 12px 16px;
   }
@@ -483,11 +433,7 @@ input[type="radio"] {
     flex: none;
     overflow: visible;
   }
-  .overview-activity {
-    flex-basis: auto;
-    border-left: 0;
-    overflow: visible;
-  }
+
   .settings-nav {
     width: 145px;
     padding: 16px 8px;
@@ -497,13 +443,6 @@ input[type="radio"] {
   }
   .search-toolbar {
     overflow-x: auto;
-  }
-  .tasks-page .activity-row {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-  .tasks-page .activity-row p {
-    grid-column: 1;
   }
 }
 

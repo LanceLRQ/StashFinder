@@ -89,7 +89,6 @@ export default function Assets({
   onBrowse,
   onSnapshot,
   onIndexStatus,
-  activity,
   ref,
   onStatus,
 }: {
@@ -101,7 +100,6 @@ export default function Assets({
     status: import("./index-api").IndexStatus | null,
     error: string,
   ) => void;
-  activity?: ReactNode;
   ref?: Ref<AssetControls>;
   onStatus?: (status: { error: string; working: boolean }) => void;
 } = {}) {
@@ -515,11 +513,6 @@ export default function Assets({
             </section>
           ))}
         </div>
-        {activity && (
-          <aside className="overview-activity" aria-label="索引动态">
-            {activity}
-          </aside>
-        )}
       </div>
       {data && registerOpen && (
         <Modal

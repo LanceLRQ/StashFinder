@@ -89,7 +89,6 @@ export default function Workspace({
   paused = [],
   visible = true,
   searchReady = true,
-  taskRevision = 0,
   startupReady,
   device,
   panels,
@@ -105,7 +104,6 @@ export default function Workspace({
   paused?: string[];
   visible?: boolean;
   searchReady?: boolean;
-  taskRevision?: number;
   startupReady?: boolean;
   device?: {
     register: () => void;
@@ -132,15 +130,6 @@ export default function Workspace({
     "partition" | "filesystem" | "parent" | "title"
   > | null>(null);
   const [searchContext, setSearchContext] = useState<SearchContext>();
-  useEffect(() => {
-    if (!taskRevision) return;
-    setTabs((previous) =>
-      previous.some((tab) => tab.kind === "tasks")
-        ? previous
-        : [...previous, pages.tasks],
-    );
-    setActive(pages.tasks.id);
-  }, [taskRevision]);
   const location = useCallback(
     (id: number, page: DirectoryPage, partition: string, isActive: boolean) => {
       locations.current.set(id, page);
