@@ -10,6 +10,17 @@
   table-layout: fixed;
   border-collapse: collapse;
 }
+.details-viewport .marquee-details {
+  width: calc(100% - var(--details-gutter));
+  margin-left: var(--details-gutter);
+}
+.file-marquee {
+  position: fixed;
+  z-index: 2;
+  pointer-events: none;
+  border: 1px solid #386da7;
+  background: rgb(56 109 167 / 12%);
+}
 .details-viewport .details-spacer td {
   height: 0;
   padding: 0;
@@ -26,7 +37,7 @@
   justify-items: center;
   gap: 2px;
   min-width: 0;
-  margin: 2px;
+  margin: var(--tile-inset, 2px);
   padding: 4px;
   border-radius: 4px;
   outline-offset: -2px;

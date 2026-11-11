@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { indexRequest, type SearchHit, type SearchPage } from "./index-api";
 import { connectionLabel, fileTime, fileSize } from "./browse-api";
 import {
@@ -13,6 +13,7 @@ import SearchFilters from "./SearchFilters";
 import VirtualResults, { searchDetailsLayout } from "./VirtualResults";
 import { virtualWindow, type ViewportLayout } from "./DetailsViewport";
 import { fileViewOptions, thumbnailLayouts, type FileView } from "./file-view";
+import { inSpans, rectangleSpans, toggleSpans } from "./marquee";
 import FileContextMenu from "./FileContextMenu";
 import RenameInput from "./RenameInput";
 import FileIcon from "./FileIcon";
@@ -21,6 +22,8 @@ import { useFileOperations } from "./FileOperations";
 import {
   fileEditingKey,
   fileKey,
+  fileSelectionLimit,
+  maxFileSelection,
   useFileCommands,
   type FileCommandContext,
   type MenuAction,
@@ -46,8 +49,6 @@ async function readBatch(
   return reply.data;
 }
 
-type Selection = { range: [number, number] | null; toggles: Set<number> };
-const emptySelection = (): Selection => ({ range: null, toggles: new Set() });
 export default function Search({
   partitions,
   assets,
@@ -127,7 +128,7 @@ export default function Search({
   const [view, setView] = useState<FileView>("details");
   const grid = view === "details" ? undefined : thumbnailLayouts[view];
   const Item = grid ? "div" : "tr";
-  const [selection, setSelection] = useState<Selection>(emptySelection);
+  const [selection, setSelection] = useState<number[]>([]);
   const selectedSnapshot = useRef<{ index: number; hit: SearchHit } | null>(
     null,
   );
@@ -317,7 +318,7 @@ export default function Search({
     setMissing(page.missing);
     setUnavailable(page.unavailable);
     setCache(nextCache);
-    setSelection(emptySelection());
+    setSelection([]);
     selectedSnapshot.current = null;
     setMenu(null);
     setError("");
@@ -347,7 +348,7 @@ export default function Search({
     setTotal(0);
     setCache(new Map());
     setRestore(null);
-    setSelection(emptySelection());
+    setSelection([]);
     selectedSnapshot.current = null;
     setMenu(null);
     setEditing(null);
@@ -424,20 +425,13 @@ export default function Search({
       live = false;
     };
   }, [cache, range, total, busy, refreshing, active, resultVersion]);
-  const selected = (i: number) =>
-    !!selection.range && i >= selection.range[0] && i <= selection.range[1]
-      ? !selection.toggles.has(i)
-      : selection.toggles.has(i);
-  const count =
-    (selection.range ? selection.range[1] - selection.range[0] + 1 : 0) +
-    [...selection.toggles].reduce(
-      (n, i) =>
-        n +
-        (selection.range && i >= selection.range[0] && i <= selection.range[1]
-          ? -1
-          : 1),
-      0,
-    );
+  const selected = (i: number) => inSpans(selection, i);
+  const count = useMemo(() => {
+    let total = 0;
+    for (let i = 0; i < selection.length; i += 2)
+      total += selection[i + 1] - selection[i];
+    return total;
+  }, [selection]);
   const loadedSelected =
     count === 1 ? [...cache].find(([i]) => selected(i))?.[1] : undefined;
   if (loadedSelected) {
@@ -455,21 +449,16 @@ export default function Search({
   function choose(i: number, shift: boolean, ctrl: boolean) {
     cursor.current = i;
     if (shift) {
-      setSelection({
-        range: [Math.min(anchor.current, i), Math.max(anchor.current, i)],
-        toggles: new Set(),
-      });
+      setSelection([
+        Math.min(anchor.current, i),
+        Math.max(anchor.current, i) + 1,
+      ]);
     } else if (ctrl) {
-      setSelection((s) => {
-        const toggles = new Set(s.toggles);
-        if (toggles.has(i)) toggles.delete(i);
-        else toggles.add(i);
-        return { ...s, toggles };
-      });
+      setSelection((s) => toggleSpans(s, [i, i + 1]));
       anchor.current = i;
     } else {
       anchor.current = i;
-      setSelection({ range: [i, i], toggles: new Set() });
+      setSelection([i, i + 1]);
     }
   }
   function cancel() {
@@ -506,18 +495,24 @@ export default function Search({
         r.file.parent.join(",") === knownSelected[0].file.parent.join(","),
     );
   function operationSelection(override?: number): SelectionInput | null {
-    return queryId.current === null
-      ? null
-      : {
-          origin: {
-            kind: "search",
-            id: queryId.current,
-            range:
-              override === undefined ? selection.range : [override, override],
-          },
-          entries: [],
-          positions: override === undefined ? [...selection.toggles] : [],
-        };
+    if (
+      queryId.current === null ||
+      (override === undefined && count > maxFileSelection)
+    )
+      return null;
+    const positions: number[] = [];
+    let range: [number, number] | null = null;
+    if (override !== undefined) range = [override, override];
+    else if (selection.length === 2) range = [selection[0], selection[1] - 1];
+    else {
+      for (let s = 0; s < selection.length; s += 2)
+        for (let i = selection[s]; i < selection[s + 1]; i++) positions.push(i);
+    }
+    return {
+      origin: { kind: "search", id: queryId.current, range },
+      entries: [],
+      positions,
+    };
   }
   function perform(action: FileAction, override?: number) {
     const selected = operationSelection(override);
@@ -672,6 +667,17 @@ export default function Search({
           onRange={viewport}
           onPosition={onPosition}
           restore={restore}
+          marquee={{
+            enabled: active && !facts.blocked,
+            version: queryId.current,
+            commit(area, toggle) {
+              const spans = rectangleSpans(area, total);
+              if (spans.length) anchor.current = cursor.current = spans[0];
+              setSelection((previous) =>
+                toggle ? toggleSpans(previous, spans) : spans,
+              );
+            },
+          }}
           onKeyDown={(e, { columns, reveal, scrollTo }) => {
             if (fileEditingKey(e)) return;
             if (
@@ -688,10 +694,7 @@ export default function Search({
               return;
             if (e.ctrlKey && e.key.toLowerCase() === "a") {
               e.preventDefault();
-              setSelection({
-                range: total ? [0, total - 1] : null,
-                toggles: new Set(),
-              });
+              setSelection(total ? [0, total] : []);
             }
             if (e.key === "Escape") setMenu(null);
             if (grid && (e.key === "Home" || e.key === "End") && total) {
@@ -725,7 +728,12 @@ export default function Search({
             }
             if (e.key === "Enter" && selectedRow) open(selectedRow);
           }}
-          row={(i) => {
+          row={(i, _scrollToRow, _columns, frame) => {
+            const marked = frame
+              ? frame.toggle
+                ? selected(i) !== frame.hit
+                : frame.hit
+              : selected(i);
             const cached = cache.get(i);
             const r = cached ? currentHit(cached) : undefined;
             const path = r
@@ -774,7 +782,7 @@ export default function Search({
                 aria-rowindex={grid ? undefined : i + 2}
                 aria-posinset={grid ? i + 1 : undefined}
                 aria-setsize={grid ? total : undefined}
-                aria-selected={selected(i)}
+                aria-selected={marked}
                 className={grid ? "thumbnail-cell" : "virtual-result-row"}
                 title={grid && r ? `${r.file.name}\n${location}` : undefined}
                 onClick={(e) => {
@@ -943,6 +951,9 @@ export default function Search({
         <span>
           {missing ? `${missing.toLocaleString()} 项缺少查重元数据` : ""}
         </span>
+        {count > maxFileSelection && (
+          <span role="status">{fileSelectionLimit}</span>
+        )}
       </footer>
       {active && menu && (
         <FileContextMenu

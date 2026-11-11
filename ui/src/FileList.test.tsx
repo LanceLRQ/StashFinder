@@ -1,7 +1,204 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { useState } from "react";
 import FileList from "./FileList";
 afterEach(cleanup);
+
+const files = Array.from({ length: 12 }, (_, index) => ({
+  entry: [index],
+  parent: [99],
+  object: [index],
+  name: `sample-${index}.txt`,
+  path: `sample-${index}.txt`,
+  kind: "file",
+  attributes: 0,
+  size: null,
+  created: null,
+  modified: null,
+}));
+
+function measureList(list: HTMLElement, height: number) {
+  Object.defineProperties(list, {
+    clientHeight: { value: height },
+    clientWidth: { value: 660 },
+  });
+  vi.spyOn(list, "getBoundingClientRect").mockReturnValue(
+    DOMRect.fromRect({ width: 660, height }),
+  );
+  fireEvent.resize(window);
+}
+
+test.each([
+  ["details", 34, 16, 34],
+  ["small", 82, 106, 82],
+  ["medium", 108, 146, 108],
+  ["large", 176, 210, 176],
+] as const)(
+  "frames directory items in %s, toggles with Ctrl and discards an unfinished frame",
+  (view, rowHeight, edge, gap) => {
+    const commit = vi.fn();
+    function Harness() {
+      const [selection, select] = useState(["0"]);
+      return (
+        <FileList
+          rows={files}
+          view={view}
+          selection={selection}
+          onSelect={(ids) => {
+            commit(ids);
+            select(ids);
+          }}
+          onOpen={() => {}}
+          next={null}
+          busy={false}
+          onMore={() => {}}
+        />
+      );
+    }
+    render(<Harness />);
+    const list = screen.getByLabelText("目录文件列表");
+    measureList(list, 480);
+    const pointer = { pointerId: 7, pointerType: "mouse", button: 0 };
+    const frame = (ctrlKey: boolean) => {
+      fireEvent.pointerDown(list, {
+        ...pointer,
+        clientX: 1,
+        clientY: gap + 1,
+        ctrlKey,
+      });
+      fireEvent.pointerMove(list, {
+        ...pointer,
+        buttons: 1,
+        clientX: edge,
+        clientY: 5,
+        ctrlKey,
+      });
+    };
+    const marked = () =>
+      [...list.querySelectorAll('[data-index][aria-selected="true"]')].map(
+        (item) => item.getAttribute("data-index"),
+      );
+    frame(true);
+    expect(marked()).toEqual(view === "details" ? ["1"] : []);
+    expect(commit).not.toHaveBeenCalled();
+    fireEvent.keyDown(list, { key: "Escape" });
+    fireEvent.pointerUp(list, pointer);
+    expect(marked()).toEqual(["0"]);
+    expect(commit).not.toHaveBeenCalled();
+    frame(false);
+    fireEvent.pointerUp(list, { ...pointer, clientX: edge, clientY: 5 });
+    expect(commit).toHaveBeenLastCalledWith(
+      view === "details" ? ["0", "1"] : ["0"],
+    );
+    frame(true);
+    fireEvent.pointerUp(list, { ...pointer, clientX: edge, clientY: 5 });
+    expect(commit).toHaveBeenLastCalledWith([]);
+    expect(list.style.getPropertyValue("--details-row-height")).toBe(
+      `${rowHeight}px`,
+    );
+  },
+);
+
+test("cancels a frame when the directory revision changes or pointer capture is lost", () => {
+  const commit = vi.fn();
+  const renderList = (revision: string) => (
+    <FileList
+      rows={files}
+      selection={["4"]}
+      onSelect={commit}
+      onOpen={() => {}}
+      context={{
+        partition_id: "p",
+        filesystem_id: "f",
+        generation: "1",
+        revision,
+        entry: [1],
+      }}
+      next={null}
+      busy={false}
+      onMore={() => {}}
+    />
+  );
+  const { rerender } = render(renderList("1"));
+  const list = screen.getByLabelText("目录文件列表");
+  measureList(list, 240);
+  const pointer = { pointerId: 7, pointerType: "mouse", button: 0, buttons: 1 };
+  const start = () => {
+    fireEvent.pointerDown(list, { ...pointer, clientX: 1, clientY: 10 });
+    fireEvent.pointerMove(list, { ...pointer, clientX: 95, clientY: 100 });
+    expect(list.querySelector(".file-marquee")).not.toBeNull();
+  };
+  start();
+  rerender(renderList("2"));
+  expect(list.querySelector(".file-marquee")).toBeNull();
+  fireEvent.pointerUp(list, { ...pointer, clientX: 95, clientY: 100 });
+  expect(commit).not.toHaveBeenCalled();
+  start();
+  fireEvent.lostPointerCapture(list, pointer);
+  expect(list.querySelector(".file-marquee")).toBeNull();
+  expect(
+    list.querySelector('[data-index="4"]')?.getAttribute("aria-selected"),
+  ).toBe("true");
+  expect(commit).not.toHaveBeenCalled();
+  start();
+  expect(fireEvent.keyDown(list, { key: "Tab", ctrlKey: true })).toBe(true);
+  expect(list.querySelector(".file-marquee")).toBeNull();
+  expect(commit).not.toHaveBeenCalled();
+});
+
+test("scrolls a directory frame through the loaded edge and includes entries from the next page", () => {
+  vi.useFakeTimers();
+  try {
+    const more = vi.fn();
+    const commit = vi.fn();
+    function Harness() {
+      const [loaded, setLoaded] = useState(3);
+      return (
+        <FileList
+          rows={files.slice(0, loaded)}
+          selection={[]}
+          onSelect={commit}
+          onOpen={() => {}}
+          next={loaded === 3 ? 3 : null}
+          busy={false}
+          onMore={() => {
+            more();
+            setLoaded(12);
+          }}
+        />
+      );
+    }
+    render(<Harness />);
+    const list = screen.getByLabelText("目录文件列表");
+    measureList(list, 72);
+    const pointer = {
+      pointerId: 7,
+      pointerType: "mouse",
+      button: 0,
+      buttons: 1,
+    };
+    fireEvent.pointerDown(list, { ...pointer, clientX: 1, clientY: 8 });
+    fireEvent.pointerMove(list, { ...pointer, clientX: 90, clientY: 71 });
+    act(() => vi.advanceTimersByTime(120));
+    expect(more).toHaveBeenCalledOnce();
+    act(() => vi.advanceTimersByTime(260));
+    expect(list.scrollTop).toBeGreaterThan(102);
+    fireEvent.pointerUp(list, { ...pointer, clientX: 90, clientY: 71 });
+    expect(commit.mock.lastCall?.[0]).toContain("4");
+    expect(commit.mock.lastCall?.[0][0]).toBe("0");
+    const stopped = list.scrollTop;
+    act(() => vi.advanceTimersByTime(100));
+    expect(list.scrollTop).toBe(stopped);
+  } finally {
+    vi.useRealTimers();
+  }
+});
 test("retains full-directory selection and right-click does not collapse it", () => {
   const select = vi.fn();
   const all = vi.fn();

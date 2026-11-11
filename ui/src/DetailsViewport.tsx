@@ -9,6 +9,8 @@ import {
   type ReactNode,
 } from "react";
 import "./details-viewport.css";
+import { detailsGutter, hitsItem, tileInset } from "./marquee";
+import useMarquee, { type MarqueeCommit } from "./useMarquee";
 
 const maxScrollHeight = 8_000_000;
 const initialHeight = 500;
@@ -84,6 +86,7 @@ export default function DetailsViewport({
   descending,
   onKeyDown,
   onContextMenu,
+  marquee,
   row,
   children,
 }: {
@@ -115,10 +118,17 @@ export default function DetailsViewport({
     },
   ) => void;
   onContextMenu?: (event: MouseEvent<HTMLDivElement>) => void;
+  marquee?: {
+    enabled: boolean;
+    version?: string | number | null;
+    commit: MarqueeCommit;
+    page?: { offset: number; load: () => void };
+  };
   row: (
     index: number,
     scrollToRow: (index: number) => void,
     columns: number,
+    frame?: { hit: boolean; toggle: boolean },
   ) => ReactNode;
   children?: ReactNode;
 }) {
@@ -149,6 +159,53 @@ export default function DetailsViewport({
     height,
     geometry,
   );
+  const frame = useMarquee({
+    enabled: !!marquee?.enabled,
+    version: marquee?.version,
+    commit: marquee?.commit,
+    page: marquee?.page,
+    columns: itemsPerRow,
+    rowHeight,
+    tileWidth: grid?.tileWidth,
+    total,
+    measure(element) {
+      const header = grid
+        ? 0
+        : (element.querySelector("thead")?.offsetHeight ?? 0);
+      const window = virtualWindow(
+        total,
+        element.scrollTop * scale,
+        height,
+        geometry,
+      );
+      return {
+        header,
+        offset:
+          (window.start / itemsPerRow) * rowHeight +
+          element.scrollTop -
+          window.before -
+          header,
+      };
+    },
+    scroll(element, delta) {
+      const header = grid
+        ? 0
+        : (element.querySelector("thead")?.offsetHeight ?? 0);
+      const content = Math.min(
+        Math.ceil(total / itemsPerRow) * rowHeight,
+        maxScrollHeight,
+      );
+      const max = Math.max(0, content + header - height);
+      const previous = element.scrollTop;
+      const step = Math.sign(delta) * Math.max(1, Math.abs(delta) / scale);
+      const next = Math.max(0, Math.min(max, previous + step));
+      if (next !== previous) {
+        element.scrollTop = next;
+        updatePosition(element, true);
+      }
+      return element.scrollTop >= max - 1;
+    },
+  });
 
   function updatePosition(element: HTMLDivElement, scrolling: boolean) {
     const { scrollTop, clientHeight } = element;
@@ -299,22 +356,56 @@ export default function DetailsViewport({
         <td colSpan={columns.length} />
       </tr>
     );
+  const items = () =>
+    Array.from({ length: end - start }, (_, offset) => {
+      const index = start + offset;
+      return row(
+        index,
+        scrollToRow,
+        itemsPerRow,
+        frame.frame
+          ? {
+              hit: hitsItem(frame.frame.area, index),
+              toggle: frame.frame.toggle,
+            }
+          : undefined,
+      );
+    });
 
   return (
     <div
       className={`details-viewport ${className}`}
       aria-label={label}
-      style={{ "--details-row-height": `${rowHeight}px` } as CSSProperties}
+      style={
+        {
+          "--details-row-height": `${rowHeight}px`,
+          "--details-gutter": `${detailsGutter}px`,
+          "--tile-inset": `${tileInset}px`,
+        } as CSSProperties
+      }
       ref={ref}
       tabIndex={0}
-      onScroll={(event) => updatePosition(event.currentTarget, true)}
+      onScroll={(event) => {
+        updatePosition(event.currentTarget, true);
+        frame.refresh();
+      }}
       onFocus={(event) => {
         focused.current = (event.target as HTMLElement).closest("[data-index]");
       }}
-      onKeyDown={(event) =>
-        onKeyDown(event, { columns: itemsPerRow, reveal, scrollTo })
-      }
+      onKeyDown={(event) => {
+        if (frame.isActive()) {
+          if (event.key === "Tab") frame.cancel();
+          else {
+            if (event.key === "Escape") frame.cancel();
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+        }
+        onKeyDown(event, { columns: itemsPerRow, reveal, scrollTo });
+      }}
       onContextMenu={onContextMenu}
+      {...frame.handlers}
     >
       {grid ? (
         <div
@@ -331,14 +422,13 @@ export default function DetailsViewport({
               gridTemplateColumns: `repeat(${itemsPerRow}, minmax(0, ${grid.tileWidth}px))`,
             }}
           >
-            {Array.from({ length: end - start }, (_, offset) =>
-              row(start + offset, scrollToRow, itemsPerRow),
-            )}
+            {items()}
           </div>
           <div aria-hidden="true" style={{ height: after }} />
         </div>
       ) : (
         <table
+          className="marquee-details"
           aria-label={tableLabel}
           aria-rowcount={total + 1}
           aria-multiselectable="true"
@@ -373,14 +463,19 @@ export default function DetailsViewport({
           </thead>
           <tbody>
             {spacer(before)}
-            {Array.from({ length: end - start }, (_, offset) =>
-              row(start + offset, scrollToRow, itemsPerRow),
-            )}
+            {items()}
             {spacer(after)}
           </tbody>
         </table>
       )}
       {children}
+      {frame.frame && (
+        <div
+          className="file-marquee"
+          aria-hidden="true"
+          style={frame.frame.box}
+        />
+      )}
     </div>
   );
 }

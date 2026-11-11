@@ -1,5 +1,8 @@
 import { useLayoutEffect, useRef } from "react";
 
+export const maxFileSelection = 10_000;
+export const fileSelectionLimit = "文件操作最多支持 10,000 项";
+
 export type EntryRef = {
   partition_id: string;
   filesystem_id: string;
@@ -100,6 +103,8 @@ export type CommandFacts = {
 export function commandEnabled(action: MenuAction, facts: CommandFacts) {
   if (facts.blocked) return false;
   const { count, online, singleFile, sameParent, folder, paste } = facts;
+  if (count > maxFileSelection && action !== "paste" && action !== "properties")
+    return false;
   switch (action) {
     case "open":
       return count === 1 && (online || !!folder);

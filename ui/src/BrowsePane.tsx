@@ -13,6 +13,8 @@ import FileContextMenu from "./FileContextMenu";
 import { useFileOperations } from "./FileOperations";
 import {
   fileKey,
+  fileSelectionLimit,
+  maxFileSelection,
   useFileCommands,
   type FileCommandContext,
   type MenuAction,
@@ -197,11 +199,10 @@ export default function BrowsePane({
   const count = allSelected
     ? Math.max(0, (page?.total ?? page?.entries.length ?? 0) - selection.length)
     : selection.length;
+  const selectedIds = new Set(selection);
   const selectedRows =
-    page?.entries.filter((row) =>
-      allSelected
-        ? !selection.includes(row.entry.join(","))
-        : selection.includes(row.entry.join(",")),
+    page?.entries.filter(
+      (row) => allSelected !== selectedIds.has(row.entry.join(",")),
     ) ?? [];
   const online =
     asset?.connection === "online" && asset.registration.state === "ready";
@@ -232,6 +233,7 @@ export default function BrowsePane({
       : null;
   }
   function perform(action: FileAction, override?: number[][]) {
+    if (!override && count > maxFileSelection) return;
     const selected = input(override);
     if (selected)
       operations.run(selected, action, () => {
@@ -338,7 +340,14 @@ export default function BrowsePane({
     }).then(
       (value) => {
         if (token === request.current) {
-          setPage({ ...value, entries: [...page.entries, ...value.entries] });
+          if (
+            page.filesystem_id === value.filesystem_id &&
+            page.generation === value.generation &&
+            page.revision === value.revision &&
+            page.location.join(",") === value.location.join(",")
+          ) {
+            setPage({ ...value, entries: [...page.entries, ...value.entries] });
+          } else setError("目录索引已更新，请刷新");
           setBusy(false);
         }
       },
@@ -604,6 +613,9 @@ export default function BrowsePane({
                 ? ` · 索引 ${new Date(page.indexed_at * 1000).toLocaleString()}`
                 : ""}
             </span>
+            {count > maxFileSelection && (
+              <span role="status">{fileSelectionLimit}</span>
+            )}
           </footer>
           {active && menu && (
             <FileContextMenu

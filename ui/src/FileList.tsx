@@ -5,6 +5,7 @@ import RenameInput from "./RenameInput";
 import FileIcon from "./FileIcon";
 import { fileEditingKey, type EntryRef } from "./file-operations";
 import { thumbnailLayouts, type FileView } from "./file-view";
+import { rectangleSpans } from "./marquee";
 
 const layout = { rowHeight: 34, overscan: 10 };
 const columns = [{ label: "名称" }, { label: "大小" }, { label: "修改时间" }];
@@ -59,10 +60,9 @@ export default function FileList({
     null,
   );
   const suppressClick = useRef(false);
+  const selectedIds = new Set(selection);
   const selected = (row: FileRow) =>
-    allSelected
-      ? !selection.includes(row.entry.join(","))
-      : selection.includes(row.entry.join(","));
+    allSelected !== selectedIds.has(row.entry.join(","));
   function choose(index: number, extend: boolean, toggle: boolean) {
     const id = rows[index].entry.join(",");
     if (extend) {
@@ -95,6 +95,26 @@ export default function FileList({
       grid={grid}
       columns={columns}
       total={rows.length}
+      marquee={{
+        enabled: active && !editing,
+        version:
+          context &&
+          `${context.filesystem_id}:${context.generation}:${context.revision}`,
+        page:
+          next !== null && !busy ? { offset: next, load: onMore } : undefined,
+        commit(area, toggle) {
+          const spans = rectangleSpans(area, rows.length);
+          const ids = new Set(toggle ? selection : []);
+          if (spans.length) anchor.current = spans[0];
+          for (let s = 0; s < spans.length; s += 2) {
+            for (let i = spans[s]; i < spans[s + 1]; i++) {
+              const id = rows[i].entry.join(",");
+              if (!ids.delete(id)) ids.add(id);
+            }
+          }
+          onSelect([...ids], toggle && allSelected);
+        },
+      }}
       onContextMenu={(e) => {
         if (
           onBlankContext &&
@@ -112,8 +132,13 @@ export default function FileList({
           else onSelect(rows.map((r) => r.entry.join(",")));
         }
       }}
-      row={(index, scrollToRow, columns) => {
+      row={(index, scrollToRow, columns, frame) => {
         const row = rows[index];
+        const marked = frame
+          ? frame.toggle
+            ? selected(row) !== frame.hit
+            : frame.hit
+          : selected(row);
         const name =
           editing?.entry === row.entry.join(",") ? (
             <RenameInput
@@ -145,7 +170,7 @@ export default function FileList({
             aria-rowindex={grid ? undefined : index + 2}
             aria-posinset={grid ? index + 1 : undefined}
             aria-setsize={grid ? rows.length : undefined}
-            aria-selected={selected(row)}
+            aria-selected={marked}
             className={grid ? "thumbnail-cell" : undefined}
             title={grid ? row.name : undefined}
             onClick={(e) => {

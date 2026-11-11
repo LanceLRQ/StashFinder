@@ -39,6 +39,114 @@ function openPreview() {
   fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "预览窗格" }));
 }
 
+test.each([
+  ["小", 104, 82, 6],
+  ["中", 144, 108, 4],
+  ["大", 208, 176, 3],
+] as const)(
+  "Ctrl frames disjoint %s search grid positions and passes exactly those positions to file operations",
+  async (size, width, height, columns) => {
+    mock("online", 1600);
+    render(
+      <FileOperations>
+        <SearchWithView partitions={[]} />
+      </FileOperations>,
+    );
+    const list = screen.getByLabelText("搜索结果列表");
+    const results = within(list);
+    await results.findByText("file-1.txt", {}, { timeout: 5000 });
+    Object.defineProperties(list, {
+      clientWidth: { value: 704 },
+      clientHeight: { value: 420 },
+    });
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(
+      DOMRect.fromRect({ width: 704, height: 420 }),
+    );
+    fireEvent.resize(window);
+    fireEvent.click(screen.getByRole("button", { name: "查看" }));
+    fireEvent.click(
+      screen.getByRole("menuitemradio", { name: `缩略图（${size}图标）` }),
+    );
+    fireEvent.click(results.getByText("file-1.txt"));
+    fireEvent.click(results.getByText("file-0.txt"), { ctrlKey: true });
+    const pointer = {
+      pointerId: 2,
+      pointerType: "mouse",
+      button: 0,
+      buttons: 1,
+      ctrlKey: true,
+    };
+    fireEvent.pointerDown(list, { ...pointer, clientX: width, clientY: 5 });
+    fireEvent.pointerMove(list, {
+      ...pointer,
+      clientX: 2 * width - 5,
+      clientY: 2 * height + 6,
+    });
+    fireEvent.pointerUp(list, {
+      ...pointer,
+      clientX: 2 * width - 5,
+      clientY: 2 * height + 6,
+    });
+    expect(screen.getByText("已选择 3 项")).toBeTruthy();
+    fireEvent.keyDown(list, { key: "c", ctrlKey: true });
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("file_prepare", {
+        input: {
+          origin: { kind: "search", id: 1, range: null },
+          entries: [],
+          positions: [0, columns + 1, 2 * columns + 1],
+        },
+        recordsOnly: false,
+      }),
+    );
+  },
+  15000,
+);
+
+test("frames an unloaded million-result window and blocks an oversized operation before IPC", async () => {
+  const total = 1_000_000;
+  mock("online", total);
+  render(
+    <FileOperations>
+      <SearchWithView partitions={[]} />
+    </FileOperations>,
+  );
+  const list = screen.getByLabelText("搜索结果列表");
+  const view = within(list);
+  await view.findByText("file-0.txt", {}, { timeout: 5000 });
+  const height = 500;
+  Object.defineProperties(list, {
+    clientWidth: { value: 704 },
+    clientHeight: { value: height },
+  });
+  vi.spyOn(list, "getBoundingClientRect").mockReturnValue(
+    DOMRect.fromRect({ width: 704, height }),
+  );
+  fireEvent.resize(window);
+  const pointer = { pointerId: 2, pointerType: "mouse", button: 0, buttons: 1 };
+  fireEvent.pointerDown(list, { ...pointer, clientX: 1, clientY: 16 });
+  fireEvent.pointerMove(list, { ...pointer, clientX: 240, clientY: 64 });
+  const scale = (total * 64 - height) / (8_000_000 - height);
+  fireEvent.scroll(list, { target: { scrollTop: (500_000 * 64) / scale } });
+  fireEvent.pointerUp(list, { ...pointer, clientX: 240, clientY: 48 });
+  expect(screen.getByText("已选择 500,001 项")).toBeTruthy();
+  expect(screen.getByText(/文件操作最多支持 10,000 项/)).toBeTruthy();
+  fireEvent.keyDown(list, { key: "c", ctrlKey: true });
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.some(([command]) => command === "file_prepare"),
+  ).toBe(false);
+  await view.findByText("file-500000.txt", {}, { timeout: 5000 });
+  expect(
+    view
+      .getByText("file-500000.txt")
+      .closest("tr")
+      ?.getAttribute("aria-selected"),
+  ).toBe("true");
+  expect(list.querySelectorAll("[data-index]").length).toBeLessThan(70);
+}, 15000);
+
 test.each([1600, 1_000_000])(
   "changes thumbnail sizes without restarting %i search results or losing the visible file",
   async (total) => {
@@ -358,7 +466,7 @@ test.each([1600, 1_000_000])(
   },
 );
 test("copies the full selection descriptor instead of the visible result cache", async () => {
-  mock("online");
+  mock("online", 10_000);
   render(
     <FileOperations>
       <Search partitions={[]} />
@@ -371,7 +479,7 @@ test("copies the full selection descriptor instead of the visible result cache",
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("file_prepare", {
       input: {
-        origin: { kind: "search", id: 1, range: [0, 9999999] },
+        origin: { kind: "search", id: 1, range: [0, 9999] },
         entries: [],
         positions: [],
       },
