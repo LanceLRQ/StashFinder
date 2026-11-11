@@ -1,3 +1,5 @@
+export const fileDetailsLayout = { rowHeight: 34, overscan: 10 };
+
 export const thumbnailLayouts = {
   small: { size: 32, tileWidth: 104, rowHeight: 82 },
   medium: { size: 64, tileWidth: 144, rowHeight: 108 },

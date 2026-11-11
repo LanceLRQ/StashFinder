@@ -13,6 +13,42 @@
 .details-viewport .marquee-details {
   width: calc(100% - var(--details-gutter));
   margin-left: var(--details-gutter);
+  font-size: 13px;
+}
+.marquee-details th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f8f9fb;
+  color: #647082;
+  font-weight: 400;
+  text-align: left;
+  border-bottom: 1px solid #dce1e7;
+}
+.marquee-details th,
+.marquee-details tr[data-index] td {
+  height: var(--details-row-height);
+  padding: 4px 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.marquee-details tr[data-index]:hover {
+  background: #f0f3f7;
+}
+.marquee-details tr[aria-selected="true"] {
+  background: #e3edf8;
+}
+.marquee-details .file-entry-badge {
+  display: inline;
+  margin: 0 0 0 4px;
+  color: #647082;
+}
+.details-viewport .marquee-details input.file-rename-input {
+  box-sizing: border-box;
+  height: 24px;
+  max-width: 100%;
+  padding: 1px 5px;
 }
 .file-marquee {
   position: fixed;
@@ -51,8 +87,9 @@
   background: #e3edf8;
 }
 .thumbnail-cell:focus-visible,
-.virtual-result-row:focus-visible {
+.marquee-details tr[data-index]:focus-visible {
   outline: 1px solid #386da7;
+  outline-offset: -1px;
 }
 .thumbnail-name,
 .thumbnail-location {

@@ -1,13 +1,15 @@
 import { useRef } from "react";
 import { fileTime, type FileRow } from "./browse-api";
 import DetailsViewport from "./DetailsViewport";
-import RenameInput from "./RenameInput";
-import FileIcon from "./FileIcon";
+import FileListItem from "./FileListItem";
 import { fileEditingKey, type EntryRef } from "./file-operations";
-import { thumbnailLayouts, type FileView } from "./file-view";
+import {
+  fileDetailsLayout,
+  thumbnailLayouts,
+  type FileView,
+} from "./file-view";
 import { rectangleSpans } from "./marquee";
 
-const layout = { rowHeight: 34, overscan: 10 };
 const columns = [{ label: "名称" }, { label: "大小" }, { label: "修改时间" }];
 
 export default function FileList({
@@ -54,7 +56,6 @@ export default function FileList({
   view?: FileView;
 }) {
   const grid = view === "details" ? undefined : thumbnailLayouts[view];
-  const Item = grid ? "div" : "tr";
   const anchor = useRef(0);
   const dragging = useRef<{ x: number; y: number; started: boolean } | null>(
     null,
@@ -91,7 +92,7 @@ export default function FileList({
       className="directory-list"
       label="目录文件列表"
       tableLabel="文件"
-      layout={layout}
+      layout={fileDetailsLayout}
       grid={grid}
       columns={columns}
       total={rows.length}
@@ -139,40 +140,21 @@ export default function FileList({
             ? selected(row) !== frame.hit
             : frame.hit
           : selected(row);
-        const name =
-          editing?.entry === row.entry.join(",") ? (
-            <RenameInput
-              name={row.name}
-              folder={row.kind === "folder"}
-              onSubmit={editing.onSubmit}
-              onCancel={editing.onCancel}
-            />
-          ) : (
-            row.name
-          );
-        const icon = (
-          <FileIcon
-            active={active}
-            name={row.name}
-            folder={row.kind === "folder"}
-            reference={context ? { ...context, entry: row.entry } : undefined}
-            connection={connection}
-            size={grid?.size}
-            thumbnail={!!grid}
-          />
-        );
         return (
-          <Item
+          <FileListItem
             key={row.entry.join(",")}
             tabIndex={0}
-            data-index={index}
-            role={grid ? "option" : undefined}
-            aria-rowindex={grid ? undefined : index + 2}
-            aria-posinset={grid ? index + 1 : undefined}
-            aria-setsize={grid ? rows.length : undefined}
-            aria-selected={marked}
-            className={grid ? "thumbnail-cell" : undefined}
-            title={grid ? row.name : undefined}
+            view={view}
+            index={index}
+            total={rows.length}
+            selected={marked}
+            file={row}
+            active={active}
+            reference={context ? { ...context, entry: row.entry } : undefined}
+            connection={connection}
+            editing={
+              editing?.entry === row.entry.join(",") ? editing : undefined
+            }
             onClick={(e) => {
               if (suppressClick.current) {
                 suppressClick.current = false;
@@ -262,21 +244,8 @@ export default function FileList({
               }
             }}
           >
-            {grid ? (
+            {!grid && (
               <>
-                {icon}
-                {typeof name === "string" ? (
-                  <span className="thumbnail-name">{name}</span>
-                ) : (
-                  name
-                )}
-              </>
-            ) : (
-              <>
-                <td title={row.name}>
-                  {icon}
-                  {name}
-                </td>
                 <td className="result-size">
                   {row.kind === "folder"
                     ? "—"
@@ -287,7 +256,7 @@ export default function FileList({
                 <td>{fileTime(row.modified)}</td>
               </>
             )}
-          </Item>
+          </FileListItem>
         );
       }}
     >

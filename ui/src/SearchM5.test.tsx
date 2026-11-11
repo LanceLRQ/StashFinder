@@ -12,8 +12,10 @@ import { useState, type ComponentProps } from "react";
 import Search from "./Search";
 import AppMenu from "./AppMenu";
 import FileOperations from "./FileOperations";
+import FileList from "./FileList";
 import type { FileCommandContext } from "./file-operations";
 import type { Asset } from "./asset-api";
+const detailsRowHeight = 34;
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => {
   cleanup();
@@ -38,6 +40,36 @@ function openPreview() {
   fireEvent.click(screen.getByRole("button", { name: "查看" }));
   fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "预览窗格" }));
 }
+
+test("search details use the directory's compact row height with search metadata", async () => {
+  mock("online", 1600);
+  render(
+    <>
+      <FileList
+        rows={[]}
+        selection={[]}
+        onSelect={() => {}}
+        onOpen={() => {}}
+        next={null}
+        busy={false}
+        onMore={() => {}}
+      />
+      <Search partitions={[]} />
+    </>,
+  );
+  const directory = screen.getByLabelText("目录文件列表");
+  const search = screen.getByLabelText("搜索结果列表");
+  await within(search).findByText("file-0.txt");
+  expect(search.style.getPropertyValue("--details-row-height")).toBe(
+    directory.style.getPropertyValue("--details-row-height"),
+  );
+  expect(
+    within(search).getByRole("button", { name: "按所在目录 / 路径排序" }),
+  ).toBeTruthy();
+  expect(
+    within(search).getByRole("columnheader", { name: "状态 / 索引时间" }),
+  ).toBeTruthy();
+});
 
 test.each([
   ["小", 104, 82, 6],
@@ -126,9 +158,11 @@ test("frames an unloaded million-result window and blocks an oversized operation
   const pointer = { pointerId: 2, pointerType: "mouse", button: 0, buttons: 1 };
   fireEvent.pointerDown(list, { ...pointer, clientX: 1, clientY: 16 });
   fireEvent.pointerMove(list, { ...pointer, clientX: 240, clientY: 64 });
-  const scale = (total * 64 - height) / (8_000_000 - height);
-  fireEvent.scroll(list, { target: { scrollTop: (500_000 * 64) / scale } });
-  fireEvent.pointerUp(list, { ...pointer, clientX: 240, clientY: 48 });
+  const scale = (total * detailsRowHeight - height) / (8_000_000 - height);
+  fireEvent.scroll(list, {
+    target: { scrollTop: (500_000 * detailsRowHeight) / scale },
+  });
+  fireEvent.pointerUp(list, { ...pointer, clientX: 240, clientY: 32 });
   expect(screen.getByText("已选择 500,001 项")).toBeTruthy();
   expect(screen.getByText(/文件操作最多支持 10,000 项/)).toBeTruthy();
   fireEvent.keyDown(list, { key: "c", ctrlKey: true });
@@ -163,9 +197,11 @@ test.each([1600, 1_000_000])(
     });
     fireEvent.resize(window);
     const middle = total / 2;
-    const scale = (total * 64 - 500) / (Math.min(total * 64, 8_000_000) - 500);
+    const logicalHeight = total * detailsRowHeight;
+    const scale =
+      (logicalHeight - 500) / (Math.min(logicalHeight, 8_000_000) - 500);
     fireEvent.scroll(list, {
-      target: { scrollTop: (middle * 64 + 7) / scale },
+      target: { scrollTop: (middle * detailsRowHeight + 7) / scale },
     });
     const name = `file-${middle}.txt`;
     fireEvent.click(await waitForFile(name));
@@ -432,10 +468,10 @@ test.each([1600, 1_000_000])(
     await screen.findByText("file-0.txt");
     const list = screen.getByLabelText("搜索结果列表");
     const height = 500;
-    const content = Math.min(total * 64, 8_000_000);
-    const scale = (total * 64 - height) / (content - height);
+    const content = Math.min(total * detailsRowHeight, 8_000_000);
+    const scale = (total * detailsRowHeight - height) / (content - height);
     const middle = total / 2;
-    const logicalTop = middle * 64 + 17;
+    const logicalTop = middle * detailsRowHeight + 17;
     const physicalTop = logicalTop / scale;
     Object.defineProperty(list, "clientHeight", { value: height });
     fireEvent.scroll(list, { target: { scrollTop: physicalTop } });
@@ -451,11 +487,11 @@ test.each([1600, 1_000_000])(
       table.querySelectorAll("tbody tr[aria-rowindex]").length;
     const [before, after] = spacers();
     expect(parseFloat(before.style.height)).toBe(
-      Math.round(physicalTop - 8 * 64 - 17),
+      Math.round(physicalTop - 8 * detailsRowHeight - 17),
     );
     expect(
       parseFloat(before.style.height) +
-        rendered() * 64 +
+        rendered() * detailsRowHeight +
         parseFloat(after.style.height),
     ).toBe(content);
     fireEvent.scroll(list, { target: { scrollTop: content - height } });

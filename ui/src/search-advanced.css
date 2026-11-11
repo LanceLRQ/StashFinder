@@ -1,26 +1,10 @@
 .virtual-results table {
   min-width: 900px;
-  font-size: 12px;
-}
-.virtual-results thead {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: #f8f9fb;
-}
-.virtual-results th {
-  height: 34px;
-  font-weight: 400;
-  text-align: left;
-  color: #647082;
-  border-bottom: 1px solid #dce1e7;
-  padding: 6px 10px;
 }
 .virtual-results th button {
   padding: 0;
   border: 0;
   background: transparent;
-  font-size: 12px;
   color: inherit;
 }
 .virtual-results th[aria-sort="ascending"] button::after {
@@ -40,6 +24,7 @@
 }
 .virtual-results th:nth-child(4) {
   width: 100px;
+  text-align: right;
 }
 .virtual-results th:nth-child(5) {
   width: 150px;
@@ -50,30 +35,22 @@
 .virtual-results th:nth-child(7) {
   width: 65px;
 }
-.virtual-result-row {
-  height: var(--details-row-height);
-  max-height: var(--details-row-height);
-}
-.search-app .virtual-results .virtual-result-row td {
-  padding: 6px 10px;
-  line-height: 16px;
-  border-bottom: 1px solid #edf0f4;
-  white-space: nowrap;
+.search-entry-status > div,
+.search-entry-status > .search-entry-indexed {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.virtual-results .virtual-result-row small {
-  display: block;
+  line-height: 12px;
   margin: 0;
-  line-height: 14px;
+}
+.search-entry-status small {
   font-size: 11px;
   color: #647082;
 }
-.virtual-result-row:hover {
-  background: #f3f6fa;
-}
-.virtual-result-row[aria-selected="true"] {
-  background: #e3edf8;
+.search-entry-status > div > small {
+  display: inline;
+  margin: 0 0 0 4px;
+  line-height: inherit;
 }
 .search-app .search-empty {
   margin: 0;

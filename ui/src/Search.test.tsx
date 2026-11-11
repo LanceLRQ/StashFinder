@@ -294,7 +294,7 @@ test("keeps the old viewport through short pages and ignores late old pagination
   );
   await tick(150);
   const list = screen.getByLabelText("搜索结果列表");
-  fireEvent.scroll(list, { target: { scrollTop: 32000 } });
+  fireEvent.scroll(list, { target: { scrollTop: 17000 } });
   await tick(0);
   expect(screen.getByText("query-1-492.txt")).toBeTruthy();
   fireEvent.click(screen.getByText("query-1-492.txt").closest("tr")!);
@@ -309,7 +309,7 @@ test("keeps the old viewport through short pages and ignores late old pagination
   expect(screen.getByText("1,600 条结果")).toBeTruthy();
   expect(screen.getByText("query-1-492.txt")).toBeTruthy();
   expect(screen.queryByText("正在搜索…")).toBeNull();
-  expect(list.scrollTop).toBe(32000);
+  expect(list.scrollTop).toBe(17000);
   fireEvent.contextMenu(screen.getByText("query-1-492.txt").closest("tr")!);
   expect(screen.getByRole("menuitem", { name: "复制路径" })).toHaveProperty(
     "disabled",
@@ -319,13 +319,13 @@ test("keeps the old viewport through short pages and ignores late old pagination
   await tick(240);
   expect(
     fixture.batches.filter(({ id }) => id === 2).map(({ offset }) => offset),
-  ).toEqual([0, 492, 496, 500, 504, 508, 512]);
-  expect(screen.getByText("query-2-515.txt")).toBeTruthy();
+  ).toEqual([0, 492, 496, 500, 504, 508, 512, 516, 520]);
+  expect(screen.getByText("query-2-521.txt")).toBeTruthy();
   expect(screen.queryByText("query-1-492.txt")).toBeNull();
   expect(screen.queryByText("已选择 1 项")).toBeNull();
-  expect(list.scrollTop).toBe(32000);
+  expect(list.scrollTop).toBe(17000);
   fixture.delay = (id, offset) => (id === 2 && offset > 0 ? 600 : 0);
-  fireEvent.scroll(list, { target: { scrollTop: 64000 } });
+  fireEvent.scroll(list, { target: { scrollTop: 34000 } });
   view.rerender(
     <Search
       partitions={partitions}
@@ -335,7 +335,7 @@ test("keeps the old viewport through short pages and ignores late old pagination
   fixture.total = 50;
   await tick(250);
   expect(screen.getByText("50 条结果")).toBeTruthy();
-  expect(list.scrollTop).toBe(2700);
+  expect(list.scrollTop).toBe(1200);
   await tick(600);
   expect(screen.getByText("query-3-49.txt")).toBeTruthy();
   expect(screen.queryByText(/query-2-99/)).toBeNull();
@@ -349,7 +349,7 @@ test("keeps failed background results retryable and a new query supersedes the r
   );
   await tick(150);
   const list = screen.getByLabelText("搜索结果列表");
-  fireEvent.scroll(list, { target: { scrollTop: 32000 } });
+  fireEvent.scroll(list, { target: { scrollTop: 17000 } });
   await tick(0);
   fixture.fail = true;
   view.rerender(
@@ -361,7 +361,7 @@ test("keeps failed background results retryable and a new query supersedes the r
   await tick(250);
   expect(screen.getByRole("alert").textContent).toContain("索引暂时不可用");
   expect(screen.getByText("query-1-492.txt")).toBeTruthy();
-  expect(list.scrollTop).toBe(32000);
+  expect(list.scrollTop).toBe(17000);
   fixture.fail = false;
   fixture.delay = (id, offset) => (id === 3 && offset > 0 ? 600 : 0);
   fireEvent.click(screen.getByRole("button", { name: "重试" }));

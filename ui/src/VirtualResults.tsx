@@ -1,7 +1,8 @@
 import type { ComponentProps } from "react";
 import DetailsViewport from "./DetailsViewport";
+import { fileDetailsLayout } from "./file-view";
 
-export const searchDetailsLayout = { rowHeight: 64, overscan: 8 };
+export const searchDetailsLayout = { ...fileDetailsLayout, overscan: 8 };
 
 const columns = [
   { label: "名称", sort: "name" },

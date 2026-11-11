@@ -351,25 +351,6 @@
 }
 .directory-list table {
   min-width: 440px;
-  font-size: 13px;
-}
-.directory-list th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: #f8f9fb;
-  color: #647082;
-  font-weight: 400;
-  text-align: left;
-  border-bottom: 1px solid #dce1e7;
-}
-.directory-list td,
-.directory-list th {
-  height: var(--details-row-height);
-  padding: 6px 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .directory-list th:nth-child(2) {
   width: 100px;
@@ -378,17 +359,11 @@
 .directory-list th:nth-child(3) {
   width: 170px;
 }
-.directory-list tr:hover,
 .search-results tr:hover {
   background: #f0f3f7;
 }
-.directory-list tr[aria-selected="true"],
 .search-results tr[aria-selected="true"] {
   background: #e3edf8;
-}
-.directory-list tr:focus-visible {
-  outline: 1px solid #386da7;
-  outline-offset: -1px;
 }
 .file-preview {
   flex: 0 0 auto;

@@ -15,8 +15,7 @@ import { virtualWindow, type ViewportLayout } from "./DetailsViewport";
 import { fileViewOptions, thumbnailLayouts, type FileView } from "./file-view";
 import { inSpans, rectangleSpans, toggleSpans } from "./marquee";
 import FileContextMenu from "./FileContextMenu";
-import RenameInput from "./RenameInput";
-import FileIcon from "./FileIcon";
+import FileListItem from "./FileListItem";
 import type { Asset } from "./asset-api";
 import { FileStatusBar, useFileOperations } from "./FileOperations";
 import {
@@ -127,7 +126,6 @@ export default function Search({
   const [preview, setPreview] = useState(false);
   const [view, setView] = useState<FileView>("details");
   const grid = view === "details" ? undefined : thumbnailLayouts[view];
-  const Item = grid ? "div" : "tr";
   const [selection, setSelection] = useState<number[]>([]);
   const selectedSnapshot = useRef<{ index: number; hit: SearchHit } | null>(
     null,
@@ -752,50 +750,39 @@ export default function Search({
                 r.file.path
               : "";
             const location = r ? `${r.partition_name} · ${path}` : "";
-            const icon = r && (
-              <FileIcon
-                active={active}
-                name={r.file.name}
-                folder={r.file.kind === "folder"}
-                connection={r.connection}
-                reference={{
-                  partition_id: r.partition_id,
-                  filesystem_id: r.filesystem_id,
-                  generation: String(r.generation),
-                  revision: String(r.revision),
-                  entry: r.file.entry,
-                }}
-                size={grid?.size}
-                thumbnail={!!grid}
-              />
-            );
-            const name =
-              r &&
-              (editing === i ? (
-                <RenameInput
-                  name={r.file.name}
-                  folder={r.file.kind === "folder"}
-                  onCancel={() => setEditing(null)}
-                  onSubmit={(name) => {
-                    setEditing(null);
-                    perform({ rename: name }, i);
-                  }}
-                />
-              ) : (
-                r.file.name
-              ));
             return (
-              <Item
+              <FileListItem
                 key={i}
-                data-index={i}
                 tabIndex={-1}
-                role={grid ? "option" : undefined}
-                aria-rowindex={grid ? undefined : i + 2}
-                aria-posinset={grid ? i + 1 : undefined}
-                aria-setsize={grid ? total : undefined}
-                aria-selected={marked}
-                className={grid ? "thumbnail-cell" : "virtual-result-row"}
-                title={grid && r ? `${r.file.name}\n${location}` : undefined}
+                view={view}
+                index={i}
+                total={total}
+                selected={marked}
+                file={r?.file}
+                active={active}
+                connection={r?.connection}
+                reference={
+                  r && {
+                    partition_id: r.partition_id,
+                    filesystem_id: r.filesystem_id,
+                    generation: String(r.generation),
+                    revision: String(r.revision),
+                    entry: r.file.entry,
+                  }
+                }
+                editing={
+                  editing === i
+                    ? {
+                        onCancel: () => setEditing(null),
+                        onSubmit: (name) => {
+                          setEditing(null);
+                          perform({ rename: name }, i);
+                        },
+                      }
+                    : undefined
+                }
+                location={location}
+                badge={r?.hard_link ? "硬链接" : undefined}
                 onClick={(e) => {
                   if (suppressClick.current) {
                     suppressClick.current = false;
@@ -849,63 +836,49 @@ export default function Search({
                   });
                 }}
               >
-                {grid ? (
-                  r ? (
-                    <>
-                      {icon}
-                      {typeof name === "string" ? (
-                        <span className="thumbnail-name">{name}</span>
-                      ) : (
-                        name
-                      )}
-                      <span className="thumbnail-location">{location}</span>
-                    </>
+                {!grid &&
+                  (!r ? (
+                    <td colSpan={7}>正在读取…</td>
                   ) : (
-                    "正在读取…"
-                  )
-                ) : !r ? (
-                  <td colSpan={7}>正在读取…</td>
-                ) : (
-                  <>
-                    <td title={r.file.name}>
-                      {icon}
-                      {name}
-                      {r.hard_link && <small>硬链接</small>}
-                    </td>
-                    <td title={r.file.path}>{path}</td>
-                    <td>{r.partition_name}</td>
-                    <td
-                      className="result-size"
-                      title={
-                        r.file.size === null
-                          ? undefined
-                          : `${BigInt(r.file.size).toLocaleString()} B`
-                      }
-                    >
-                      {r.file.kind === "folder"
-                        ? "—"
-                        : r.file.size === null
-                          ? "未知"
-                          : fileSize(r.file.size)}
-                    </td>
-                    <td>{fileTime(r.file.modified)}</td>
-                    <td>
-                      {connectionLabel[r.connection] || "状态未确认"}
-                      {r.partial ? (
-                        <small>未完成记录</small>
-                      ) : r.needs_validation ? (
-                        <small>索引待校验</small>
-                      ) : null}
-                      <small>
-                        {r.indexed_at == null
-                          ? "索引时间未知"
-                          : new Date(r.indexed_at * 1000).toLocaleString()}
-                      </small>
-                    </td>
-                    <td>{r.duplicate_group || "—"}</td>
-                  </>
-                )}
-              </Item>
+                    <>
+                      <td title={r.file.path}>{path}</td>
+                      <td>{r.partition_name}</td>
+                      <td
+                        className="result-size"
+                        title={
+                          r.file.size === null
+                            ? undefined
+                            : `${BigInt(r.file.size).toLocaleString()} B`
+                        }
+                      >
+                        {r.file.kind === "folder"
+                          ? "—"
+                          : r.file.size === null
+                            ? "未知"
+                            : fileSize(r.file.size)}
+                      </td>
+                      <td>{fileTime(r.file.modified)}</td>
+                      <td className="search-entry-status">
+                        <div>
+                          <span>
+                            {connectionLabel[r.connection] || "状态未确认"}
+                          </span>
+                          {r.partial ? (
+                            <small>未完成记录</small>
+                          ) : r.needs_validation ? (
+                            <small>索引待校验</small>
+                          ) : null}
+                        </div>
+                        <small className="search-entry-indexed">
+                          {r.indexed_at == null
+                            ? "索引时间未知"
+                            : new Date(r.indexed_at * 1000).toLocaleString()}
+                        </small>
+                      </td>
+                      <td>{r.duplicate_group || "—"}</td>
+                    </>
+                  ))}
+              </FileListItem>
             );
           }}
         />
