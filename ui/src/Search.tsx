@@ -18,7 +18,7 @@ import FileContextMenu from "./FileContextMenu";
 import RenameInput from "./RenameInput";
 import FileIcon from "./FileIcon";
 import type { Asset } from "./asset-api";
-import { useFileOperations } from "./FileOperations";
+import { FileStatusBar, useFileOperations } from "./FileOperations";
 import {
   fileEditingKey,
   fileKey,
@@ -951,7 +951,7 @@ export default function Search({
       {!busy && !error && !total && (
         <p className="search-empty">没有匹配的文件</p>
       )}
-      <footer className="browse-status">
+      <FileStatusBar>
         <span>
           {count
             ? `已选择 ${count.toLocaleString()} 项`
@@ -965,7 +965,7 @@ export default function Search({
         {count > maxFileSelection && (
           <span role="status">{fileSelectionLimit}</span>
         )}
-      </footer>
+      </FileStatusBar>
       {active && menu && (
         <FileContextMenu
           x={menu.x}

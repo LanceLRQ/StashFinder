@@ -10,6 +10,7 @@ import {
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import IndexControls from "./IndexControls";
+import { FileStatusBar } from "./FileOperations";
 import WorkspaceIcon from "./WorkspaceIcon";
 import "./assets.css";
 
@@ -638,7 +639,7 @@ export default function Assets({
           </div>
         </Modal>
       )}
-      <footer className="asset-footer">
+      <FileStatusBar className="asset-footer">
         <div className="asset-stats" aria-label="已登记资产统计">
           <span>硬盘 {data ? groups.size : "—"}</span>
           <span
@@ -657,7 +658,7 @@ export default function Assets({
           </span>
         </div>
         <span role="status">{working ? "正在处理设备信息…" : ""}</span>
-      </footer>
+      </FileStatusBar>
       {removing && (
         <Modal
           title="remove-title"

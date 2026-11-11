@@ -543,6 +543,9 @@ test.each(["keyboard", "edit"])(
       fireEvent.click(screen.getByRole("menuitem", { name: "粘贴" }));
     }
     expect(await screen.findByText("文件操作已结束，索引待更新")).toBeTruthy();
+    expect(
+      (await screen.findByText("完成 1 项")).closest("footer.browse-status"),
+    ).toBeTruthy();
     expect(invoke).toHaveBeenCalledWith("file_paste", {
       target: {
         partition_id: "p",

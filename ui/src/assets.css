@@ -63,7 +63,7 @@
 .asset-footer [role="status"] {
   flex-shrink: 0;
 }
-.asset-footer span:last-child {
+.asset-footer > span {
   margin-left: auto;
   min-width: 0;
   overflow: hidden;

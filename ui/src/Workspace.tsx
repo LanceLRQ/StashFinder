@@ -8,6 +8,7 @@ import {
 import type { Asset } from "./asset-api";
 import type { SearchHit } from "./index-api";
 import BrowsePane from "./BrowsePane";
+import { FileStatusBar } from "./FileOperations";
 import type { FileView } from "./file-view";
 import Search from "./Search";
 import WindowChrome from "./WindowChrome";
@@ -106,6 +107,16 @@ export default function Workspace({
   const [searchContext, setSearchContext] = useState<SearchContext>();
   const [commands, setCommands] = useState<FileCommandContext | null>(null);
   const currentTab = tabs.find((tab) => tab.id === active);
+  const hasFileStatusBar =
+    currentTab?.kind === "overview" ||
+    (currentTab?.kind === "search" && searchReady) ||
+    (currentTab?.kind === "browse" &&
+      (!currentTab.partition ||
+        assets.some(
+          ({ registration }) =>
+            registration.partition_id === currentTab.partition &&
+            registration.filesystem_id === currentTab.filesystem,
+        )));
   const refreshCurrent =
     currentTab?.kind === "overview"
       ? device && !device.busy
@@ -695,6 +706,7 @@ export default function Workspace({
             </section>
           );
         })}
+      {!hasFileStatusBar && <FileStatusBar />}
     </div>
   );
 }

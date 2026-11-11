@@ -25,7 +25,28 @@ const Context = createContext({
   ) => {},
   paste: (_target: EntryRef, _changed?: () => void) => {},
 });
+const StatusContext = createContext<ReactNode>(null);
+const feedbackDuration = 8000;
+
 export const useFileOperations = () => useContext(Context);
+
+export function FileStatusBar({
+  children,
+  className = "browse-status",
+}: {
+  children?: ReactNode;
+  className?: string;
+}) {
+  const status = useContext(StatusContext);
+  if (!children && !status) return null;
+  return (
+    <footer className={className}>
+      {children}
+      {status}
+    </footer>
+  );
+}
+
 export default function FileOperations({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<OperationStatus | null>(null);
   const [message, setMessage] = useState("");
@@ -45,6 +66,17 @@ export default function FileOperations({ children }: { children: ReactNode }) {
     ["preparing", "validating", "executing", "cancelling"].includes(
       status.phase,
     );
+  useEffect(() => {
+    if (active || !(error || message)) return;
+    const operation = sequence.current;
+    const timer = window.setTimeout(() => {
+      if (sequence.current === operation) {
+        setMessage("");
+        setError("");
+      }
+    }, feedbackDuration);
+    return () => window.clearTimeout(timer);
+  }, [active, error, message]);
   useEffect(() => {
     if (!active) return;
     let live = true;
@@ -235,46 +267,35 @@ export default function FileOperations({ children }: { children: ReactNode }) {
         });
     },
   };
+  const feedback = (error || (!quietMenu && (status || message))) && (
+    <div
+      className={`file-operation-status ${error ? "has-error" : ""}`}
+      aria-label="文件操作状态"
+    >
+      <span role={error ? "alert" : "status"}>
+        {error ||
+          message ||
+          (status?.phase === "preparing"
+            ? "正在准备文件…"
+            : status?.phase === "validating"
+              ? `正在核验 ${status.processed} / ${status.total}`
+              : status?.phase === "cancelling"
+                ? "正在取消…"
+                : "正在执行文件操作…")}
+      </span>
+      {report && !active && (
+        <button onClick={() => setShowReport((v) => !v)}>
+          {showReport ? "收起结果" : "查看结果"}
+        </button>
+      )}
+      {active && <button onClick={() => void cancel()}>取消</button>}
+    </div>
+  );
   return (
     <Context.Provider value={api}>
-      {children}
-      {(error || (!quietMenu && (status || message))) && (
-        <div
-          className={`file-operation-status ${error ? "has-error" : ""}`}
-          aria-label="文件操作状态"
-        >
-          <span role={error ? "alert" : "status"}>
-            {error ||
-              message ||
-              (status?.phase === "preparing"
-                ? "正在准备文件…"
-                : status?.phase === "validating"
-                  ? `正在核验 ${status.processed} / ${status.total}`
-                  : status?.phase === "cancelling"
-                    ? "正在取消…"
-                    : "正在执行文件操作…")}
-          </span>
-          {report && !active && (
-            <button onClick={() => setShowReport((v) => !v)}>
-              {showReport ? "收起结果" : "查看结果"}
-            </button>
-          )}
-          {active ? (
-            <button onClick={() => void cancel()}>取消</button>
-          ) : (
-            <button
-              aria-label="关闭文件操作状态"
-              onClick={() => {
-                setMessage("");
-                setError("");
-                setStatus(null);
-              }}
-            >
-              ×
-            </button>
-          )}
-        </div>
-      )}
+      <StatusContext.Provider value={feedback}>
+        {children}
+      </StatusContext.Provider>
       {showReport && report && (
         <div
           role="dialog"

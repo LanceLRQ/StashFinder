@@ -10,7 +10,7 @@ import FileList from "./FileList";
 import { fileViewOptions, type FileView } from "./file-view";
 import FileDetails from "./FileDetails";
 import FileContextMenu from "./FileContextMenu";
-import { useFileOperations } from "./FileOperations";
+import { FileStatusBar, useFileOperations } from "./FileOperations";
 import {
   fileKey,
   fileSelectionLimit,
@@ -571,7 +571,7 @@ export default function BrowsePane({
               />
             )}
           </div>
-          <footer className="browse-status">
+          <FileStatusBar>
             <span role="status">
               {busy && page
                 ? "正在读取…"
@@ -599,7 +599,7 @@ export default function BrowsePane({
             {count > maxFileSelection && (
               <span role="status">{fileSelectionLimit}</span>
             )}
-          </footer>
+          </FileStatusBar>
           {active && menu && (
             <FileContextMenu
               x={menu.x}
@@ -619,6 +619,7 @@ export default function BrowsePane({
           )}
         </>
       )}
+      {!asset && <FileStatusBar />}
     </div>
   );
 }

@@ -34,29 +34,20 @@
   border-radius: 0;
 }
 .file-operation-status {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  max-width: min(640px, calc(100vw - 36px));
-  max-height: 45vh;
-  overflow: auto;
   display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  border: 1px solid #c3cbd5;
-  border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 3px 16px #15233320;
-  padding: 12px 14px;
-  z-index: 50;
-  font-size: 12px;
+  align-items: center;
+  align-self: center;
+  min-width: 0;
+  margin-inline-start: auto;
+  gap: 8px;
 }
 .file-operation-status > span {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .file-operation-status.has-error {
-  border-color: #c39086;
   color: #923c2b;
 }
 .file-operation-status button {

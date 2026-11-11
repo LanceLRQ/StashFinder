@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -7,11 +8,15 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import FileOperations, { useFileOperations } from "./FileOperations";
+import FileOperations, {
+  FileStatusBar,
+  useFileOperations,
+} from "./FileOperations";
 import type { SelectionInput } from "./file-operations";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.resetAllMocks();
 });
 const selection: SelectionInput = {
@@ -57,6 +62,7 @@ function Buttons({ changed }: { changed?: () => void }) {
       >
         粘贴样本
       </button>
+      <FileStatusBar />
     </>
   );
 }
@@ -332,4 +338,34 @@ test("cancelling a native paste with no writes does not mark the index as pendin
   await screen.findByText("查看结果");
   expect(changed).not.toHaveBeenCalled();
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("clears completed feedback after eight seconds while leaving an opened report readable", async () => {
+  vi.useFakeTimers();
+  let finish!: (message: string) => void;
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "file_paste")
+      return new Promise<string>((resolve) => {
+        finish = resolve;
+      });
+    if (command === "file_status")
+      return { id: 1, phase: "executing", total: 1, processed: 0 };
+    if (command === "file_report")
+      return { id: 1, total: 1, completed: 1, rows: [], next: null };
+  });
+  render(
+    <FileOperations>
+      <Buttons />
+    </FileOperations>,
+  );
+  fireEvent.click(screen.getByText("粘贴样本"));
+  await act(() => vi.advanceTimersByTimeAsync(8000));
+  expect(screen.getByText("正在执行文件操作…")).toBeTruthy();
+  await act(async () => finish("完成 1 项"));
+  fireEvent.click(screen.getByText("查看结果"));
+  await act(() => vi.advanceTimersByTimeAsync(7999));
+  expect(screen.getByText("完成 1 项")).toBeTruthy();
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(screen.queryByText("完成 1 项")).toBeNull();
+  expect(screen.getByRole("dialog", { name: "文件操作结果" })).toBeTruthy();
 });
