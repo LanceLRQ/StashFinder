@@ -88,7 +88,10 @@ test("refreshes the active search from the menu and F5 without intercepting IME"
   fireEvent.change(screen.getByRole("searchbox"), {
     target: { value: "film" },
   });
-  const input = await screen.findByRole("searchbox");
+  fireEvent.submit(screen.getByRole("searchbox").closest("form")!);
+  const input = await screen.findByRole("searchbox", {
+    name: "搜索文件或路径",
+  });
   await screen.findByText("没有匹配的文件");
   const starts = () =>
     vi
@@ -146,7 +149,7 @@ test("routes overview and task refresh to their own actions without toolbar dupl
     vi
       .mocked(invoke)
       .mock.calls.filter(([, args]: any) => args?.action?.task_page).length;
-  menu("查看", "概览（硬盘）");
+  fireEvent.click(screen.getByRole("tab", { name: "概览" }));
   const overview = screen.getByRole("tabpanel", { name: "概览" });
   menu("查看", "刷新当前页");
   expect(deviceRefreshes()).toBe(1);
@@ -181,22 +184,24 @@ test("routes overview and task refresh to their own actions without toolbar dupl
   expect(within(tasks).queryByRole("button", { name: "刷新" })).toBeNull();
 });
 
-test("starts in files and keeps the search input when switching to a singleton overview", async () => {
+test("starts in Home and keeps the query when switching back to search", async () => {
   render(<Desktop />);
-  expect(screen.getByRole("tab", { name: "浏览" })).toHaveProperty(
+  expect(screen.getByRole("tab", { name: "概览" })).toHaveProperty(
     "ariaSelected",
     "true",
   );
-  fireEvent.change(screen.getByRole("searchbox", { name: "搜索文件或路径" }), {
-    target: { value: "aaa bbb" },
+  const overviewSearch = screen.getByRole("searchbox", {
+    name: "搜索所有文件",
   });
+  fireEvent.change(overviewSearch, { target: { value: "aaa bbb" } });
+  fireEvent.submit(overviewSearch.closest("form")!);
   await waitFor(() =>
     expect(
       screen.getByRole("searchbox", { name: "搜索文件或路径" }),
     ).toHaveProperty("value", "aaa bbb"),
   );
-  menu("查看", "概览（硬盘）");
-  menu("查看", "概览（硬盘）");
+  fireEvent.click(screen.getByRole("tab", { name: "概览" }));
+  fireEvent.click(screen.getByRole("tab", { name: "概览" }));
   expect(screen.getAllByRole("tab", { name: "概览" })).toHaveLength(1);
   fireEvent.click(screen.getByRole("tab", { name: "搜索" }));
   expect(
@@ -208,12 +213,12 @@ test("starts in files and keeps the search input when switching to a singleton o
 test("keeps task activity out of the overview and reuses the tasks tab", async () => {
   render(<Desktop />);
   await screen.findByRole("button", { name: "登记分区…" });
-  menu("查看", "概览（硬盘）");
+  fireEvent.click(screen.getByRole("tab", { name: "概览" }));
   expect(screen.queryByRole("heading", { name: "任务动态" })).toBeNull();
   menu("工具", "任务");
   expect(screen.getByRole("button", { name: /最近动态/ })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: /历史/ }));
-  menu("查看", "概览（硬盘）");
+  fireEvent.click(screen.getByRole("tab", { name: "概览" }));
   menu("工具", "任务");
   expect(screen.getAllByRole("tab", { name: "任务" })).toHaveLength(1);
   expect(screen.getByRole("button", { name: /历史/ })).toHaveProperty(
@@ -222,7 +227,7 @@ test("keeps task activity out of the overview and reuses the tasks tab", async (
   );
 });
 
-test("shows files immediately with legacy preferences and applies the search default", async () => {
+test("shows Home with legacy preferences and applies the search default", async () => {
   const original = vi.mocked(invoke).getMockImplementation()!;
   vi.mocked(invoke).mockImplementation((command, args) =>
     command === "preferences_get"
@@ -235,11 +240,14 @@ test("shows files immediately with legacy preferences and applies the search def
       : original(command, args),
   );
   render(<Desktop />);
-  expect(screen.getByRole("tab", { name: "浏览" })).toBeTruthy();
+  expect(screen.getByRole("tab", { name: "概览" })).toBeTruthy();
   await screen.findByRole("button", { name: "登记分区…" });
-  fireEvent.change(screen.getByRole("searchbox", { name: "搜索文件或路径" }), {
-    target: { value: "test" },
+  const overviewSearch = screen.getByRole("searchbox", {
+    name: "搜索所有文件",
   });
+  fireEvent.change(overviewSearch, { target: { value: "test" } });
+  fireEvent.submit(overviewSearch.closest("form")!);
+  await screen.findByRole("searchbox", { name: "搜索文件或路径" });
   fireEvent.click(within(screen.getByRole("tabpanel")).getByText("筛选"));
   expect(screen.getByRole("checkbox", { name: "仅文件名" })).toHaveProperty(
     "checked",
@@ -261,7 +269,7 @@ test("shows files immediately with legacy preferences and applies the search def
 test("keeps settings reachable when the service and preference storage fail", async () => {
   vi.mocked(invoke).mockRejectedValue("无法读取");
   render(<Desktop />);
-  expect(screen.getByRole("tab", { name: "浏览" })).toBeTruthy();
+  expect(screen.getByRole("tab", { name: "概览" })).toBeTruthy();
   menu("工具", "设置");
   expect(await screen.findByRole("button", { name: "搜索" })).toBeTruthy();
   expect(screen.getAllByRole("alert").length).toBeGreaterThan(0);
@@ -270,7 +278,7 @@ test("keeps settings reachable when the service and preference storage fail", as
 
 test("submitting the same overview query again refreshes results", async () => {
   render(<Desktop />);
-  menu("查看", "概览（硬盘）");
+  fireEvent.click(screen.getByRole("tab", { name: "概览" }));
   const search = screen.getByRole("searchbox", { name: "搜索所有文件" });
   fireEvent.change(search, { target: { value: "same query" } });
   fireEvent.submit(search.closest("form")!);
@@ -290,14 +298,14 @@ test("submitting the same overview query again refreshes results", async () => {
   );
 });
 
-test("opens registration over the active files tab and restores its trigger", async () => {
+test("opens registration over Home and restores its trigger", async () => {
   render(<Desktop />);
   const entry = await screen.findByRole("button", { name: "登记分区…" });
   entry.focus();
   fireEvent.click(entry);
   expect(screen.getByRole("dialog", { name: "选择分区登记" })).toBeTruthy();
   expect(
-    screen.getByRole("tab", { name: "浏览", selected: true }),
+    screen.getByRole("tab", { name: "概览", selected: true }),
   ).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "关闭登记" }));
   await waitFor(() => expect(document.activeElement).toBe(entry));

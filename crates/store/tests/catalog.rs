@@ -2,6 +2,27 @@ use stashfinder_core::assets::*;
 use stashfinder_store::catalog::Catalog;
 
 #[test]
+fn removing_a_partition_removes_only_its_catalog_and_index_and_allows_registration_again() {
+    let root = tempfile::tempdir().unwrap();
+    let mut catalog = Catalog::open(root.path()).unwrap();
+    let source = root.path().join("source.txt");
+    std::fs::write(&source, "keep").unwrap();
+    let first = catalog.prepare(&observed("a"), "A").unwrap();
+    let second = catalog.prepare(&observed("b"), "B").unwrap();
+    for row in [&first, &second] {
+        catalog.finish(&row.partition_id).unwrap();
+    }
+    catalog.remove(&first.partition_id).unwrap();
+    assert!(catalog.get(&first.partition_id).is_err());
+    assert!(!catalog.volume_path(&first.filesystem_id).unwrap().exists());
+    catalog.health(&second.filesystem_id).unwrap();
+    assert_eq!(std::fs::read_to_string(source).unwrap(), "keep");
+    let replacement = catalog.prepare(&observed("a"), "A").unwrap();
+    assert_ne!(replacement.filesystem_id, first.filesystem_id);
+    catalog.finish(&replacement.partition_id).unwrap();
+}
+
+#[test]
 fn read_only_catalog_does_not_initialize_pending_children() {
     let root = tempfile::tempdir().unwrap();
     let mut catalog = Catalog::open(root.path()).unwrap();
@@ -59,6 +80,7 @@ fn observed(partition: &str) -> Observation {
         model: Some("test".into()),
         disk_bytes: Some(1000),
         partition_bytes: Some(500),
+        volume_label: None,
         mounts: vec!["X:\\".into()],
         identity: Identity {
             layout: Layout::Gpt {

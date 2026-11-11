@@ -40,6 +40,7 @@ impl Assets {
                         .map_err(|e| anyhow::anyhow!("资产库不可用：{e:#}"))?;
                     match &action {
                         Action::Refresh => {
+                            db.cleanup_removed()?;
                             let found = discover()?;
                             observations = found;
                             discovered = true;
@@ -106,6 +107,7 @@ impl Assets {
                             observations = fresh;
                         }
                         Action::Rename { partition_id, name } => db.rename(partition_id, name)?,
+                        Action::Unregister { partition_id } => db.remove(partition_id)?,
                         _ => bail!("不是资产写操作"),
                     }
                     Ok(())
@@ -168,7 +170,7 @@ impl Assets {
             Action::Rename { name, .. } => {
                 validate_name(name)?;
             }
-            Action::Refresh => (),
+            Action::Refresh | Action::Unregister { .. } => (),
             _ => bail!("不是资产写操作"),
         }
         self.sender.try_send(action).context("后台工作队列不可用")?;
@@ -303,7 +305,15 @@ fn build_snapshot(
                 let registered = assets.iter().any(|a| {
                     a.registration.state != "historical" && related(&a.registration.observation, o)
                 });
-                let blocked = if duplicate(o, observations) {
+                let confirmed = registered
+                    && o.eligible()
+                    && assets.iter().any(|a| {
+                        a.registration.state != "historical"
+                            && a.registration.observation.identity.compare(&o.identity)
+                                == IdentityMatch::Same
+                    });
+                let conflict = duplicate(o, observations);
+                let blocked = if conflict {
                     Some("设备身份冲突".into())
                 } else if registered {
                     Some("已登记或等待确认归属".into())
@@ -316,6 +326,7 @@ fn build_snapshot(
                     observation: o.clone(),
                     weak: o.identity.compare(&o.identity) != IdentityMatch::Same,
                     blocked,
+                    registered: confirmed && !conflict,
                 }
             })
             .collect()

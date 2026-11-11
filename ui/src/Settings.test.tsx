@@ -111,7 +111,7 @@ test("saves preferences, restores them on restart, and retains saved values on f
   view.unmount();
   render(<Desktop />);
   expect(
-    screen.getByRole("tab", { name: "浏览", selected: true }),
+    screen.getByRole("tab", { name: "概览", selected: true }),
   ).toBeTruthy();
   openSettings();
   await waitFor(() =>

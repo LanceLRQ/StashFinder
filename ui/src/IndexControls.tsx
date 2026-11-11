@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { indexRequest, type IndexStatus } from "./index-api";
 
 export const indexLabels: Record<string, string> = {
@@ -32,11 +32,15 @@ export default function IndexControls({
   eligible,
   filesystem = "NTFS",
   onStatus,
+  details,
+  browse,
 }: {
   partitionId: string;
   name: string;
   eligible: boolean;
   filesystem?: string | null;
+  details?: ReactNode;
+  browse?: ReactNode;
   onStatus?: (
     partitionId: string,
     status: IndexStatus | null,
@@ -91,51 +95,65 @@ export default function IndexControls({
     setSending(false);
   }
   return (
-    <div className="index-controls">
-      <span>
-        {error
-          ? "索引状态不可用"
-          : status
-            ? indexLabels[status.phase] || status.phase
-            : "正在读取索引"}
-      </span>
-      {status?.completed != null && !busy && status.phase !== "failed" && (
-        <small>
-          {new Date(status.completed * 1000).toLocaleString()} ·{" "}
-          {status.records.toLocaleString()} 项
-        </small>
-      )}
-      {status?.phase === "failed" && (
-        <small>
-          {status.active_generation != null
-            ? "仍可搜索旧索引"
-            : status.generation != null
-              ? "仅可搜索已保存的未完成记录"
-              : "尚无可搜索索引"}
-        </small>
-      )}
-      {(error || journalMissing || status?.error) && (
-        <small className="asset-error" role="alert">
-          {error || (journalMissing ? "此分区没有 USN 日志" : status?.error)}
-        </small>
-      )}
-      {busy && status?.phase !== "loading" ? (
-        <button
-          disabled={sending || !status?.task_id}
-          aria-label={`取消索引 ${name}`}
-          onClick={() => void cancel()}
-        >
-          取消索引
-        </button>
-      ) : (
-        <button
-          disabled={!eligible || busy || sending}
-          aria-label={`${journalMissing ? "选择索引方式" : "索引"} ${name}`}
-          onClick={() => setOpen(true)}
-        >
-          {journalMissing ? "选择索引方式…" : "索引…"}
-        </button>
-      )}
+    <>
+      <dl>
+        {details}
+        <div>
+          <dt>索引</dt>
+          <dd>
+            <span>
+              {error
+                ? "索引状态不可用"
+                : status
+                  ? indexLabels[status.phase] || status.phase
+                  : "正在读取索引"}
+            </span>
+            {status?.completed != null &&
+              !busy &&
+              status.phase !== "failed" && (
+                <small>
+                  {new Date(status.completed * 1000).toLocaleString()} ·{" "}
+                  {status.records.toLocaleString()} 项
+                </small>
+              )}
+            {status?.phase === "failed" && (
+              <small>
+                {status.active_generation != null
+                  ? "仍可搜索旧索引"
+                  : status.generation != null
+                    ? "仅可搜索已保存的未完成记录"
+                    : "尚无可搜索索引"}
+              </small>
+            )}
+            {(error || journalMissing || status?.error) && (
+              <small className="asset-error" role="alert">
+                {error ||
+                  (journalMissing ? "此分区没有 USN 日志" : status?.error)}
+              </small>
+            )}
+          </dd>
+        </div>
+      </dl>
+      <div className="asset-detail-actions">
+        {browse}
+        {busy && status?.phase !== "loading" ? (
+          <button
+            disabled={sending || !status?.task_id}
+            aria-label={`取消索引 ${name}`}
+            onClick={() => void cancel()}
+          >
+            取消索引
+          </button>
+        ) : (
+          <button
+            disabled={!eligible || busy || sending}
+            aria-label={`索引设置 ${name}`}
+            onClick={() => setOpen(true)}
+          >
+            索引设置
+          </button>
+        )}
+      </div>
       {open && (
         <IndexModeDialog
           partitionId={partitionId}
@@ -150,7 +168,7 @@ export default function IndexControls({
           }}
         />
       )}
-    </div>
+    </>
   );
 }
 

@@ -95,23 +95,12 @@ input[type="radio"] {
   min-width: 0;
   width: 100%;
 }
-.overview-search button {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
 .asset-stats {
-  margin-left: auto;
   display: flex;
   gap: 16px;
   color: #66707e;
   white-space: nowrap;
   font-size: 12px;
-}
-.asset-stats b {
-  font-weight: 500;
-  font-size: 18px;
-  color: #20252c;
-  margin-left: 4px;
 }
 .overview-body {
   display: flex;
@@ -258,37 +247,6 @@ input[type="radio"] {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 20px;
-}
-.desktop .disk-group {
-  border: 1px solid #dce1e7;
-  border-radius: 6px;
-  margin: 0 0 18px;
-  overflow: hidden;
-}
-.desktop .disk-group h2 {
-  background: #f5f6f8;
-  border-bottom: 1px solid #dce1e7;
-  padding: 12px;
-}
-.desktop .disk-group table {
-  min-width: 780px;
-}
-.desktop .disk-group td:nth-child(2) {
-  min-width: 140px;
-}
-.desktop .disk-group td:nth-child(5) {
-  min-width: 170px;
-}
-.desktop .disk-group td:nth-child(6) {
-  min-width: 155px;
-}
-.desktop .assets-app td {
-  padding: 10px 12px;
-}
-.desktop .assets-app th {
-  padding: 8px 12px;
-  color: #647082;
-  background: white;
 }
 .desktop .assets-app small {
   color: #647082;

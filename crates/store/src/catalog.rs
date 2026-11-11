@@ -20,7 +20,7 @@ impl Catalog {
         ensure!(
             matches!(
                 db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
-                1 | 2
+                1..=3
             ),
             "资产库版本不支持"
         );
@@ -56,7 +56,7 @@ impl Catalog {
             ensure!(
                 matches!(
                     db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
-                    1 | 2
+                    1..=3
                 ),
                 "资产库版本不支持；需要恢复，未创建空库"
             );
@@ -68,6 +68,9 @@ impl Catalog {
         }
         if db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))? == 1 {
             db.execute_batch("BEGIN; CREATE TABLE historical(partition_id TEXT PRIMARY KEY REFERENCES partitions(id)); PRAGMA user_version=2; COMMIT;")?;
+        }
+        if db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))? == 2 {
+            db.execute_batch("BEGIN; CREATE TABLE removed_volumes(id TEXT PRIMARY KEY); PRAGMA user_version=3; COMMIT;")?;
         }
         let mut catalog = Self {
             db,
@@ -207,6 +210,56 @@ impl Catalog {
     pub fn volume_path(&self, filesystem: &str) -> Result<PathBuf> {
         let id = Uuid::parse_str(filesystem)?;
         Ok(self.root.join("volumes").join(format!("{id}.sqlite")))
+    }
+
+    pub fn remove(&mut self, partition: &str) -> Result<()> {
+        let row = self.get(partition)?;
+        self.volume_path(&row.filesystem_id)?;
+        let tx = self.db.transaction()?;
+        tx.execute(
+            "INSERT INTO removed_volumes VALUES(?1)",
+            [&row.filesystem_id],
+        )?;
+        tx.execute("DELETE FROM historical WHERE partition_id=?1", [partition])?;
+        tx.execute("DELETE FROM filesystems WHERE partition_id=?1", [partition])?;
+        tx.execute("DELETE FROM partitions WHERE id=?1", [partition])?;
+        tx.execute("DELETE FROM disks WHERE id=?1 AND NOT EXISTS (SELECT 1 FROM partitions WHERE disk_id=?1)", [&row.disk_id])?;
+        tx.commit()?;
+        self.cleanup_removed()
+    }
+
+    pub fn cleanup_removed(&self) -> Result<()> {
+        let mut stmt = self.db.prepare("SELECT id FROM removed_volumes")?;
+        let removed = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if removed.is_empty() {
+            return Ok(());
+        }
+        let volumes = self.root.join("volumes").canonicalize()?;
+        ensure!(
+            volumes == self.root.canonicalize()?.join("volumes"),
+            "分区库目录归属不一致"
+        );
+        for id in removed {
+            let file = self.volume_path(&id)?;
+            // Retry on the next refresh if an existing SQLite connection still holds the file.
+            if [
+                file.clone(),
+                file.with_extension("sqlite-wal"),
+                file.with_extension("sqlite-shm"),
+                file.with_extension("sqlite-journal"),
+            ]
+            .iter()
+            .all(|path| match std::fs::remove_file(path) {
+                Ok(()) => true,
+                Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+            }) {
+                self.db
+                    .execute("DELETE FROM removed_volumes WHERE id=?1", [&id])?;
+            }
+        }
+        Ok(())
     }
 
     pub fn finish(&mut self, partition: &str) -> Result<()> {

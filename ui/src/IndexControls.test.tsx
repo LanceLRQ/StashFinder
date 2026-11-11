@@ -43,7 +43,7 @@ test("journal creation requires an explicit choice and confirmation", async () =
   mockStatus(status);
   render(<IndexControls partitionId="p" name="Movies" eligible />);
   expect(await screen.findByText("尚未索引")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "索引 Movies" }));
+  fireEvent.click(screen.getByRole("button", { name: "索引设置 Movies" }));
   expect(
     screen.getByRole("radio", { name: "使用已有 USN 日志" }),
   ).toHaveProperty("checked", true);
@@ -71,16 +71,15 @@ test("offline partitions cannot start scans and failed rebuild preserves publish
   render(<IndexControls partitionId="p" name="Movies" eligible={false} />);
   expect(await screen.findByText("日志断档")).toBeTruthy();
   expect(screen.getByText(/仍可搜索旧索引/)).toBeTruthy();
-  expect(screen.getByRole("button", { name: "索引 Movies" })).toHaveProperty(
-    "disabled",
-    true,
-  );
+  expect(
+    screen.getByRole("button", { name: "索引设置 Movies" }),
+  ).toHaveProperty("disabled", true);
 });
 test("missing USN prompts for a choice and defaults to basic scanning", async () => {
   mockStatus({ ...status, journal_missing: true });
   render(<IndexControls partitionId="p" name="Movies" eligible />);
   expect(await screen.findByText("此分区没有 USN 日志")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "选择索引方式 Movies" }));
+  fireEvent.click(screen.getByRole("button", { name: "索引设置 Movies" }));
   expect(screen.queryByRole("radio", { name: "使用已有 USN 日志" })).toBeNull();
   expect(
     screen.getByRole("radio", { name: "基础扫描（不创建日志）" }),
@@ -141,7 +140,7 @@ test("exFAT uses scanning without offering NTFS journal actions", async () => {
     />,
   );
   await screen.findByText("尚未索引");
-  fireEvent.click(screen.getByRole("button", { name: "索引 Archive" }));
+  fireEvent.click(screen.getByRole("button", { name: "索引设置 Archive" }));
   expect(
     screen.queryByRole("radio", { name: "创建 USN 日志并索引" }),
   ).toBeNull();

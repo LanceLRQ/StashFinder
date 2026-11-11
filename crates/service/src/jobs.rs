@@ -31,6 +31,7 @@ struct SearchJob {
 #[derive(Default)]
 struct SearchState {
     id: u64,
+    partitions: Vec<String>,
     done: bool,
     result: Option<Arc<ResultSet>>,
     error: Option<String>,
@@ -74,6 +75,11 @@ impl Indexes {
                 };
                 let mut output = SearchState {
                     id: job.id,
+                    partitions: job
+                        .assets
+                        .iter()
+                        .map(|a| a.registration.partition_id.clone())
+                        .collect(),
                     done: true,
                     ..Default::default()
                 };
@@ -264,6 +270,25 @@ impl Indexes {
     pub fn status(&self, partition: &str) -> IndexStatus {
         self.runner.status(partition)
     }
+    pub fn observe(&self, snapshot: Snapshot) {
+        if !snapshot.busy && snapshot.error.is_none() {
+            let mut mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = self.search_state.lock().unwrap_or_else(|e| e.into_inner());
+            if state.partitions.iter().any(|id| {
+                snapshot
+                    .assets
+                    .iter()
+                    .all(|a| a.registration.partition_id != *id)
+            }) {
+                if let Some(cancel) = mailbox.cancel.take() {
+                    cancel.store(true, Ordering::Release);
+                }
+                mailbox.job = None;
+                *state = SearchState::default();
+            }
+        }
+        self.runner.observe(snapshot);
+    }
     pub fn search(&self, request: SearchRequest, snapshot: &Snapshot) -> Result<u64> {
         ensure!(
             snapshot.error.is_none(),
@@ -311,6 +336,10 @@ impl Indexes {
         }
         *self.search_state.lock().unwrap_or_else(|e| e.into_inner()) = SearchState {
             id,
+            partitions: assets
+                .iter()
+                .map(|a| a.registration.partition_id.clone())
+                .collect(),
             ..Default::default()
         };
         mailbox.cancel = Some(cancel.clone());

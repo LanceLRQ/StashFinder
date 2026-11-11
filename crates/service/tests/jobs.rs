@@ -13,6 +13,7 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
         model: None,
         disk_bytes: None,
         partition_bytes: None,
+        volume_label: None,
         mounts: vec![],
         identity: Identity {
             layout: Layout::Gpt {
@@ -166,6 +167,8 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
         };
         assert!(page.unavailable.is_empty(), "{:?}", page.unavailable);
         assert_eq!(page.row.unwrap().connection, "inaccessible");
+        jobs.observe(Snapshot::default());
+        assert!(jobs.page(id, 0).is_err());
     }
 }
 

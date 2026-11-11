@@ -4,6 +4,7 @@ export type Observation = {
   model: string | null;
   disk_bytes: number | null;
   partition_bytes: number | null;
+  volume_label?: string | null;
   mounts: string[];
   identity: {
     layout: Record<string, unknown>;
@@ -34,6 +35,7 @@ export type Candidate = {
   observation: Observation;
   weak: boolean;
   blocked: string | null;
+  registered?: boolean;
 };
 export type AssetSnapshot = {
   version: number;
@@ -45,4 +47,5 @@ export type AssetSnapshot = {
 export type AssetAction =
   | "refresh"
   | { rename: { partition_id: string; name: string } }
+  | { unregister: { partition_id: string } }
   | { retry: { version: number; partition_id: string; candidate_id: string } };

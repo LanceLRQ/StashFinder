@@ -171,6 +171,7 @@ pub fn probe(path: &str) -> Observation {
         model: None,
         disk_bytes: None,
         partition_bytes: None,
+        volume_label: None,
         mounts: Vec::new(),
         identity: Identity {
             layout: Layout::Unknown,
@@ -281,17 +282,22 @@ pub fn probe(path: &str) -> Observation {
             bail!("暂不支持此磁盘布局")
         };
         let mut fs = [0u16; 64];
+        let mut label = [0u16; 261];
         let mut volume_serial = 0;
         // SAFETY: Output buffers and scalar pointers are correctly sized; this call reads metadata only.
         unsafe {
             GetVolumeInformationW(
                 &root,
-                None,
+                Some(&mut label),
                 Some(&mut volume_serial),
                 None,
                 None,
                 Some(&mut fs),
             )?;
+        }
+        let label = String::from_utf16_lossy(label.split(|c| *c == 0).next().unwrap_or_default());
+        if !label.trim().is_empty() {
+            item.volume_label = Some(label);
         }
         let fs = String::from_utf16(
             &fs[..fs

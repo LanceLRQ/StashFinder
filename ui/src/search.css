@@ -98,9 +98,6 @@
   margin: 6px 0;
   overflow-wrap: anywhere;
 }
-.index-controls > button {
-  margin-top: 6px;
-}
 .index-dialog label {
   display: flex;
   align-items: center;

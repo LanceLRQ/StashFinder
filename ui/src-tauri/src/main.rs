@@ -71,7 +71,8 @@ async fn asset_command(action: stashfinder_core::Action) -> Result<(), String> {
         stashfinder_core::Action::Refresh
         | stashfinder_core::Action::Register { .. }
         | stashfinder_core::Action::Retry { .. }
-        | stashfinder_core::Action::Rename { .. } => runtime::request(action)
+        | stashfinder_core::Action::Rename { .. }
+        | stashfinder_core::Action::Unregister { .. } => runtime::request(action)
             .await
             .map(|_| ())
             .map_err(|error| format!("{error:#}")),

@@ -60,16 +60,28 @@ function snapshot(): AssetSnapshot {
   };
 }
 
-test("registration is a dialog and closing it preserves the overview filter", async () => {
-  vi.mocked(invoke).mockResolvedValue(snapshot());
+test("registration shows eligible and registered cards without editable names", async () => {
+  const data = snapshot();
+  Object.assign(data.candidates[1], { registered: true, blocked: "已登记" });
+  data.candidates.push({
+    ...data.candidates[0],
+    blocked: "不是本地卷",
+    observation: {
+      ...data.candidates[0].observation,
+      candidate_id: "Z",
+      mounts: ["Z:\\"],
+    },
+  });
+  vi.mocked(invoke).mockResolvedValue(data);
   render(<Assets />);
   expect(screen.queryByRole("checkbox")).toBeNull();
-  fireEvent.change(screen.getByLabelText("连接筛选"), {
-    target: { value: "offline" },
-  });
   await openRegistration();
   const dialog = await screen.findByRole("dialog", { name: "选择分区登记" });
-  expect(within(dialog).getAllByRole("checkbox")).toHaveLength(2);
+  const boxes = within(dialog).getAllByRole("checkbox");
+  expect(boxes).toHaveLength(2);
+  expect(boxes[1]).toHaveProperty("disabled", true);
+  expect(within(dialog).queryByRole("textbox")).toBeNull();
+  expect(within(dialog).queryByText(/Z:/)).toBeNull();
   const actions = dialog.querySelector<HTMLElement>(".dialog-actions");
   expect(actions).toBeTruthy();
   expect(
@@ -79,7 +91,89 @@ test("registration is a dialog and closing it preserves the overview filter", as
   ).toEqual(["关闭登记", "登记所选分区"]);
   fireEvent.click(within(dialog).getByRole("button", { name: "关闭登记" }));
   expect(screen.queryByRole("dialog")).toBeNull();
-  expect(screen.getByLabelText("连接筛选")).toHaveProperty("value", "offline");
+});
+
+test("searches on Enter and puts counts in the footer", async () => {
+  const search = vi.fn();
+  vi.mocked(invoke).mockResolvedValue(snapshot());
+  const { container } = render(<Assets onSearch={search} />);
+  await screen.findByRole("button", { name: "登记分区…" });
+  const field = screen.getByPlaceholderText("输入关键词，按 Enter 搜索");
+  fireEvent.change(field, { target: { value: "movie" } });
+  fireEvent.submit(field.closest("form")!);
+  expect(search).toHaveBeenCalledWith("movie");
+  expect(screen.queryByRole("button", { name: "搜索" })).toBeNull();
+  expect(
+    within(container.querySelector("footer")!).getByLabelText("已登记资产统计"),
+  ).toBeTruthy();
+});
+
+test("shows details on click, browses on double-click and confirms removal", async () => {
+  const data = snapshot();
+  data.assets = [
+    {
+      registration: {
+        disk_id: "disk",
+        partition_id: "p",
+        filesystem_id: "fs",
+        name: "Movies",
+        revision: 1,
+        state: "ready",
+        observation: data.candidates[0].observation,
+        last_seen: 1,
+      },
+      connection: "offline",
+      mounts: [],
+      error: null,
+    },
+  ];
+  const browse = vi.fn();
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "asset_snapshot") return structuredClone(data);
+    if (
+      command === "asset_command" &&
+      (args as { action: { unregister?: unknown } }).action.unregister
+    ) {
+      data.assets = [];
+      data.version++;
+    }
+    return { kind: "index", data: { phase: "not_indexed" } };
+  });
+  render(<Assets onBrowse={browse} />);
+  const card = await screen.findByRole("button", { name: "Movies" });
+  const details = within(
+    screen.getByRole("complementary", { name: "分区详情" }),
+  );
+  expect(details.queryByText("USB Test Disk")).toBeNull();
+  fireEvent.click(card);
+  expect(details.getByText("USB Test Disk")).toBeTruthy();
+  const heading = details.getByRole("heading", { name: "Movies" });
+  const rename = details.getByRole("button", { name: "重命名 Movies" });
+  expect(rename.parentElement).toBe(heading.parentElement);
+  expect(rename.textContent).toBe("");
+  const browseButton = details.getByRole("button", { name: "浏览文件" });
+  const indexSettings = details.getByRole("button", {
+    name: "索引设置 Movies",
+  });
+  expect(indexSettings.parentElement).toBe(browseButton.parentElement);
+  const indexStatus = await details.findByText("尚未索引");
+  expect(indexStatus.closest("dl")).toBe(
+    details.getByText("磁盘型号").closest("dl"),
+  );
+  expect(browse).not.toHaveBeenCalled();
+  fireEvent.doubleClick(card);
+  expect(browse).toHaveBeenCalledWith("p");
+  fireEvent.click(details.getByRole("button", { name: "移除登记…" }));
+  expect(invoke).not.toHaveBeenCalledWith("asset_command", expect.anything());
+  fireEvent.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "移除登记",
+    }),
+  );
+  await screen.findByText("尚未登记分区");
+  expect(invoke).toHaveBeenCalledWith("asset_command", {
+    action: { unregister: { partition_id: "p" } },
+  });
 });
 
 test("automatic busy pulses keep the overview footer quiet and block device actions", async () => {
@@ -165,25 +259,30 @@ test("groups partitions by disk identity and keeps the last snapshot on service 
   const controls = createRef<AssetControls>();
   render(<Assets ref={controls} />);
   await screen.findByText("Movies");
+  expect(screen.queryByRole("heading", { name: /USB Test Disk/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "按硬盘分组" }));
   expect(
     screen.getAllByRole("heading", { name: /USB Test Disk/ }),
   ).toHaveLength(1);
   expect(screen.getByText("身份待确认")).toBeTruthy();
   expect(
-    within(screen.getByText("Backup").closest("tr")!).getByText("未知 / 未知"),
+    within(screen.getByRole("button", { name: "Backup" })).getByText(
+      /可用空间未知/,
+    ),
   ).toBeTruthy();
   vi.mocked(invoke).mockRejectedValue("服务连接中断");
   act(() => controls.current!.refresh());
   await screen.findAllByText("服务连接中断");
   expect(screen.getByText("Movies")).toBeTruthy();
   expect(
-    within(screen.getByText("Movies").closest("tr")!).getByText("在线"),
+    within(screen.getByRole("button", { name: "Movies" })).getByText("在线"),
   ).toBeTruthy();
   expect(screen.queryByText("尚未登记分区")).toBeNull();
 });
 
 test("starts unselected and registers only the selected partition", async () => {
   const data = snapshot();
+  data.candidates[0].observation.volume_label = "Movies";
   vi.mocked(invoke).mockImplementation(async (command) =>
     command === "asset_snapshot" ? data : undefined,
   );
@@ -199,7 +298,7 @@ test("starts unselected and registers only the selected partition", async () => 
         register: {
           version: 1,
           candidate_id: "A",
-          name: "A:",
+          name: "Movies",
           allow_weak: false,
         },
       },
@@ -236,7 +335,7 @@ test("shows offline capacity as a snapshot and renames only the software record"
     command === "asset_snapshot" ? data : undefined,
   );
   render(<Assets />);
-  expect(await screen.findByText("Movies")).toBeTruthy();
+  fireEvent.click(await screen.findByRole("button", { name: "Movies" }));
   expect(screen.getByText(/上次记录/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "重命名 Movies" }));
   fireEvent.change(screen.getByRole("textbox", { name: "分区名称" }), {
@@ -276,31 +375,16 @@ test("a catalog error is not presented as a successful empty catalog", async () 
   ).toBeNull();
 });
 
-test("empty partition names cannot be submitted", async () => {
-  const data = snapshot();
-  vi.mocked(invoke).mockResolvedValue(data);
-  render(<Assets />);
-  await openRegistration();
-  fireEvent.click((await screen.findAllByRole("checkbox"))[0]);
-  fireEvent.change(screen.getByRole("textbox", { name: "A: 自定义名称" }), {
-    target: { value: "   " },
-  });
-  expect(screen.getByRole("button", { name: "登记所选分区" })).toHaveProperty(
-    "disabled",
-    true,
-  );
-});
-
 test("late initial response cannot overwrite a newer snapshot", async () => {
   let resolveInitial!: (value: AssetSnapshot) => void;
   const old = snapshot();
   old.candidates.forEach((c) => {
-    c.observation.model = "旧设备";
+    c.observation.volume_label = "旧设备";
   });
   const fresh = snapshot();
   fresh.version = 2;
   fresh.candidates.forEach((c) => {
-    c.observation.model = "新设备";
+    c.observation.volume_label = "新设备";
   });
   let first = true;
   vi.mocked(invoke).mockImplementation(async (command) => {
@@ -317,7 +401,7 @@ test("late initial response cannot overwrite a newer snapshot", async () => {
   render(<Assets ref={controls} />);
   act(() => controls.current!.refresh());
   await openRegistration();
-  expect(await screen.findByRole("heading", { name: /新设备/ })).toBeTruthy();
+  expect((await screen.findAllByText("新设备")).length).toBe(2);
   await act(async () => {
     resolveInitial(old);
   });
@@ -346,6 +430,7 @@ test("partial registration keeps the failed selection and reports the failure", 
     if (action.candidate_id === "B") throw new Error("设备已断开");
     data.version++;
     data.candidates[0].blocked = "已登记";
+    data.candidates[0].registered = true;
     data.assets = [
       {
         registration: {
@@ -422,7 +507,8 @@ test("escape dismisses the rename dialog without saving", async () => {
     command === "asset_snapshot" ? data : undefined,
   );
   render(<Assets />);
-  fireEvent.click(await screen.findByRole("button", { name: "重命名 A" }));
+  fireEvent.click(await screen.findByRole("button", { name: "A" }));
+  fireEvent.click(screen.getByRole("button", { name: "重命名 A" }));
   fireEvent(
     screen.getByRole("dialog"),
     new Event("cancel", { bubbles: false, cancelable: true }),
@@ -458,11 +544,13 @@ test("capacity failure shows historical values and used space without disabling 
       : { kind: "index", data: { phase: "not_indexed", completed: null } },
   );
   render(<Assets />);
+  fireEvent.click(await screen.findByRole("button", { name: "Archive" }));
   await screen.findByText("容量读取失败，保留上次成功快照");
-  expect(screen.getByText("已用 500 B")).toBeTruthy();
-  expect(screen.getByText(/上次记录/)).toBeTruthy();
-  expect(screen.getByRole("button", { name: "索引 Archive" })).toHaveProperty(
-    "disabled",
-    false,
+  expect(screen.getByText("已用").nextElementSibling?.textContent).toBe(
+    "500 B",
   );
+  expect(screen.getByText(/上次记录/)).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "索引设置 Archive" }),
+  ).toHaveProperty("disabled", false);
 });

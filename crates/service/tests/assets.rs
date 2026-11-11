@@ -12,6 +12,7 @@ fn observation() -> Observation {
         model: Some("Test".into()),
         disk_bytes: Some(2000),
         partition_bytes: Some(1000),
+        volume_label: None,
         mounts: vec!["X:\\".into()],
         identity: Identity {
             layout: Layout::Gpt {
@@ -195,6 +196,7 @@ fn registers_only_selected_partition_and_rejects_changed_candidate() {
     let s = settled(&assets);
     assert_eq!(s.assets.len(), 1);
     assert!(s.error.is_none(), "{:?}", s.error);
+    assert!(s.candidates[0].registered);
     let id = s.assets[0].registration.partition_id.clone();
     fixtures.lock().unwrap().clear();
     assets.submit(Action::Refresh).unwrap();

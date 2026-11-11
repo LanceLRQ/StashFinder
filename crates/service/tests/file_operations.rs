@@ -72,6 +72,7 @@ fn fixture_with(count: u32, long: bool) -> (tempfile::TempDir, Indexes, Snapshot
         model: None,
         disk_bytes: None,
         partition_bytes: None,
+        volume_label: None,
         mounts: vec![],
         identity: Identity {
             layout: Layout::Gpt {

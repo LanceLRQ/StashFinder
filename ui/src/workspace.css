@@ -62,7 +62,7 @@
   border-radius: 8px 8px 0 0;
   flex: 0 0 auto;
   height: var(--caption-tab-height);
-  min-width: 100px;
+  min-width: 0;
   max-width: 230px;
 }
 .workspace-tab.is-active {
@@ -88,6 +88,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.workspace-tab [role="tab"]:only-child {
+  justify-content: center;
+  min-width: 44px;
 }
 .workspace-tab svg {
   flex: 0 0 auto;

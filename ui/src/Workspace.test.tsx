@@ -120,6 +120,37 @@ function choosePartition(name = "Movies") {
   fireEvent.click(within(tree).getByRole("button", { name }));
 }
 
+test("pins Home first, opens a partition once and returns to Home when it closes", async () => {
+  const view = setup();
+  const props = {
+    assets: [asset],
+    includePath: true,
+    request: { text: "", revision: 0 },
+    startupReady: true,
+    panels: { overview: <p>概览面板</p> },
+  };
+  view.unmount();
+  const home = render(<Workspace {...props} />);
+  expect(screen.getByRole("tab", { name: "概览", selected: true })).toBe(
+    screen.getAllByRole("tab")[0],
+  );
+  fireEvent.keyDown(document, { key: "w", ctrlKey: true });
+  expect(screen.queryByRole("button", { name: "关闭概览标签页" })).toBeNull();
+  expect(readDirectory).not.toHaveBeenCalled();
+  home.rerender(
+    <Workspace {...props} browseRequest={{ partition: "p", revision: 1 }} />,
+  );
+  await screen.findByRole("row", { name: /notes.txt/ });
+  home.rerender(
+    <Workspace {...props} browseRequest={{ partition: "p", revision: 2 }} />,
+  );
+  expect(screen.getAllByRole("tab")).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button", { name: "关闭Movies标签页" }));
+  expect(
+    screen.getByRole("tab", { name: "概览", selected: true }),
+  ).toBeTruthy();
+});
+
 test.each(["尚无目录索引", "目录索引尚未完成"])(
   "keeps the partition collapsed and shows one loading state while %s",
   async (message) => {
@@ -174,7 +205,6 @@ test("lists every partition in a new tab and expands the chosen partition from t
       startupReady
     />,
   );
-  await screen.findByRole("row", { name: /notes.txt/ });
   fireEvent.click(screen.getByRole("button", { name: "新建浏览标签页" }));
   const tree = within(screen.getByRole("navigation", { name: "目录树" }));
   for (const name of ["Movies", "Backup"]) {
@@ -380,6 +410,7 @@ test.each(["online", "offline"] as const)(
       "true",
     );
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "新建浏览标签页" }));
     choosePartition();
     const notes = await screen.findByRole("row", { name: /notes.txt/ });
     const films = screen.getByRole("row", { name: /Films/ });
@@ -450,8 +481,7 @@ test.each(["online", "offline"] as const)(
     );
     expect(fireEvent.keyDown(list, { ...shortcut, keyCode: 229 })).toBe(true);
     expect(invoke).not.toHaveBeenCalledWith("file_prepare", expect.anything());
-    fireEvent.click(screen.getByRole("button", { name: "查看" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "概览（硬盘）" }));
+    fireEvent.click(screen.getByRole("tab", { name: "概览" }));
     fireEvent.click(edit);
     expect(screen.getByRole("menuitem", { name: "复制路径" })).toHaveProperty(
       "ariaDisabled",
@@ -500,6 +530,7 @@ test.each(["keyboard", "edit"])(
         />
       </FileOperations>,
     );
+    fireEvent.click(screen.getByRole("button", { name: "新建浏览标签页" }));
     choosePartition();
     await screen.findByRole("row", { name: /notes.txt/ });
     if (source === "keyboard") {
@@ -739,11 +770,9 @@ test("uses the empty browse tab for an overview partition request", async () => 
   expect(screen.getAllByRole("tab")).toHaveLength(1);
 });
 
-test("restores an offline directory by identity when the reliable snapshot arrives", async () => {
-  setup().unmount();
-  const key = "stashfinder.last-directory";
+test("a saved directory does not override Home when the snapshot arrives", () => {
   localStorage.setItem(
-    key,
+    "stashfinder.last-directory",
     JSON.stringify({
       version: 1,
       partitionId: "p",
@@ -751,82 +780,17 @@ test("restores an offline directory by identity when the reliable snapshot arriv
       entry: [2],
     }),
   );
-  const online = {
-    ...asset,
-    connection: "online",
-    registration: {
-      ...asset.registration,
-      name: "Another disk",
-      partition_id: "other",
-    },
+  const props = {
+    includePath: true,
+    request: { text: "", revision: 0 },
+    panels: { overview: <p>概览面板</p> },
   };
-  const offline = {
-    ...asset,
-    registration: { ...asset.registration, name: "Changed display name" },
-  };
-  const request = { text: "", revision: 0 };
   const view = render(
-    <Workspace
-      assets={[]}
-      includePath
-      request={request}
-      startupReady={false}
-    />,
+    <Workspace {...props} assets={[]} startupReady={false} />,
   );
+  view.rerender(<Workspace {...props} assets={[asset]} startupReady />);
   expect(
-    screen.getByRole("tab", { name: "浏览", selected: true }),
+    screen.getByRole("tab", { name: "概览", selected: true }),
   ).toBeTruthy();
   expect(readDirectory).not.toHaveBeenCalled();
-  view.rerender(
-    <Workspace
-      assets={[online, offline]}
-      includePath
-      request={request}
-      startupReady
-    />,
-  );
-  await screen.findByRole("row", { name: /movie.mkv/ });
-  await screen.findByRole("tab", { name: "Films", selected: true });
-  expect(readDirectory).toHaveBeenCalledWith(
-    expect.objectContaining({
-      partition_id: "p",
-      filesystem_id: "fs",
-      parent: [2],
-    }),
-  );
-  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({
-    version: 1,
-    partitionId: "p",
-    filesystemId: "fs",
-    entry: [2],
-  });
-});
-
-test("uses the same partition root when the saved directory is confirmed missing", async () => {
-  localStorage.setItem(
-    "stashfinder.last-directory",
-    JSON.stringify({
-      version: 1,
-      partitionId: "p",
-      filesystemId: "fs",
-      entry: [6],
-    }),
-  );
-  vi.mocked(readDirectory).mockImplementation(async (request) => {
-    if (request.parent?.[0] === 6) throw Error("目录已不存在，请返回上级目录");
-    return root;
-  });
-  render(
-    <Workspace
-      assets={[asset]}
-      includePath
-      request={{ text: "", revision: 0 }}
-      startupReady
-    />,
-  );
-  await screen.findByText(/目录已不存在，已返回/);
-  expect(screen.getByRole("row", { name: /notes.txt/ })).toBeTruthy();
-  expect(
-    JSON.parse(localStorage.getItem("stashfinder.last-directory")!).entry,
-  ).toEqual([1]);
 });

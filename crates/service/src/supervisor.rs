@@ -198,25 +198,55 @@ impl Runner {
                     cancel.store(true, Ordering::Release);
                 }
             }
-            for asset in snapshot
-                .assets
-                .iter()
-                .filter(|a| a.registration.state == "historical")
-            {
-                let id = &asset.registration.partition_id;
-                tasks.set_paused(id, false)?;
-                for task in tasks.list()?.iter().filter(|t| {
-                    t.partition_id == *id
-                        && matches!(
-                            t.state.as_str(),
-                            "running" | "queued" | "waiting" | "needs_confirmation"
-                        )
-                }) {
-                    tasks.set_state(&task.id, "superseded", Some("文件系统已归档，不再更新"))?;
+            if !snapshot.busy && snapshot.error.is_none() {
+                for task in tasks.list()? {
+                    if !matches!(
+                        task.state.as_str(),
+                        "running" | "queued" | "waiting" | "needs_confirmation"
+                    ) {
+                        continue;
+                    }
+                    let asset = snapshot
+                        .assets
+                        .iter()
+                        .find(|a| a.registration.partition_id == task.partition_id);
+                    if asset.is_none_or(|a| a.registration.state == "historical") {
+                        let reason = if asset.is_some() {
+                            "文件系统已归档，不再更新"
+                        } else {
+                            "分区已移除登记"
+                        };
+                        tasks.set_state(&task.id, "superseded", Some(reason))?;
+                    }
+                }
+                for id in tasks.paused_partitions()? {
+                    if snapshot.assets.iter().all(|a| {
+                        a.registration.partition_id != id || a.registration.state == "historical"
+                    }) {
+                        tasks.set_paused(&id, false)?;
+                    }
                 }
             }
             Ok(())
         });
+        if !snapshot.busy && snapshot.error.is_none() {
+            let registered = |id: &String| {
+                snapshot
+                    .assets
+                    .iter()
+                    .any(|asset| asset.registration.partition_id == *id)
+            };
+            self.shared
+                .caches
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retain(|id, _| registered(id));
+            self.shared
+                .states
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retain(|id, _| registered(id));
+        }
         *self
             .shared
             .snapshot

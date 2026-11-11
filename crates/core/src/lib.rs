@@ -45,6 +45,9 @@ pub enum Action {
         partition_id: String,
         name: String,
     },
+    Unregister {
+        partition_id: String,
+    },
     IndexStart {
         partition_id: String,
         mode: index::IndexMode,

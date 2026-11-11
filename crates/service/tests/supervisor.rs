@@ -79,6 +79,7 @@ fn startup_discards_unfinished_initial_paths_and_keeps_the_active_catalog() {
         model: None,
         disk_bytes: None,
         partition_bytes: None,
+        volume_label: None,
         mounts: vec![],
         capacity: None,
         error: None,
@@ -123,6 +124,7 @@ fn automatic_worker_requires_registration_online_identity_and_enabled_policy() {
         model: None,
         disk_bytes: None,
         partition_bytes: None,
+        volume_label: None,
         mounts: vec![],
         identity: Identity {
             layout: Layout::Gpt {
@@ -273,6 +275,7 @@ fn an_invalid_scan_session_is_reopened_without_an_offline_observation() {
         model: None,
         disk_bytes: None,
         partition_bytes: None,
+        volume_label: None,
         mounts: vec![],
         identity: Identity {
             layout: Layout::Gpt {
@@ -358,6 +361,7 @@ fn scanning_filesystem_watches_only_registered_online_volumes_and_rescans_on_rec
         model: None,
         disk_bytes: None,
         partition_bytes: None,
+        volume_label: None,
         mounts: vec![],
         identity: Identity {
             layout: Layout::Gpt {

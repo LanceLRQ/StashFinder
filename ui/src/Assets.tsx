@@ -10,13 +10,13 @@ import {
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import IndexControls from "./IndexControls";
+import WorkspaceIcon from "./WorkspaceIcon";
 import "./assets.css";
 
 import type {
   Observation,
   Registration,
   Asset,
-  Candidate,
   AssetSnapshot,
   AssetAction,
 } from "./asset-api";
@@ -66,7 +66,13 @@ function date(value: number | null | undefined) {
   return value == null ? "未知" : new Date(value * 1000).toLocaleString();
 }
 function initialName(o: Observation) {
-  return o.mounts[0]?.replace(/[\\/]$/, "") || "未命名分区";
+  return Array.from(
+    o.volume_label?.trim() ||
+      o.mounts[0]?.replace(/[\\/]$/, "") ||
+      "未命名分区",
+  )
+    .slice(0, 128)
+    .join("");
 }
 const connectionLabels: Record<string, string> = {
   online: "在线",
@@ -91,6 +97,7 @@ export default function Assets({
   onIndexStatus,
   ref,
   onStatus,
+  taskSummary,
 }: {
   onSearch?: (text: string) => void;
   onBrowse?: (partition: string) => void;
@@ -102,16 +109,19 @@ export default function Assets({
   ) => void;
   ref?: Ref<AssetControls>;
   onStatus?: (status: { error: string; working: boolean }) => void;
+  taskSummary?: ReactNode;
 } = {}) {
   const [data, setData] = useState<AssetSnapshot | null>(null);
   const [message, setMessage] = useState("");
   const [working, setWorking] = useState(false);
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [rename, setRename] = useState<Registration | null>(null);
+  const [removing, setRemoving] = useState<Registration | null>(null);
   const [name, setName] = useState("");
   const [weakConfirm, setWeakConfirm] = useState(false);
   const [registerOpen, setRegisterOpen] = useState(false);
-  const [filter, setFilter] = useState("all");
+  const [grouped, setGrouped] = useState(false);
+  const [selectedPartition, setSelectedPartition] = useState("");
   const [query, setQuery] = useState("");
   useEffect(() => {
     if (data) onSnapshot?.(data);
@@ -183,12 +193,12 @@ export default function Assets({
 
   async function register(allowWeak = false) {
     if (!data || lock.current) return;
-    if (
-      !allowWeak &&
-      data.candidates.some(
-        (c) => c.weak && c.observation.candidate_id in selected,
-      )
-    ) {
+    const eligible = data.candidates.filter(
+      (c) =>
+        !c.blocked && !c.registered && c.observation.candidate_id in selected,
+    );
+    if (!eligible.length) return;
+    if (!allowWeak && eligible.some((c) => c.weak)) {
       setWeakConfirm(true);
       return;
     }
@@ -199,17 +209,16 @@ export default function Assets({
     let current = data;
     const errors: string[] = [];
     const completed: string[] = [];
-    for (const [candidate_id, name] of Object.entries(selected)) {
-      const candidate = current.candidates.find(
-        (c) => c.observation.candidate_id === candidate_id,
-      );
+    for (const candidate of eligible) {
+      const candidate_id = candidate.observation.candidate_id;
+      const name = selected[candidate_id];
       const success = await invoke("asset_command", {
         action: {
           register: {
             version: current.version,
             candidate_id,
             name,
-            allow_weak: !!candidate?.weak && allowWeak,
+            allow_weak: candidate.weak && allowWeak,
           },
         },
       })
@@ -271,13 +280,81 @@ export default function Assets({
     const key = asset.registration.disk_id;
     groups.set(key, [...(groups.get(key) || []), asset]);
   }
-  const candidateGroups = new Map<string, Candidate[]>();
-  for (const candidate of data?.candidates || []) {
-    const key =
-      candidate.observation.disk_number?.toString() ??
-      candidate.observation.candidate_id;
-    candidateGroups.set(key, [...(candidateGroups.get(key) || []), candidate]);
-  }
+  const candidates = (data?.candidates ?? []).filter(
+    (candidate) => candidate.registered || !candidate.blocked,
+  );
+  const current = data?.assets.find(
+    (asset) => asset.registration.partition_id === selectedPartition,
+  );
+  const observation = current?.registration.observation;
+  const capacity = observation?.capacity;
+  const sections = grouped
+    ? Array.from(groups, ([key, assets]) => ({
+        key,
+        title: assets[0].registration.observation.model || "型号未知",
+        assets,
+      }))
+    : [{ key: "all", title: "", assets: data?.assets ?? [] }];
+
+  const details = current && observation && (
+    <>
+      <div>
+        <dt>磁盘型号</dt>
+        <dd>{observation.model || "未知"}</dd>
+      </div>
+      <div>
+        <dt>卷名</dt>
+        <dd>{observation.volume_label || "无卷名"}</dd>
+      </div>
+      <div>
+        <dt>挂载点</dt>
+        <dd>{current.mounts.join("、") || "未挂载"}</dd>
+      </div>
+      <div>
+        <dt>文件系统</dt>
+        <dd>{observation.identity.filesystem || "未知"}</dd>
+      </div>
+      <div>
+        <dt>状态</dt>
+        <dd>{connectionLabels[current.connection] || "未知"}</dd>
+      </div>
+      <div>
+        <dt>容量</dt>
+        <dd>{bytes(capacity?.total ?? observation.partition_bytes)}</dd>
+      </div>
+      <div>
+        <dt>可用空间</dt>
+        <dd>{bytes(capacity?.free)}</dd>
+      </div>
+      {capacity && (
+        <div>
+          <dt>已用</dt>
+          <dd>{bytes(capacity.total - capacity.free)}</dd>
+        </div>
+      )}
+      {capacity && (
+        <div>
+          <dt>
+            {current.connection === "online" && !current.capacity_error
+              ? "采集时间"
+              : "上次记录"}
+          </dt>
+          <dd>{date(capacity.sampled_at)}</dd>
+        </div>
+      )}
+      {current.connection !== "online" && (
+        <div>
+          <dt>最后在线</dt>
+          <dd>{date(current.registration.last_seen)}</dd>
+        </div>
+      )}
+    </>
+  );
+  const browse = current && onBrowse && (
+    <button onClick={() => onBrowse(current.registration.partition_id)}>
+      浏览文件
+    </button>
+  );
 
   return (
     <div className="assets-app">
@@ -285,231 +362,195 @@ export default function Assets({
         {onSearch && (
           <form
             className="overview-search"
-            onSubmit={(e) => {
-              e.preventDefault();
-              onSearch(query);
+            onSubmit={(event) => {
+              event.preventDefault();
+              const text = query.trim();
+              if (text) onSearch(text);
             }}
           >
             <input
               type="search"
               aria-label="搜索所有文件"
-              placeholder="搜索文件名或路径…"
+              placeholder="输入关键词，按 Enter 搜索"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(event) => setQuery(event.target.value)}
             />
-            <button type="submit">搜索</button>
           </form>
         )}
-        <select
-          aria-label="连接筛选"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
+        <button
+          type="button"
+          aria-pressed={grouped}
+          onClick={() => setGrouped((value) => !value)}
         >
-          <option value="all">全部分区</option>
-          <option value="online">在线</option>
-          <option value="offline">离线</option>
-          <option value="attention">需关注</option>
-        </select>
-        <div className="asset-stats" aria-label="已登记资产统计">
-          <span>
-            硬盘 <b>{data ? groups.size : "—"}</b>
-          </span>
-          <span
-            aria-label={
-              data ? `已登记 ${data.assets.length} 个分区` : "正在连接后台"
-            }
-          >
-            分区 <b>{data ? data.assets.length : "—"}</b>
-          </span>
-          <span>
-            在线{" "}
-            <b>
-              {data
-                ? data.assets.filter((a) => a.connection === "online").length
-                : "—"}
-            </b>
-          </span>
-        </div>
+          按硬盘分组
+        </button>
+        {!!data?.assets.length && (
+          <button disabled={disabled} onClick={openRegistration}>
+            登记分区…
+          </button>
+        )}
       </div>
-      {error && !registerOpen && (
+      {error && !registerOpen && !rename && !removing && (
         <p className="asset-error" role="alert">
           {error}
         </p>
       )}
       <div className="overview-body">
-        <div className="disk-list">
-          {data && !data.busy && !data.error && !data.assets.length && (
+        <div
+          className="disk-list"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setSelectedPartition("");
+          }}
+        >
+          {!data && !error && <p role="status">正在读取已登记分区…</p>}
+          {data && !data.assets.length && !data.busy && !error && (
             <div className="asset-empty">
+              <WorkspaceIcon name="drive" />
               <h2>尚未登记分区</h2>
-              <p>登记后建立文件索引，离线时仍可搜索。</p>
               <button disabled={disabled} onClick={openRegistration}>
                 登记分区…
               </button>
             </div>
           )}
-          {Array.from(groups, ([id, assets]) => (
-            <section
-              className="disk-group"
-              key={id}
-              hidden={
-                !assets.some(
-                  (a) =>
-                    filter === "all" ||
-                    (filter === "attention"
-                      ? !["online", "offline"].includes(a.connection)
-                      : a.connection === filter),
-                )
-              }
-            >
-              <h2>
-                {assets[0].registration.observation.model || "物理硬盘"}
-                <span>
-                  {bytes(assets[0].registration.observation.disk_bytes)}
-                </span>
-              </h2>
-              <div className="asset-table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>分区名称</th>
-                      <th>状态</th>
-                      <th>挂载点</th>
-                      <th>文件系统</th>
-                      <th>总量 / 剩余</th>
-                      <th>索引</th>
-                      <th>
-                        <span className="sr-only">操作</span>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
+          {sections.map(
+            ({ key, title, assets }) =>
+              assets.length > 0 && (
+                <section className="disk-group" key={key}>
+                  {title && <h2>{title}</h2>}
+                  <div className="disk-grid">
                     {assets.map((asset) => {
-                      const r = asset.registration;
-                      const o = r.observation;
-                      const capacity = o.capacity;
+                      const row = asset.registration;
+                      const info = row.observation;
+                      const space = info.capacity;
+                      const mounts = asset.mounts.length
+                        ? asset.mounts
+                        : info.mounts;
                       return (
-                        <tr
-                          key={r.partition_id}
-                          hidden={
-                            filter !== "all" &&
-                            (filter === "attention"
-                              ? ["online", "offline"].includes(asset.connection)
-                              : asset.connection !== filter)
-                          }
+                        <button
+                          key={row.partition_id}
+                          className="disk-card"
+                          aria-label={row.name}
+                          aria-pressed={selectedPartition === row.partition_id}
+                          onClick={() => setSelectedPartition(row.partition_id)}
+                          onDoubleClick={() => onBrowse?.(row.partition_id)}
+                          onKeyDown={(event) => {
+                            if (
+                              event.key === "Enter" &&
+                              selectedPartition === row.partition_id &&
+                              onBrowse
+                            ) {
+                              event.preventDefault();
+                              onBrowse(row.partition_id);
+                            }
+                          }}
                         >
-                          <td>
-                            {onBrowse ? (
-                              <button
-                                className="task-name"
-                                onClick={() => onBrowse(r.partition_id)}
+                          <WorkspaceIcon name="drive" />
+                          <span className="disk-card-content">
+                            <strong title={row.name}>{row.name}</strong>
+                            <span className="disk-card-meta">
+                              {mounts[0]?.replace(/[\\/]$/, "") || "无盘符"} ·{" "}
+                              {info.identity.filesystem || "未知"}
+                              <span
+                                className={`connection ${asset.connection}`}
                               >
-                                {r.name}
-                              </button>
-                            ) : (
-                              <strong>{r.name}</strong>
-                            )}
-                            {asset.error && (
-                              <small className="asset-error">
-                                {asset.error}
-                              </small>
-                            )}
-                          </td>
-                          <td>
-                            <span className={`connection ${asset.connection}`}>
-                              {connectionLabels[asset.connection] || "未确认"}
+                                {connectionLabels[asset.connection] || "未知"}
+                              </span>
                             </span>
-                            <small>最后在线：{date(r.last_seen)}</small>
-                          </td>
-                          <td>{asset.mounts.join(" · ") || "—"}</td>
-                          <td>{o.identity.filesystem || "未知"}</td>
-                          <td>
-                            {bytes(capacity?.total)} / {bytes(capacity?.free)}
-                            {capacity && (
-                              <small>
-                                {asset.connection === "online" &&
-                                !asset.capacity_error
-                                  ? "采集于"
-                                  : "上次记录"}{" "}
-                                {date(capacity.sampled_at)} · 剩余{" "}
-                                {capacity.total
-                                  ? (
-                                      (capacity.free / capacity.total) *
-                                      100
-                                    ).toFixed(1)
-                                  : "—"}
-                                {capacity.total ? "%" : ""}
-                              </small>
-                            )}
-                            {capacity && (
-                              <small>
-                                已用 {bytes(capacity.total - capacity.free)}
-                              </small>
-                            )}
-                            {asset.capacity_error && (
-                              <small className="asset-error">
-                                {asset.capacity_error}
-                              </small>
-                            )}
-                          </td>
-                          <td>
-                            {r.state !== "preparing" ? (
-                              <IndexControls
-                                partitionId={r.partition_id}
-                                onStatus={onIndexStatus}
-                                name={r.name}
-                                filesystem={o.identity.filesystem}
-                                eligible={
-                                  !disabled &&
-                                  !asset.error &&
-                                  asset.connection === "online" &&
-                                  ["NTFS", "exFAT", "FAT32"].includes(
-                                    o.identity.filesystem || "",
-                                  )
-                                }
+                            {!!space?.total && (
+                              <meter
+                                aria-label="已用容量"
+                                min={0}
+                                max={space.total}
+                                value={space.total - space.free}
                               />
-                            ) : (
-                              "初始化未完成"
                             )}
-                          </td>
-                          <td>
-                            <button
-                              disabled={disabled}
-                              aria-label={`重命名 ${r.name}`}
-                              onClick={() => {
-                                setRename(r);
-                                setName(r.name);
-                              }}
-                            >
-                              改名
-                            </button>
-                            {r.state === "preparing" && (
-                              <button
-                                disabled={
-                                  disabled || asset.connection !== "online"
-                                }
-                                onClick={() => {
-                                  void command({
-                                    retry: {
-                                      version: data!.version,
-                                      partition_id: r.partition_id,
-                                      candidate_id: o.candidate_id,
-                                    },
-                                  });
-                                }}
-                              >
-                                重试初始化
-                              </button>
-                            )}
-                          </td>
-                        </tr>
+                            <small>
+                              {space
+                                ? `${bytes(space.free)} 可用 / ${bytes(space.total)}`
+                                : `${bytes(info.partition_bytes)} · 可用空间未知`}
+                            </small>
+                          </span>
+                        </button>
                       );
                     })}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          ))}
+                  </div>
+                </section>
+              ),
+          )}
         </div>
+        <aside className="asset-details" aria-label="分区详情">
+          {current && observation ? (
+            <>
+              <div className="asset-detail-title">
+                <h2>{current.registration.name}</h2>
+                <button
+                  className="asset-rename"
+                  disabled={disabled}
+                  aria-label={`重命名 ${current.registration.name}`}
+                  title="重命名"
+                  onClick={() => {
+                    setRename(current.registration);
+                    setName(current.registration.name);
+                  }}
+                >
+                  <WorkspaceIcon name="pencil" />
+                </button>
+              </div>
+              {current.registration.state === "preparing" ? (
+                <>
+                  <dl>{details}</dl>
+                  <div className="asset-detail-actions">
+                    {browse}
+                    <button
+                      disabled={disabled || current.connection !== "online"}
+                      onClick={() => {
+                        void command({
+                          retry: {
+                            version: data!.version,
+                            partition_id: current.registration.partition_id,
+                            candidate_id: observation.candidate_id,
+                          },
+                        });
+                      }}
+                    >
+                      重试初始化
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <IndexControls
+                  key={current.registration.partition_id}
+                  partitionId={current.registration.partition_id}
+                  onStatus={onIndexStatus}
+                  name={current.registration.name}
+                  filesystem={observation.identity.filesystem}
+                  details={details}
+                  browse={browse}
+                  eligible={
+                    !disabled &&
+                    !current.error &&
+                    current.connection === "online" &&
+                    current.registration.state === "ready"
+                  }
+                />
+              )}
+              {current.error && <p className="asset-error">{current.error}</p>}
+              {current.capacity_error && (
+                <p className="asset-error">{current.capacity_error}</p>
+              )}
+              <div className="asset-remove">
+                <button
+                  disabled={disabled}
+                  onClick={() => setRemoving(current.registration)}
+                >
+                  移除登记…
+                </button>
+              </div>
+            </>
+          ) : (
+            taskSummary
+          )}
+        </aside>
       </div>
       {data && registerOpen && (
         <Modal
@@ -528,79 +569,53 @@ export default function Assets({
             className="candidate-section"
             aria-labelledby="candidate-title"
           >
-            {!data.candidates.length && !data.busy && !data.error && (
-              <p>没有可显示的新设备。接入硬盘后刷新设备。</p>
+            {!candidates.length && !data.busy && !error && (
+              <p>当前没有可登记的分区。</p>
             )}
-            {Array.from(candidateGroups, ([disk, candidates]) => (
-              <section className="candidate-disk" key={disk}>
-                <h3>
-                  磁盘 {candidates[0].observation.disk_number ?? "未知"} ·{" "}
-                  {candidates[0].observation.model || "型号未知"}
-                  <span>{bytes(candidates[0].observation.disk_bytes)}</span>
-                </h3>
-                {candidates.map((candidate) => {
-                  const o = candidate.observation;
-                  const id = o.candidate_id;
-                  return (
-                    <div
-                      className={`candidate-row ${candidate.blocked ? "blocked" : ""}`}
-                      key={id}
-                    >
-                      <label>
-                        <input
-                          type="checkbox"
-                          disabled={disabled || !!candidate.blocked}
-                          checked={id in selected}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setSelected((previous) =>
-                              checked
-                                ? { ...previous, [id]: initialName(o) }
-                                : Object.fromEntries(
-                                    Object.entries(previous).filter(
-                                      ([key]) => key !== id,
-                                    ),
-                                  ),
-                            );
-                          }}
-                        />
-                        <span>
-                          <strong>
-                            {o.mounts.join(" · ") || "无盘符分区"}
-                          </strong>
-                          <small>
-                            {o.identity.filesystem || "未知"} · 分区{" "}
-                            {bytes(o.partition_bytes)}
-                          </small>
-                        </span>
-                      </label>
-                      <div>
-                        {id in selected && (
-                          <input
-                            aria-label={`${initialName(o)} 自定义名称`}
-                            disabled={disabled}
-                            value={selected[id]}
-                            onChange={(e) =>
-                              setSelected((previous) => ({
-                                ...previous,
-                                [id]: e.target.value,
-                              }))
-                            }
-                          />
+            <div className="candidate-grid">
+              {candidates.map((candidate) => {
+                const item = candidate.observation;
+                const id = item.candidate_id;
+                return (
+                  <label key={id} className="candidate-card">
+                    <input
+                      type="checkbox"
+                      disabled={disabled || !!candidate.registered}
+                      checked={!candidate.registered && id in selected}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setSelected((previous) => {
+                          const next = { ...previous };
+                          if (checked) next[id] = initialName(item);
+                          else delete next[id];
+                          return next;
+                        });
+                      }}
+                    />
+                    <WorkspaceIcon name="drive" />
+                    <span className="candidate-copy">
+                      <span className="candidate-title">
+                        <strong>
+                          {item.mounts[0]?.replace(/[\\/]$/, "") || "无盘符"}
+                        </strong>
+                        {item.volume_label && (
+                          <span title={item.volume_label}>
+                            {item.volume_label}
+                          </span>
                         )}
-                        {candidate.blocked ? (
-                          <small>{candidate.blocked}</small>
-                        ) : (
-                          candidate.weak && (
-                            <small>身份信息不足，登记前需确认</small>
-                          )
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </section>
-            ))}
+                      </span>
+                      <small>
+                        {item.identity.filesystem || "未知"} ·{" "}
+                        {bytes(item.partition_bytes ?? item.capacity?.total)}
+                      </small>
+                    </span>
+                    {candidate.registered && (
+                      <small className="candidate-status">已登记</small>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
           </section>
           <div className="dialog-actions">
             <button autoFocus disabled={working} onClick={closeRegistration}>
@@ -609,9 +624,11 @@ export default function Assets({
             <button
               disabled={
                 disabled ||
-                !Object.keys(selected).length ||
-                Object.values(selected).some(
-                  (n) => !n.trim() || Array.from(n.trim()).length > 128,
+                !candidates.some(
+                  (candidate) =>
+                    !candidate.blocked &&
+                    !candidate.registered &&
+                    candidate.observation.candidate_id in selected,
                 )
               }
               onClick={() => void register()}
@@ -622,9 +639,68 @@ export default function Assets({
         </Modal>
       )}
       <footer className="asset-footer">
+        <div className="asset-stats" aria-label="已登记资产统计">
+          <span>硬盘 {data ? groups.size : "—"}</span>
+          <span
+            aria-label={
+              data ? `已登记 ${data.assets.length} 个分区` : undefined
+            }
+          >
+            分区 {data?.assets.length ?? "—"}
+          </span>
+          <span>
+            在线{" "}
+            {data
+              ? data.assets.filter((asset) => asset.connection === "online")
+                  .length
+              : "—"}
+          </span>
+        </div>
         <span role="status">{working ? "正在处理设备信息…" : ""}</span>
-        <span>仅扫描已登记分区。离线容量与文件记录保留最后一次快照。</span>
       </footer>
+      {removing && (
+        <Modal
+          title="remove-title"
+          onCancel={() => {
+            if (!working) setRemoving(null);
+          }}
+        >
+          <h2 id="remove-title">移除 {removing.name} 的登记？</h2>
+          <p>
+            将停止此分区的索引任务并清理 StashFinder 的分区索引。磁盘文件和 NTFS
+            日志会保留。
+          </p>
+          {error && (
+            <p className="asset-error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="dialog-actions">
+            <button
+              autoFocus
+              disabled={working}
+              onClick={() => setRemoving(null)}
+            >
+              取消
+            </button>
+            <button
+              disabled={disabled}
+              onClick={() =>
+                void command({
+                  unregister: { partition_id: removing.partition_id },
+                }).then((success) => {
+                  if (success) {
+                    setRemoving(null);
+                    setSelectedPartition("");
+                  }
+                })
+              }
+            >
+              移除登记
+            </button>
+          </div>
+        </Modal>
+      )}
       {rename && (
         <Modal
           title="rename-title"

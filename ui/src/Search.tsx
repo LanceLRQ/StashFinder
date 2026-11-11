@@ -199,9 +199,20 @@ export default function Search({
     ]),
   ]);
   const folder = types.includes("@folder");
-  const scopedPartition = partition.startsWith("@")
-    ? context?.partition
-    : partition;
+  const partitionIds = partitions.map((item) => item.id);
+  const partitionKey = JSON.stringify([...partitionIds].sort());
+  const validContext =
+    context && partitionIds.includes(context.partition) ? context : undefined;
+  const scope = partition.startsWith("@")
+    ? validContext
+      ? partition
+      : ""
+    : partitionIds.includes(partition)
+      ? partition
+      : "";
+  const scopedPartition = scope.startsWith("@")
+    ? validContext?.partition
+    : scope;
   const extensions = JSON.parse(extensionKey) as string[];
   const queryKey = JSON.stringify({
     text,
@@ -213,10 +224,10 @@ export default function Search({
       kind: folder && !extensions.length ? "folder" : null,
       include_folders: folder && !!extensions.length,
       scope:
-        context && partition === "@folder"
+        validContext && scope === "@folder"
           ? {
-              partition_id: context.partition,
-              entry: context.entry,
+              partition_id: validContext.partition,
+              entry: validContext.entry,
               recursive: true,
             }
           : null,
@@ -365,7 +376,7 @@ export default function Search({
       if (id !== null)
         void indexRequest({ search_cancel: { id } }).catch(() => {});
     };
-  }, [queryKey, revision]);
+  }, [queryKey, revision, partitionKey]);
 
   useEffect(() => {
     if (
@@ -590,14 +601,14 @@ export default function Search({
         />
         <select
           aria-label="分区范围"
-          value={partition}
+          value={scope}
           onChange={(e) => setPartition(e.target.value)}
         >
           <option value="">全部已登记分区</option>
-          {context && (
+          {validContext && (
             <>
               <option value="@partition">原浏览分区</option>
-              <option value="@folder">{context.name}及子目录</option>
+              <option value="@folder">{validContext.name}及子目录</option>
             </>
           )}
           {partitions.map((p) => (

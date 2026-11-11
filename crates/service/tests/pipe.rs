@@ -111,6 +111,7 @@ async fn rename_over_real_pipe_survives_process_termination_and_restart() {
         model: None,
         disk_bytes: None,
         partition_bytes: None,
+        volume_label: None,
         mounts: vec![],
         capacity: None,
         error: None,

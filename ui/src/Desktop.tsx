@@ -36,6 +36,7 @@ export default function Desktop() {
     partition: string;
     revision: number;
   }>();
+  const [taskRequest, setTaskRequest] = useState(0);
   const tasks = useTasks(true);
   const [taskRefreshBlocked, setTaskRefreshBlocked] = useState(false);
   const [indexChoice, setIndexChoice] = useState("");
@@ -53,6 +54,16 @@ export default function Desktop() {
       a.registration.observation.identity.filesystem === "NTFS",
   }));
   const choicePartition = partitions.find((p) => p.id === indexChoice);
+  const overviewTasks =
+    tasks.data?.tasks.filter((task) =>
+      partitions.some((partition) => partition.id === task.partition_id),
+    ) ?? [];
+  const workingTasks = overviewTasks.filter((task) =>
+    ["queued", "running", "waiting"].includes(task.state),
+  ).length;
+  const attentionTasks = overviewTasks.filter((task) =>
+    ["failed", "interrupted", "needs_confirmation"].includes(task.state),
+  ).length;
   useEffect(() => {
     let active = true;
     void readPreferences()
@@ -97,6 +108,7 @@ export default function Desktop() {
             request={searchRequest}
             searchReady={loaded}
             browseRequest={browseRequest}
+            taskRequest={taskRequest}
             completedTasks={tasks.data?.tasks.filter(
               (t) => t.state === "completed",
             )}
@@ -141,6 +153,20 @@ export default function Desktop() {
                   }
                   onSnapshot={setSnapshot}
                   onStatus={setDeviceStatus}
+                  taskSummary={
+                    workingTasks + attentionTasks > 0 && (
+                      <div className="asset-task-summary">
+                        <h2>索引任务</h2>
+                        {workingTasks > 0 && <p>{workingTasks} 项进行中</p>}
+                        {attentionTasks > 0 && <p>{attentionTasks} 项需处理</p>}
+                        <button
+                          onClick={() => setTaskRequest((value) => value + 1)}
+                        >
+                          查看任务
+                        </button>
+                      </div>
+                    )
+                  }
                 />
               ),
               tasks: (

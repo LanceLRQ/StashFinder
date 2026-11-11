@@ -143,6 +143,8 @@ pub struct Observation {
     pub model: Option<String>,
     pub disk_bytes: Option<u64>,
     pub partition_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume_label: Option<String>,
     pub mounts: Vec<String>,
     pub identity: Identity,
     pub capacity: Option<Capacity>,
@@ -186,6 +188,8 @@ pub struct Candidate {
     pub observation: Observation,
     pub weak: bool,
     pub blocked: Option<String>,
+    #[serde(default)]
+    pub registered: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

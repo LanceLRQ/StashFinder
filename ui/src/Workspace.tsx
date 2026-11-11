@@ -14,7 +14,7 @@ import WindowChrome from "./WindowChrome";
 import WorkspaceIcon from "./WorkspaceIcon";
 import "./workspace.css";
 import type { Category, SearchContext } from "./search-options";
-import { readDirectory, type DirectoryPage } from "./browse-api";
+import type { DirectoryPage } from "./browse-api";
 import AppMenu, { type MenuGroup } from "./AppMenu";
 import {
   editCommands,
@@ -50,40 +50,12 @@ const newTab = (id: number): BrowseTab => ({
   filesystem: null,
   parent: null,
 });
-const locationKey = "stashfinder.last-directory";
-function savedLocation() {
-  try {
-    const value = JSON.parse(localStorage.getItem(locationKey) ?? "null");
-    if (
-      value?.version === 1 &&
-      typeof value.partitionId === "string" &&
-      typeof value.filesystemId === "string" &&
-      Array.isArray(value.entry) &&
-      value.entry.length > 0 &&
-      value.entry.every(
-        (byte: unknown) =>
-          typeof byte === "number" &&
-          Number.isInteger(byte) &&
-          byte >= 0 &&
-          byte <= 255,
-      )
-    ) {
-      return value as {
-        partitionId: string;
-        filesystemId: string;
-        entry: number[];
-      };
-    }
-  } catch {
-    // Local storage may be unavailable or contain an old record.
-  }
-  return null;
-}
 export default function Workspace({
   assets,
   includePath,
   request,
   browseRequest,
+  taskRequest = 0,
   categories,
   completedTasks = [],
   automatic,
@@ -100,6 +72,7 @@ export default function Workspace({
   includePath: boolean;
   request: { text: string; revision: number };
   browseRequest?: { partition: string; revision: number };
+  taskRequest?: number;
   categories?: Category[];
   completedTasks?: { partition_id: string; id: string; updated: number }[];
   automatic?: boolean;
@@ -119,20 +92,17 @@ export default function Workspace({
   panels?: Partial<Record<AuxiliaryPage, ReactNode>>;
   notice?: ReactNode;
 }) {
-  const [tabs, setTabs] = useState<Tab[]>([newTab(1)]);
-  const [active, setActive] = useState(1);
+  const [tabs, setTabs] = useState<Tab[]>(() =>
+    panels?.overview ? [pages.overview] : [newTab(1)],
+  );
+  const [active, setActive] = useState<number>(tabs[0].id);
   const [query, setQuery] = useState({ text: "", revision: 0 });
   const sequence = useRef(1);
   const root = useRef<HTMLDivElement>(null);
   const partitionPicker = useRef<HTMLDialogElement>(null);
-  const returnTo = useRef(1);
+  const returnTo = useRef(active);
   const locations = useRef(new Map<number, DirectoryPage>());
   const searchFocus = useRef(false);
-  const startupDone = useRef(false);
-  const startup = useRef<Pick<
-    BrowseTab,
-    "partition" | "filesystem" | "parent" | "title"
-  > | null>(null);
   const [searchContext, setSearchContext] = useState<SearchContext>();
   const [commands, setCommands] = useState<FileCommandContext | null>(null);
   const currentTab = tabs.find((tab) => tab.id === active);
@@ -146,37 +116,14 @@ export default function Workspace({
         : currentTab?.kind === "browse" || currentTab?.kind === "search"
           ? commands?.refresh
           : undefined;
-  const location = useCallback(
-    (id: number, page: DirectoryPage, partition: string, isActive: boolean) => {
-      locations.current.set(id, page);
-      if (!isActive || startupReady === undefined) return;
-      const entry = page.location;
-      startup.current = {
-        partition,
-        filesystem: page.filesystem_id,
-        parent: entry,
-        title: page.ancestors.at(-1)?.name || "浏览",
-      };
-      try {
-        localStorage.setItem(
-          locationKey,
-          JSON.stringify({
-            version: 1,
-            partitionId: partition,
-            filesystemId: page.filesystem_id,
-            entry,
-          }),
-        );
-      } catch {
-        // Browsing remains available when local storage is blocked.
-      }
-    },
-    [startupReady !== undefined],
-  );
+  const location = useCallback((id: number, page: DirectoryPage) => {
+    locations.current.set(id, page);
+  }, []);
   const activeRef = useRef(active);
   activeRef.current = active;
   const search = useCallback((text: string) => {
-    if (activeRef.current > 0) returnTo.current = activeRef.current;
+    if (activeRef.current !== pages.search.id)
+      returnTo.current = activeRef.current;
     setQuery((q) => ({ text, revision: q.revision + 1 }));
     setTabs((previous) =>
       previous.some((tab) => tab.kind === "search")
@@ -200,7 +147,20 @@ export default function Workspace({
     );
     if (!asset) return;
     browseRevision.current = browseRequest.revision;
-    startupDone.current = true;
+    const existing = tabs.find((t) => {
+      if (
+        t.kind !== "browse" ||
+        t.partition !== browseRequest.partition ||
+        t.filesystem !== asset.registration.filesystem_id
+      )
+        return false;
+      const location = locations.current.get(t.id);
+      return location ? location.ancestors.length === 1 : t.parent === null;
+    });
+    if (existing) {
+      setActive(existing.id);
+      return;
+    }
     const empty = tabs.find(
       (t) =>
         t.kind === "browse" &&
@@ -222,71 +182,29 @@ export default function Workspace({
     setActive(id);
   }, [browseRequest, assets, tabs]);
   useEffect(() => {
-    if (!startupReady || startupDone.current || !assets.length) return;
-    let current = true;
-    const saved = savedLocation();
-    const eligible = assets.filter((a) =>
-      ["online", "offline", "historical"].includes(a.connection),
+    if (!taskRequest) return;
+    setTabs((previous) =>
+      previous.some((tab) => tab.id === pages.tasks.id)
+        ? previous
+        : [...previous, pages.tasks],
     );
-    const matching = eligible.find(
-      (a) =>
-        a.registration.partition_id === saved?.partitionId &&
-        a.registration.filesystem_id === saved.filesystemId,
+    setActive(pages.tasks.id);
+  }, [taskRequest]);
+  useEffect(() => {
+    if (!panels?.overview) return;
+    const removed = tabs.filter(
+      (tab) =>
+        tab.kind === "browse" &&
+        tab.partition &&
+        !assets.some(
+          (asset) => asset.registration.partition_id === tab.partition,
+        ),
     );
-    const ordered = [
-      ...new Set([
-        ...(matching ? [matching] : []),
-        ...eligible.filter((a) => a.connection === "online"),
-        ...eligible,
-      ]),
-    ];
-    async function restore() {
-      let chosen = ordered[0] || assets[0];
-      let parent = chosen === matching ? saved!.entry : null;
-      // Probe alternate partitions only when there is a choice. The pane presents the real index error if none are readable.
-      for (const asset of ordered.length > 1 ? ordered : []) {
-        const { partition_id, filesystem_id } = asset.registration;
-        const entry = asset === matching ? saved!.entry : null;
-        const read = (parent: number[] | null) =>
-          readDirectory({ partition_id, filesystem_id, parent });
-        const page = await read(entry).catch((e) =>
-          entry && String(e).includes("目录已不存在")
-            ? read(null).catch(() => null)
-            : null,
-        );
-        if (!current || startupDone.current) return;
-        if (page) {
-          chosen = asset;
-          parent = entry;
-          break;
-        }
-      }
-      if (!current || startupDone.current) return;
-      startupDone.current = true;
-      const {
-        partition_id: partition,
-        filesystem_id: filesystem,
-        name: title,
-      } = chosen.registration;
-      startup.current = { partition, filesystem, title, parent };
-      setTabs((previous) => {
-        const empty = previous.find(
-          (tab): tab is BrowseTab => tab.kind === "browse" && !tab.partition,
-        );
-        return empty
-          ? previous.map((tab) =>
-              tab.id === empty.id
-                ? { ...empty, partition, filesystem, title, parent }
-                : tab,
-            )
-          : previous;
-      });
-    }
-    void restore();
-    return () => {
-      current = false;
-    };
-  }, [assets, startupReady]);
+    if (!removed.length) return;
+    for (const tab of removed) locations.current.delete(tab.id);
+    setTabs(tabs.filter((tab) => !removed.includes(tab)));
+    if (removed.some((tab) => tab.id === active)) setActive(pages.overview.id);
+  }, [assets, tabs, active, panels?.overview]);
   const title = useCallback(
     (id: number, value: string) =>
       setTabs((previous) =>
@@ -304,19 +222,12 @@ export default function Workspace({
     setActive(id);
   }
   function close(id: number) {
+    if (id === pages.overview.id) return;
     locations.current.delete(id);
     const remaining = tabs.filter((t) => t.id !== id);
     if (!remaining.length) {
       const next = ++sequence.current;
-      const location = startup.current;
-      const valid =
-        location &&
-        assets.some(
-          (asset) =>
-            asset.registration.partition_id === location.partition &&
-            asset.registration.filesystem_id === location.filesystem,
-        );
-      setTabs([{ ...newTab(next), ...(valid ? location : {}) }]);
+      setTabs([newTab(next)]);
       setActive(next);
     } else {
       setTabs(remaining);
@@ -347,7 +258,6 @@ export default function Workspace({
       (a) => a.registration.partition_id === partition,
     );
     if (!chosen) return;
-    startupDone.current = true;
     setTabs((previous) =>
       previous.map((tab) =>
         tab.kind === "browse" && tab.id === id
@@ -480,7 +390,12 @@ export default function Workspace({
       accessKey: "f",
       items: [
         { label: "新建浏览标签页", shortcut: "Ctrl+T", run: add },
-        { label: "关闭标签页", shortcut: "Ctrl+W", run: () => close(active) },
+        {
+          label: "关闭标签页",
+          shortcut: "Ctrl+W",
+          disabled: active === pages.overview.id,
+          run: () => close(active),
+        },
         ...(currentTab?.kind === "browse"
           ? [
               {
@@ -516,9 +431,6 @@ export default function Workspace({
       label: "查看",
       accessKey: "v",
       items: [
-        ...(panels?.overview
-          ? [{ label: "概览（硬盘）", run: () => openPage("overview") }]
-          : []),
         {
           label: "刷新当前页",
           shortcut: "F5",
@@ -562,29 +474,32 @@ export default function Workspace({
                 aria-selected={active === tab.id}
                 aria-controls={`file-tab-${tab.id}`}
                 onClick={() => {
-                  if (tab.id === 0 && active > 0) returnTo.current = active;
+                  if (tab.id === 0 && active !== 0) returnTo.current = active;
                   setActive(tab.id);
                 }}
                 title={tab.title}
+                aria-label={tab.kind === "overview" ? tab.title : undefined}
               >
                 <WorkspaceIcon
                   name={
                     tab.kind === "browse"
                       ? "folder"
                       : tab.kind === "overview"
-                        ? "drive"
+                        ? "home"
                         : tab.kind
                   }
                 />
-                <span>{tab.title}</span>
+                {tab.kind !== "overview" && <span>{tab.title}</span>}
               </button>
-              <button
-                className="tab-close"
-                aria-label={`关闭${tab.title}标签页`}
-                onClick={() => close(tab.id)}
-              >
-                ×
-              </button>
+              {tab.kind !== "overview" && (
+                <button
+                  className="tab-close"
+                  aria-label={`关闭${tab.title}标签页`}
+                  onClick={() => close(tab.id)}
+                >
+                  ×
+                </button>
+              )}
             </div>
           ))}
           <button
