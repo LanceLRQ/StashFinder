@@ -73,6 +73,10 @@ impl Source for FastFixture {
                 entry: entry(5, "\\", true, 0),
                 links: vec![],
             }])?,
+            Some("path_conflict") => consume(&[NativeObject {
+                entry: entry(22, "alias.txt", false, 23),
+                links: vec![(5, link("alias.txt"))],
+            }])?,
             Some("orphan") => (),
             _ => consume(&[NativeObject {
                 entry: entry(20, "folder", true, 0),
@@ -262,9 +266,11 @@ fn fallback_restarts_a_clean_generation_only_for_eligible_failures() {
         ("unsupported", BuildStrategy::Auto, true),
         ("unavailable", BuildStrategy::Auto, true),
         ("orphan", BuildStrategy::Auto, true),
+        ("path_conflict", BuildStrategy::Auto, true),
         ("io", BuildStrategy::Auto, false),
         ("duplicate", BuildStrategy::Auto, false),
         ("unavailable", BuildStrategy::Sequential, false),
+        ("path_conflict", BuildStrategy::Sequential, false),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let mut db = Volume::create(&dir.path().join("v.sqlite"), "{}").unwrap();
@@ -293,7 +299,10 @@ fn fallback_restarts_a_clean_generation_only_for_eligible_failures() {
             assert_eq!(db.index_status().unwrap().records, 1);
             assert!(source.journals.get() >= 3);
         } else {
-            assert!(result.is_err());
+            let error = result.unwrap_err();
+            if failure == "path_conflict" {
+                assert!(error.is::<stashfinder_store::initial::InitialPathConflict>());
+            }
             assert_eq!(db.active_generation().unwrap(), None);
         }
     }

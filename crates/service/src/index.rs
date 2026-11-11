@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 pub use stashfinder_core::index::IndexMode;
-use stashfinder_store::initial::InitialPathsIncomplete;
+use stashfinder_store::initial::{InitialPathConflict, InitialPathsIncomplete};
 use stashfinder_store::volume::{Changes, Cursor, Entry, Object, Volume};
 use stashfinder_windows::ntfs::{
     DirectoryEntry, Journal, NativeObject, UsnPage, UsnRecord, VolumeReader,
@@ -398,7 +398,8 @@ fn build_strategy_checked(
                 Err(error)
                     if strategy == BuildStrategy::Auto
                         && (error.is::<FastScanUnavailable>()
-                            || error.is::<InitialPathsIncomplete>()) =>
+                            || error.is::<InitialPathsIncomplete>()
+                            || error.is::<InitialPathConflict>()) =>
                 {
                     ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
                     source.verify()?;

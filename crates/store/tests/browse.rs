@@ -12,6 +12,20 @@ fn request() -> DirectoryRequest {
         folders_only: false,
     }
 }
+
+#[test]
+fn a_failed_initial_generation_without_paths_still_has_no_browsable_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("v.sqlite");
+    let mut db = Volume::create(&path, r#"{"filesystem_id":"fs","partition_id":"p"}"#).unwrap();
+    let generation = db.begin_generation().unwrap();
+    db.begin_initial_paths(generation).unwrap();
+    db.discard_initial(generation, "fixture conflict").unwrap();
+    assert_eq!(
+        browse::read(&path, &request()).unwrap_err().to_string(),
+        "尚无目录索引"
+    );
+}
 fn fixture(path: &std::path::Path) -> Volume {
     let mut db = Volume::create(path, r#"{"filesystem_id":"fs","partition_id":"p"}"#).unwrap();
     let g = db.begin_generation().unwrap();

@@ -13,6 +13,17 @@ impl std::fmt::Display for InitialPathsIncomplete {
 
 impl std::error::Error for InitialPathsIncomplete {}
 
+#[derive(Debug)]
+pub struct InitialPathConflict;
+
+impl std::fmt::Display for InitialPathConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("顺序扫描读到同一父目录下的同名路径")
+    }
+}
+
+impl std::error::Error for InitialPathConflict {}
+
 impl Volume {
     pub fn begin_initial_paths(&mut self, generation: i64) -> Result<()> {
         self.db
@@ -84,7 +95,16 @@ impl Volume {
                     .iter()
                     .flat_map(|unit| unit.to_le_bytes())
                     .collect();
-                path_insert.execute(params![entry.id, entry.object, entry.parent, name])?;
+                match path_insert.execute(params![entry.id, entry.object, entry.parent, name]) {
+                    Err(rusqlite::Error::SqliteFailure(code, _))
+                        if code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+                    {
+                        return Err(InitialPathConflict.into());
+                    }
+                    result => {
+                        result?;
+                    }
+                }
             }
         }
         tx.commit()?;

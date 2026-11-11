@@ -8,6 +8,7 @@ export default function DirectoryTree({
   name,
   entry = null,
   activePartition = true,
+  canExpand = true,
   selected,
   ancestors,
   version,
@@ -18,13 +19,14 @@ export default function DirectoryTree({
   name: string;
   entry?: number[] | null;
   activePartition?: boolean;
+  canExpand?: boolean;
   selected: number[] | null;
   onNavigate: (id: number[] | null) => void;
   ancestors?: Ancestor[];
   version?: string;
 }) {
   const [expanded, setExpanded] = useState(entry === null && activePartition);
-  const open = activePartition && expanded;
+  const open = activePartition && canExpand && expanded;
   const [page, setPage] = useState<DirectoryPage | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -92,6 +94,7 @@ export default function DirectoryTree({
           className="tree-expander"
           aria-label={`${open ? "收起" : "展开"}${name}`}
           aria-expanded={open}
+          disabled={activePartition && !canExpand}
           onClick={() => {
             if (activePartition) setExpanded(!expanded);
             else onNavigate(null);

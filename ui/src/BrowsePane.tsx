@@ -167,7 +167,10 @@ export default function BrowsePane({
     }
     void load().catch((e) => {
       if (token === request.current) {
-        setError(String(e).replace(/^Error: /, ""));
+        const message = String(e).replace(/^Error: /, "");
+        if (message !== "尚无目录索引" && message !== "目录索引尚未完成") {
+          setError(message);
+        }
         setBusy(false);
       }
     });
@@ -317,7 +320,12 @@ export default function BrowsePane({
         run: () => setBreadcrumb((v) => !v),
       },
     ],
-    asset && !busy && editing === null ? reload : undefined,
+    asset && !busy && editing === null
+      ? () => {
+          setNotice("");
+          reload();
+        }
+      : undefined,
   );
   function fileKeys(e: React.KeyboardEvent) {
     return fileKey(e, dispatch, () => {
@@ -330,6 +338,7 @@ export default function BrowsePane({
     const token = request.current;
     setBusy(true);
     setError("");
+    setNotice("");
     await readDirectory({
       partition_id: partition!,
       filesystem_id: filesystem!,
@@ -347,13 +356,15 @@ export default function BrowsePane({
             page.location.join(",") === value.location.join(",")
           ) {
             setPage({ ...value, entries: [...page.entries, ...value.entries] });
-          } else setError("目录索引已更新，请刷新");
+          } else setNotice("目录索引已更新，请刷新");
           setBusy(false);
         }
       },
       (e) => {
         if (token === request.current) {
-          setError(String(e).replace(/^Error: /, ""));
+          const message = String(e).replace(/^Error: /, "");
+          if (message === "目录索引已更新，请刷新") setNotice(message);
+          else setError(message);
           setBusy(false);
         }
       },
@@ -370,6 +381,7 @@ export default function BrowsePane({
             filesystem={registration.filesystem_id}
             name={registration.name}
             activePartition={current}
+            canExpand={page !== null}
             selected={current ? (page?.location ?? null) : null}
             ancestors={current ? page?.ancestors : undefined}
             version={
@@ -436,16 +448,6 @@ export default function BrowsePane({
         </div>
       ) : (
         <>
-          {error && (
-            <p className="browse-message desktop-error" role="alert">
-              {error}
-            </p>
-          )}
-          {notice && (
-            <p className="browse-message" role="status">
-              {notice}
-            </p>
-          )}
           <div className="browse-body">
             {partitionTree}
             <div className="directory-main">
@@ -477,6 +479,16 @@ export default function BrowsePane({
                     </span>
                   ))}
                 </nav>
+              )}
+              {error && (
+                <p className="browse-message desktop-error" role="alert">
+                  {error}
+                </p>
+              )}
+              {notice && (
+                <p className="browse-message" role="status">
+                  {notice}
+                </p>
               )}
               {page && (
                 <FileList
@@ -531,8 +543,10 @@ export default function BrowsePane({
                   onMore={() => void more()}
                 />
               )}
-              {!page && !busy && !error && (
-                <p className="search-empty">暂无可浏览的索引</p>
+              {!page && !error && (
+                <p className="directory-loading" role="status">
+                  正在加载目录索引…
+                </p>
               )}
             </div>
             {preview && (
@@ -559,7 +573,7 @@ export default function BrowsePane({
           </div>
           <footer className="browse-status">
             <span role="status">
-              {busy
+              {busy && page
                 ? "正在读取…"
                 : count > 0
                   ? `已选择 ${count.toLocaleString()} 项`

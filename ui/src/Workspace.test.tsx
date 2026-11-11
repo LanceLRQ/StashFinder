@@ -120,6 +120,42 @@ function choosePartition(name = "Movies") {
   fireEvent.click(within(tree).getByRole("button", { name }));
 }
 
+test.each(["尚无目录索引", "目录索引尚未完成"])(
+  "keeps the partition collapsed and shows one loading state while %s",
+  async (message) => {
+    const view = setup();
+    const read = vi.mocked(readDirectory).getMockImplementation()!;
+    vi.mocked(readDirectory).mockRejectedValue(new Error(message));
+    expect(screen.queryByText("正在加载目录索引…")).toBeNull();
+
+    await act(async () => choosePartition());
+    const tree = within(screen.getByRole("navigation", { name: "目录树" }));
+    const expander = tree.getByRole("button", { name: "展开Movies" });
+    expect(expander).toHaveProperty("disabled", true);
+    expect(expander.getAttribute("aria-expanded")).toBe("false");
+    const waiting = await screen.findByText("正在加载目录索引…");
+    expect(waiting.closest(".directory-main")).not.toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(message)).toBeNull();
+    expect(
+      vi.mocked(readDirectory).mock.calls.some(([r]) => r.folders_only),
+    ).toBe(false);
+
+    vi.mocked(readDirectory).mockImplementation(read);
+    view.rerender(
+      <Workspace
+        assets={[asset]}
+        includePath
+        request={{ text: "", revision: 0 }}
+        completedTasks={[{ id: "build", partition_id: "p", updated: 1 }]}
+      />,
+    );
+    await screen.findByRole("row", { name: /notes.txt/ });
+    expect(await tree.findByRole("button", { name: "Films" })).toBeTruthy();
+    expect(screen.queryByText("正在加载目录索引…")).toBeNull();
+  },
+);
+
 test("lists every partition in a new tab and expands the chosen partition from the tree", async () => {
   const view = setup();
   const backup = {
@@ -538,10 +574,11 @@ test("rejects stale pagination without discarding visible rows and refreshes the
   });
   choosePartition();
   fireEvent.click(await screen.findByRole("button", { name: "加载更多文件" }));
-  expect(await screen.findByRole("alert")).toHaveProperty(
-    "textContent",
-    "目录索引已更新，请刷新",
+  expect(await screen.findByText("目录索引已更新，请刷新")).toHaveProperty(
+    "role",
+    "status",
   );
+  expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.getByRole("row", { name: /notes.txt/ })).toBeTruthy();
   expect(readDirectory).toHaveBeenCalledWith(
     expect.objectContaining({ generation: "1", revision: "2", offset: 2 }),

@@ -301,6 +301,15 @@
   min-width: 0;
   min-height: 0;
 }
+.directory-loading {
+  display: grid;
+  flex: 1;
+  place-content: center;
+  margin: 0;
+  padding: 16px;
+  color: #647082;
+  font-size: 13px;
+}
 .breadcrumbs {
   display: flex;
   align-items: center;

@@ -64,7 +64,13 @@ pub fn read(path: &Path, request: &DirectoryRequest) -> Result<DirectoryPage> {
                 |r| r.get(0),
             )
             .optional()?
-            .context("目录根节点缺失")?,
+            .with_context(|| {
+                if active.is_none() {
+                    "尚无目录索引"
+                } else {
+                    "目录根节点缺失"
+                }
+            })?,
     };
     let mut ancestors = Vec::new();
     let mut next = Some(location.clone());
