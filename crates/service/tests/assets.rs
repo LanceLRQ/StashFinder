@@ -46,6 +46,43 @@ fn settled(assets: &Assets) -> Snapshot {
 }
 
 #[test]
+fn background_refresh_keeps_the_snapshot_interactive_and_queues_a_write() {
+    let root = tempfile::tempdir().unwrap();
+    let (entered, refreshing) = std::sync::mpsc::channel();
+    let (resume, paused) = std::sync::mpsc::channel();
+    let mut discoveries = 0;
+    let assets = Assets::start(root.path().into(), move || {
+        discoveries += 1;
+        if discoveries == 2 {
+            entered.send(()).unwrap();
+            paused.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        Ok(vec![observation()])
+    });
+    let before = settled(&assets);
+    assets.refresh_in_background().unwrap();
+    refreshing.recv_timeout(Duration::from_secs(5)).unwrap();
+    let during = assets.snapshot();
+    assert!(!during.busy);
+    assert_eq!(during.version, before.version);
+    assets.refresh_in_background().unwrap();
+    assets
+        .submit(Action::Register {
+            version: before.version,
+            candidate_id: "volume-a".into(),
+            name: "Queued".into(),
+            allow_weak: false,
+        })
+        .unwrap();
+    assert!(assets.snapshot().busy);
+    assert!(assets.submit(Action::Refresh).is_err());
+    resume.send(()).unwrap();
+    let result = settled(&assets);
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.assets[0].registration.name, "Queued");
+}
+
+#[test]
 fn index_writer_does_not_make_device_refresh_fail() {
     let root = tempfile::tempdir().unwrap();
     let fixtures = Arc::new(Mutex::new(vec![observation()]));

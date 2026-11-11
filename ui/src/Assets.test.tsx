@@ -176,7 +176,7 @@ test("shows details on click, browses on double-click and confirms removal", asy
   });
 });
 
-test("automatic busy pulses keep the overview footer quiet and block device actions", async () => {
+test("background snapshots keep the overview quiet and registration selectable", async () => {
   vi.useFakeTimers();
   let data = snapshot();
   vi.mocked(invoke).mockImplementation(async () => data);
@@ -184,19 +184,20 @@ test("automatic busy pulses keep the overview footer quiet and block device acti
   const { container } = render(<Assets ref={controls} />);
   await act(async () => {});
   const status = within(container.querySelector("footer")!).getByRole("status");
-  data = { ...data, busy: true };
+  data = { ...data, version: 2 };
   await act(() => vi.advanceTimersByTimeAsync(document.hidden ? 10000 : 5000));
   expect(status.textContent).toBe("");
-  act(() => {
-    controls.current!.refresh();
-    controls.current!.register();
-  });
+  act(() => controls.current!.register());
   expect(invoke).not.toHaveBeenCalledWith("asset_command", expect.anything());
-  expect(screen.queryByRole("dialog")).toBeNull();
-  data = { ...data, busy: false, error: "设备枚举失败" };
-  await act(() => vi.advanceTimersByTimeAsync(750));
+  const dialog = screen.getByRole("dialog", { name: "选择分区登记" });
+  const candidate = within(dialog).getAllByRole("checkbox")[0];
+  expect(candidate).toHaveProperty("disabled", false);
+  fireEvent.click(candidate);
+  data = { ...data, version: 3, error: "设备枚举失败" };
+  await act(() => vi.advanceTimersByTimeAsync(document.hidden ? 10000 : 5000));
   expect(status.textContent).toBe("");
   expect(screen.getByRole("alert").textContent).toBe("设备枚举失败");
+  expect(candidate).toHaveProperty("checked", true);
 });
 
 test("manual refresh owns the overview progress until the device command completes", async () => {

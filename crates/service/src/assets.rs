@@ -11,8 +11,18 @@ use std::{
 };
 
 pub struct Assets {
-    state: Arc<Mutex<Snapshot>>,
-    sender: SyncSender<Action>,
+    state: Arc<Mutex<State>>,
+    sender: SyncSender<Work>,
+}
+
+struct State {
+    snapshot: Snapshot,
+    refreshing: bool,
+}
+
+enum Work {
+    Foreground(Action),
+    BackgroundRefresh,
 }
 
 impl Assets {
@@ -20,20 +30,32 @@ impl Assets {
         root: PathBuf,
         mut discover: impl FnMut() -> Result<Vec<Observation>> + Send + 'static,
     ) -> Self {
-        let state = Arc::new(Mutex::new(Snapshot {
-            busy: true,
-            version: 1,
-            ..Snapshot::default()
+        let state = Arc::new(Mutex::new(State {
+            snapshot: Snapshot {
+                busy: true,
+                version: 1,
+                ..Snapshot::default()
+            },
+            refreshing: false,
         }));
-        let (sender, receiver) = sync_channel(1);
+        let (sender, receiver) = sync_channel(2);
         let shared = state.clone();
         thread::spawn(move || {
             let mut catalog = Catalog::open(&root);
             let mut observations = Vec::new();
             let mut discovered = false;
-            let mut action = Action::Refresh;
+            let mut work = Work::Foreground(Action::Refresh);
             loop {
-                let before = shared.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let before = shared
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .snapshot
+                    .clone();
+                let background = matches!(work, Work::BackgroundRefresh);
+                let action = match work {
+                    Work::Foreground(action) => action,
+                    Work::BackgroundRefresh => Action::Refresh,
+                };
                 let result = (|| -> Result<()> {
                     let db = catalog
                         .as_mut()
@@ -137,11 +159,20 @@ impl Assets {
                 if let Err(error) = result {
                     next.error = Some(format!("{error:#}"));
                 }
-                next.busy = false;
-                next.version = before.version + 1;
-                *shared.lock().unwrap_or_else(|e| e.into_inner()) = next;
+                {
+                    let mut state = shared.lock().unwrap_or_else(|e| e.into_inner());
+                    if background {
+                        state.refreshing = false;
+                    }
+                    // Keep the candidate snapshot used by an already queued foreground write.
+                    if !background || !state.snapshot.busy {
+                        next.busy = false;
+                        next.version = state.snapshot.version + 1;
+                        state.snapshot = next;
+                    }
+                }
                 match receiver.recv() {
-                    Ok(next_action) => action = next_action,
+                    Ok(next) => work = next,
                     Err(_) => break,
                 }
             }
@@ -150,7 +181,25 @@ impl Assets {
     }
 
     pub fn snapshot(&self) -> Snapshot {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .snapshot
+            .clone()
+    }
+
+    pub fn refresh_in_background(&self) -> Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("资产状态不可用"))?;
+        if !state.snapshot.busy && !state.refreshing {
+            self.sender
+                .try_send(Work::BackgroundRefresh)
+                .context("后台工作队列不可用")?;
+            state.refreshing = true;
+        }
+        Ok(())
     }
 
     pub fn submit(&self, action: Action) -> Result<()> {
@@ -158,14 +207,15 @@ impl Assets {
             .state
             .lock()
             .map_err(|_| anyhow::anyhow!("资产状态不可用"))?;
-        ensure!(!state.busy, "正在处理，请稍后重试");
+        let snapshot = &mut state.snapshot;
+        ensure!(!snapshot.busy, "正在处理，请稍后重试");
         match &action {
             Action::Register { version, name, .. } => {
-                ensure!(*version == state.version, "{SNAPSHOT_EXPIRED}");
+                ensure!(*version == snapshot.version, "{SNAPSHOT_EXPIRED}");
                 validate_name(name)?;
             }
             Action::Retry { version, .. } => {
-                ensure!(*version == state.version, "{SNAPSHOT_EXPIRED}")
+                ensure!(*version == snapshot.version, "{SNAPSHOT_EXPIRED}")
             }
             Action::Rename { name, .. } => {
                 validate_name(name)?;
@@ -173,10 +223,12 @@ impl Assets {
             Action::Refresh | Action::Unregister { .. } => (),
             _ => bail!("不是资产写操作"),
         }
-        self.sender.try_send(action).context("后台工作队列不可用")?;
-        state.busy = true;
-        state.error = None;
-        state.version += 1;
+        self.sender
+            .try_send(Work::Foreground(action))
+            .context("后台工作队列不可用")?;
+        snapshot.busy = true;
+        snapshot.error = None;
+        snapshot.version += 1;
         Ok(())
     }
 
@@ -185,6 +237,7 @@ impl Assets {
             .state
             .lock()
             .map_err(|_| anyhow::anyhow!("资产状态不可用"))?;
+        let state = &state.snapshot;
         ensure!(
             version.is_none_or(|v| v == state.version),
             "{SNAPSHOT_EXPIRED}"

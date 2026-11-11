@@ -67,7 +67,7 @@ pub async fn serve_runtime(
                 if let Some(assets) = assets {
                     if let Some(indexes) = indexes { indexes.observe(assets.snapshot()); }
                     if refreshed.elapsed() >= std::time::Duration::from_secs(5) {
-                        let _ = assets.submit(Action::Refresh);
+                        let _ = assets.refresh_in_background();
                         refreshed = std::time::Instant::now();
                     }
                 }
