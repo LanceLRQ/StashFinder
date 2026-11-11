@@ -247,6 +247,40 @@ test("lists every partition in a new tab and expands the chosen partition from t
   expect(opened.queryByRole("button", { name: "Films" })).toBeNull();
 });
 
+test("directory details uses the column menu and requests both sort directions", async () => {
+  setup();
+  choosePartition();
+  await screen.findByRole("row", { name: /notes.txt/ });
+  fireEvent.contextMenu(screen.getByRole("button", { name: "按名称排序" }));
+  const menu = screen.getByRole("menu", { name: "详情列" });
+  expect(
+    within(menu)
+      .getByRole("menuitemcheckbox", { name: "名称", checked: true })
+      .hasAttribute("disabled"),
+  ).toBe(true);
+  fireEvent.click(
+    within(menu).getByRole("menuitemcheckbox", {
+      name: "创建时间",
+      checked: false,
+    }),
+  );
+  const header = screen.getByRole("button", { name: "按创建时间排序" });
+  for (const descending of [false, true]) {
+    fireEvent.click(header);
+    await waitFor(() =>
+      expect(readDirectory).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sort: { field: "created", descending } }),
+      ),
+    );
+    expect(header.closest("th")?.getAttribute("aria-sort")).toBe(
+      descending ? "descending" : "ascending",
+    );
+  }
+  expect(
+    localStorage.getItem("stashfinder.details.directory-list.v1"),
+  ).toContain("created");
+});
+
 test("directory thumbnail modes preserve focus, selection and the tab's layout", async () => {
   setup();
   choosePartition();

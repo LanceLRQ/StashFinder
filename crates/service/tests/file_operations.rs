@@ -138,6 +138,7 @@ fn fixture_with(count: u32, long: bool) -> (tempfile::TempDir, Indexes, Snapshot
             revision: None,
             offset: 0,
             folders_only: false,
+            sort: Default::default(),
         },
     )
     .unwrap();

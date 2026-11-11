@@ -34,6 +34,9 @@ pub enum SortField {
     Created,
     Modified,
     Group,
+    Extension,
+    Type,
+    Attributes,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]

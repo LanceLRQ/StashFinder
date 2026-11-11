@@ -1,4 +1,4 @@
-use super::SearchIndex;
+use super::{SearchIndex, extension};
 #[cfg(feature = "query-bench")]
 pub fn synthetic_sources(count: usize) -> Vec<Source> {
     (0..12)
@@ -234,6 +234,18 @@ impl ResultSet {
                     }),
                     SortField::Partition => text_cmp(&sa.name, &sb.name, options.case_sensitive),
                     SortField::Group => a.group.cmp(&b.group),
+                    SortField::Extension => {
+                        extension(if ra.kind == "file" { &ra.folded } else { "" })
+                            .cmp(extension(if rb.kind == "file" { &rb.folded } else { "" }))
+                    }
+                    SortField::Type => ra.kind.cmp(rb.kind).reverse().then_with(|| {
+                        if ra.kind == "file" {
+                            extension(&ra.folded).cmp(extension(&rb.folded))
+                        } else {
+                            Cmp::Equal
+                        }
+                    }),
+                    SortField::Attributes => ra.attributes.cmp(&rb.attributes),
                     SortField::Size => number_cmp(&ra.size, &rb.size, options.descending),
                     SortField::Created => number_cmp(&ra.created, &rb.created, options.descending),
                     SortField::Modified => {

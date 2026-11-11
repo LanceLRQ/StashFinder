@@ -24,7 +24,18 @@ export type DirectoryRequest = {
   revision?: string | null;
   offset?: number;
   folders_only?: boolean;
+  sort?: DirectorySort;
 };
+export type DirectorySortField =
+  | "name"
+  | "path"
+  | "size"
+  | "extension"
+  | "type"
+  | "modified"
+  | "created"
+  | "attributes";
+export type DirectorySort = { field: DirectorySortField; descending: boolean };
 export async function readDirectory(request: DirectoryRequest) {
   const reply = await invoke<
     { kind: "directory"; data: DirectoryPage } | { kind: "error"; data: string }

@@ -7,7 +7,7 @@ license.workspace = true
 [dependencies]
 stashfinder-core = { path = "../core" }
 uuid = { version = "=1.29.0", features = ["v4"] }
-rusqlite = { version = "=0.41.1", features = ["bundled"] }
+rusqlite = { version = "=0.41.1", features = ["bundled", "functions"] }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -1,6 +1,27 @@
 use crate::index::SearchRow;
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DirectorySortField {
+    #[default]
+    Name,
+    Path,
+    Size,
+    Extension,
+    Type,
+    Created,
+    Modified,
+    Attributes,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DirectorySort {
+    pub field: DirectorySortField,
+    pub descending: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DirectoryRequest {
@@ -11,6 +32,8 @@ pub struct DirectoryRequest {
     pub parent: Option<Vec<u8>>,
     pub offset: u32,
     pub folders_only: bool,
+    #[serde(default)]
+    pub sort: DirectorySort,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

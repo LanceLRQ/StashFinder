@@ -11,6 +11,13 @@ import {
 import "./details-viewport.css";
 import { detailsGutter, hitsItem, tileInset } from "./marquee";
 import useMarquee, { type MarqueeCommit } from "./useMarquee";
+import {
+  DetailsHeader,
+  fitColumnWidths,
+  useColumnSettings,
+} from "./DetailsColumns";
+import type { FileColumn } from "./file-columns";
+import { fileEditingKey } from "./file-operations";
 
 const maxScrollHeight = 8_000_000;
 const initialHeight = 500;
@@ -76,6 +83,7 @@ export default function DetailsViewport({
   layout,
   grid,
   columns,
+  active = true,
   total,
   revision,
   restore,
@@ -95,7 +103,8 @@ export default function DetailsViewport({
   tableLabel?: string;
   layout: DetailsLayout;
   grid?: GridLayout;
-  columns: { label: string; sort?: string }[];
+  columns: readonly FileColumn[];
+  active?: boolean;
   total: number;
   revision?: number;
   restore?: { logicalTop: number } | null;
@@ -128,11 +137,15 @@ export default function DetailsViewport({
     index: number,
     scrollToRow: (index: number) => void,
     columns: number,
-    frame?: { hit: boolean; toggle: boolean },
+    frame: { hit: boolean; toggle: boolean } | undefined,
+    detailColumns: readonly FileColumn[],
   ) => ReactNode;
   children?: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const table = useRef<HTMLTableElement>(null);
+  const columnSettings = useColumnSettings(columns, className);
+  const visibleColumns = columnSettings.visible;
   const focused = useRef<HTMLElement | null>(null);
   const pendingFocus = useRef<string | undefined>(undefined);
   const [top, setTop] = useState(0);
@@ -353,7 +366,7 @@ export default function DetailsViewport({
         aria-hidden="true"
         style={{ height: space }}
       >
-        <td colSpan={columns.length} />
+        <td colSpan={visibleColumns.length} />
       </tr>
     );
   const items = () =>
@@ -369,6 +382,7 @@ export default function DetailsViewport({
               toggle: frame.frame.toggle,
             }
           : undefined,
+        visibleColumns,
       );
     });
 
@@ -402,6 +416,16 @@ export default function DetailsViewport({
             return;
           }
         }
+        if (
+          !grid &&
+          event.ctrlKey &&
+          event.code === "NumpadAdd" &&
+          !fileEditingKey(event)
+        ) {
+          event.preventDefault();
+          columnSettings.resize(fitColumnWidths(table.current, visibleColumns));
+          return;
+        }
         onKeyDown(event, { columns: itemsPerRow, reveal, scrollTo });
       }}
       onContextMenu={onContextMenu}
@@ -429,38 +453,31 @@ export default function DetailsViewport({
       ) : (
         <table
           className="marquee-details"
+          ref={table}
+          style={{
+            width: visibleColumns.reduce(
+              (width, column) => width + column.pixels,
+              0,
+            ),
+          }}
           aria-label={tableLabel}
           aria-rowcount={total + 1}
           aria-multiselectable="true"
         >
-          <thead>
-            <tr>
-              {columns.map(({ label, sort: field }) => (
-                <th
-                  key={label}
-                  scope="col"
-                  aria-sort={
-                    field && field === sort
-                      ? descending
-                        ? "descending"
-                        : "ascending"
-                      : undefined
-                  }
-                >
-                  {field ? (
-                    <button
-                      aria-label={`按${label}排序`}
-                      onClick={() => onSort?.(field)}
-                    >
-                      {label}
-                    </button>
-                  ) : (
-                    label
-                  )}
-                </th>
-              ))}
-            </tr>
-          </thead>
+          <colgroup>
+            {visibleColumns.map((column) => (
+              <col key={column.id} style={{ width: column.pixels }} />
+            ))}
+          </colgroup>
+          <DetailsHeader
+            columns={columns}
+            settings={columnSettings}
+            table={table}
+            sort={sort}
+            descending={descending}
+            onSort={onSort}
+            active={active}
+          />
           <tbody>
             {spacer(before)}
             {items()}

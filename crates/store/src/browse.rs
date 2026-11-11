@@ -1,6 +1,6 @@
-use crate::search::{decode_name, decode_time};
+use crate::search::{decode_name, decode_time, extension};
 use anyhow::{Context, Result, ensure};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, functions::FunctionFlags, params};
 use stashfinder_core::{MAX_FRAME, browse::*, index::SearchRow};
 use std::{collections::HashSet, path::Path};
 
@@ -15,6 +15,26 @@ pub fn read(path: &Path, request: &DirectoryRequest) -> Result<DirectoryPage> {
         "目录分页缺少版本"
     );
     let mut db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
+    db.create_scalar_function("sf_name", 1, flags, |ctx| {
+        let name: Vec<u8> = ctx.get(0)?;
+        decode_name(&name)
+            .map(|s| s.to_lowercase())
+            .map_err(|e| rusqlite::Error::UserFunctionError(e.into_boxed_dyn_error()))
+    })?;
+    db.create_scalar_function("sf_extension", 1, flags, |ctx| {
+        let name: Vec<u8> = ctx.get(0)?;
+        decode_name(&name)
+            .map(|s| extension(&s).to_lowercase())
+            .map_err(|e| rusqlite::Error::UserFunctionError(e.into_boxed_dyn_error()))
+    })?;
+    db.create_scalar_function("sf_time_key", 1, flags, |ctx| {
+        let time: Option<Vec<u8>> = ctx.get(0)?;
+        Ok(time.map(|mut bytes| {
+            bytes.reverse();
+            bytes
+        }))
+    })?;
     let tx = db.transaction()?;
     ensure!(
         matches!(
@@ -107,7 +127,22 @@ pub fn read(path: &Path, request: &DirectoryRequest) -> Result<DirectoryPage> {
     };
     let mut bytes = serde_json::to_vec(&page)?.len();
     ensure!(bytes < MAX_FRAME - 256, "目录路径超过单页传输上限");
-    let mut statement=tx.prepare("SELECT p.id,p.object,p.name,o.kind,o.size,o.created,o.modified,o.attributes FROM paths p JOIN objects o ON o.generation=p.generation AND o.id=p.object WHERE p.generation=?1 AND p.parent=?2 AND (?3=0 OR o.kind='folder') ORDER BY o.kind DESC,p.name,p.id LIMIT 101 OFFSET ?4")?;
+    let field = match request.sort.field {
+        DirectorySortField::Name | DirectorySortField::Path => "sf_name(p.name)",
+        DirectorySortField::Size => "o.size IS NULL, o.size",
+        DirectorySortField::Extension | DirectorySortField::Type => {
+            "CASE WHEN o.kind = 'file' THEN sf_extension(p.name) ELSE '' END"
+        }
+        DirectorySortField::Created => "o.created IS NULL, sf_time_key(o.created)",
+        DirectorySortField::Modified => "o.modified IS NULL, sf_time_key(o.modified)",
+        DirectorySortField::Attributes => "o.attributes",
+    };
+    let direction = if request.sort.descending {
+        "DESC"
+    } else {
+        "ASC"
+    };
+    let mut statement=tx.prepare(&format!("SELECT p.id,p.object,p.name,o.kind,o.size,o.created,o.modified,o.attributes FROM paths p JOIN objects o ON o.generation=p.generation AND o.id=p.object WHERE p.generation=?1 AND p.parent=?2 AND (?3=0 OR o.kind='folder') ORDER BY o.kind DESC,{field} {direction},p.id LIMIT 101 OFFSET ?4"))?;
     let mut rows = statement.query(params![
         generation,
         location,

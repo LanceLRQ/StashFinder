@@ -209,6 +209,7 @@ fn directory(
             parent,
             offset: 0,
             folders_only: false,
+            sort: Default::default(),
         }),
     )?
     else {

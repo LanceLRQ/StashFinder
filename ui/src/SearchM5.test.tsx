@@ -19,6 +19,7 @@ const detailsRowHeight = 34;
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.resetAllMocks();
 });
 
@@ -67,8 +68,57 @@ test("search details use the directory's compact row height with search metadata
     within(search).getByRole("button", { name: "按所在目录 / 路径排序" }),
   ).toBeTruthy();
   expect(
-    within(search).getByRole("columnheader", { name: "状态 / 索引时间" }),
+    within(search).getByRole("columnheader", { name: "状态" }),
   ).toBeTruthy();
+});
+
+test("search header remembers visible columns and resized widths and sorts by creation time", async () => {
+  mock("online", 1600);
+  const first = render(<Search partitions={[]} />);
+  const search = screen.getByLabelText("搜索结果列表");
+  await within(search).findByText("file-0.txt");
+  fireEvent.contextMenu(
+    within(search).getByRole("button", { name: "按名称排序" }),
+  );
+  fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "创建时间" }));
+  const separator = within(search).getByRole("separator", {
+    name: "调整创建时间列宽",
+  });
+  const width = Number(separator.getAttribute("aria-valuenow"));
+  fireEvent.keyDown(separator, { key: "ArrowRight" });
+  fireEvent.pointerDown(separator, { pointerId: 7, clientX: 110, button: 0 });
+  fireEvent.lostPointerCapture(separator, { pointerId: 7 });
+  fireEvent.pointerMove(search, { pointerId: 7, clientX: 160, buttons: 1 });
+  fireEvent.pointerUp(search, { pointerId: 7, clientX: 160, button: 0 });
+  fireEvent.click(
+    within(search).getByRole("button", { name: "按创建时间排序" }),
+  );
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("index_request", {
+      action: {
+        search_start: expect.objectContaining({
+          options: expect.objectContaining({
+            sort: "created",
+            descending: false,
+          }),
+        }),
+      },
+    }),
+  );
+  first.unmount();
+  const second = render(<Search partitions={[]} />);
+  expect(
+    screen
+      .getByRole("separator", { name: "调整创建时间列宽" })
+      .getAttribute("aria-valuenow"),
+  ).toBe(String(width + 58));
+  fireEvent.contextMenu(screen.getByRole("button", { name: "按名称排序" }));
+  fireEvent.click(
+    screen.getByRole("menuitemcheckbox", { name: "创建时间", checked: true }),
+  );
+  second.unmount();
+  render(<Search partitions={[]} />);
+  expect(screen.queryByRole("columnheader", { name: "创建时间" })).toBeNull();
 });
 
 test.each([

@@ -1,5 +1,6 @@
 import { useRef } from "react";
-import { fileTime, type FileRow } from "./browse-api";
+import type { DirectorySort, DirectorySortField, FileRow } from "./browse-api";
+import { directoryColumns, fileColumnText } from "./file-columns";
 import DetailsViewport from "./DetailsViewport";
 import FileListItem from "./FileListItem";
 import { fileEditingKey, type EntryRef } from "./file-operations";
@@ -9,8 +10,6 @@ import {
   type FileView,
 } from "./file-view";
 import { rectangleSpans } from "./marquee";
-
-const columns = [{ label: "名称" }, { label: "大小" }, { label: "修改时间" }];
 
 export default function FileList({
   rows,
@@ -31,6 +30,8 @@ export default function FileList({
   connection,
   active = true,
   view = "details",
+  sort,
+  onSort,
 }: {
   rows: FileRow[];
   selection: string[];
@@ -54,6 +55,8 @@ export default function FileList({
   connection?: string;
   active?: boolean;
   view?: FileView;
+  sort?: DirectorySort;
+  onSort?: (field: DirectorySortField) => void;
 }) {
   const grid = view === "details" ? undefined : thumbnailLayouts[view];
   const anchor = useRef(0);
@@ -94,13 +97,22 @@ export default function FileList({
       tableLabel="文件"
       layout={fileDetailsLayout}
       grid={grid}
-      columns={columns}
+      columns={directoryColumns}
+      active={active}
+      sort={sort?.field ?? "name"}
+      descending={sort?.descending}
+      revision={
+        directoryColumns.findIndex(({ id }) => id === (sort?.field ?? "name")) *
+          2 +
+        Number(!!sort?.descending)
+      }
+      onSort={(field) => onSort?.(field as DirectorySortField)}
       total={rows.length}
       marquee={{
         enabled: active && !editing,
         version:
           context &&
-          `${context.filesystem_id}:${context.generation}:${context.revision}`,
+          `${context.filesystem_id}:${context.generation}:${context.revision}:${sort?.field}:${sort?.descending}`,
         page:
           next !== null && !busy ? { offset: next, load: onMore } : undefined,
         commit(area, toggle) {
@@ -133,7 +145,7 @@ export default function FileList({
           else onSelect(rows.map((r) => r.entry.join(",")));
         }
       }}
-      row={(index, scrollToRow, columns, frame) => {
+      row={(index, scrollToRow, columns, frame, detailColumns) => {
         const row = rows[index];
         const marked = frame
           ? frame.toggle
@@ -244,18 +256,19 @@ export default function FileList({
               }
             }}
           >
-            {!grid && (
-              <>
-                <td className="result-size">
-                  {row.kind === "folder"
-                    ? "—"
-                    : row.size == null
-                      ? "未知"
-                      : `${BigInt(row.size).toLocaleString()} B`}
-                </td>
-                <td>{fileTime(row.modified)}</td>
-              </>
-            )}
+            {!grid &&
+              detailColumns.slice(1).map(({ id }) => {
+                const text = fileColumnText(row, id);
+                return (
+                  <td
+                    key={id}
+                    className={id === "size" ? "result-size" : undefined}
+                    title={text}
+                  >
+                    {text}
+                  </td>
+                );
+              })}
           </FileListItem>
         );
       }}

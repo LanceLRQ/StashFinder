@@ -4,6 +4,8 @@ import {
   connectionLabel,
   readDirectory,
   type DirectoryPage,
+  type DirectorySort,
+  type DirectorySortField,
 } from "./browse-api";
 import DirectoryTree from "./DirectoryTree";
 import FileList from "./FileList";
@@ -93,6 +95,8 @@ export default function BrowsePane({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [refresh, setRefresh] = useState(0);
+  const [sort, setSort] = useState<DirectorySort>();
+  const appliedSort = useRef<DirectorySort>(undefined);
   const [tree, setTree] = useState(true);
   const [preview, setPreview] = useState(false);
   const [breadcrumb, setBreadcrumb] = useState(true);
@@ -119,6 +123,7 @@ export default function BrowsePane({
           partition_id: partition!,
           filesystem_id: filesystem!,
           parent: JSON.parse(parentKey),
+          ...(sort && { sort }),
         });
       } catch (e) {
         if (token !== request.current) return;
@@ -132,6 +137,7 @@ export default function BrowsePane({
               partition_id: partition!,
               filesystem_id: filesystem!,
               parent: ancestor.entry,
+              ...(sort && { sort }),
             });
             break;
           } catch (fallbackError) {
@@ -156,6 +162,7 @@ export default function BrowsePane({
         setAllSelected(false);
         setNotice("");
       }
+      appliedSort.current = sort;
       setPage(result);
       if (!previous)
         setSelection((ids) =>
@@ -177,7 +184,7 @@ export default function BrowsePane({
     return () => {
       request.current++;
     };
-  }, [partition, filesystem, parentKey, refresh]);
+  }, [partition, filesystem, parentKey, refresh, sort]);
   useEffect(() => {
     onTitle(
       id,
@@ -333,8 +340,21 @@ export default function BrowsePane({
       showMenu(rect.left + 20, rect.bottom, count === 0);
     });
   }
+  function sortBy(field: DirectorySortField) {
+    request.current++;
+    setBusy(true);
+    setSelection([]);
+    setAllSelected(false);
+    setEditing(null);
+    setMenu(null);
+    setSort({
+      field,
+      descending: (sort?.field ?? "name") === field && !sort?.descending,
+    });
+  }
   async function more() {
-    if (!page || page.next === null || busy) return;
+    if (!page || page.next === null || busy || appliedSort.current !== sort)
+      return;
     const token = request.current;
     setBusy(true);
     setError("");
@@ -346,6 +366,7 @@ export default function BrowsePane({
       generation: page.generation,
       revision: page.revision,
       offset: page.next,
+      ...(sort && { sort }),
     }).then(
       (value) => {
         if (token === request.current) {
@@ -494,6 +515,8 @@ export default function BrowsePane({
                 <FileList
                   active={active}
                   view={view}
+                  sort={sort}
+                  onSort={sortBy}
                   key={page.location.join(",")}
                   rows={page.entries}
                   context={context() || undefined}
@@ -538,7 +561,7 @@ export default function BrowsePane({
                       : undefined
                   }
                   onOpen={open}
-                  next={page.next}
+                  next={appliedSort.current === sort ? page.next : null}
                   busy={busy}
                   onMore={() => void more()}
                 />
@@ -592,9 +615,6 @@ export default function BrowsePane({
                 : page?.needs_validation
                   ? "索引待校验"
                   : ""}
-              {page?.indexed_at
-                ? ` · 索引 ${new Date(page.indexed_at * 1000).toLocaleString()}`
-                : ""}
             </span>
             {count > maxFileSelection && (
               <span role="status">{fileSelectionLimit}</span>

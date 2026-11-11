@@ -11,7 +11,6 @@
   border-collapse: collapse;
 }
 .details-viewport .marquee-details {
-  width: calc(100% - var(--details-gutter));
   margin-left: var(--details-gutter);
   font-size: 13px;
 }
@@ -24,6 +23,72 @@
   font-weight: 400;
   text-align: left;
   border-bottom: 1px solid #dce1e7;
+  border-inline-end: 1px solid #e0e4e9;
+}
+.marquee-details th > button {
+  display: block;
+  width: 100%;
+  height: var(--details-row-height);
+  padding: 0 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.marquee-details th[aria-sort="ascending"] > button::after {
+  content: " ↑";
+}
+.marquee-details th[aria-sort="descending"] > button::after {
+  content: " ↓";
+}
+.column-resize {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.column-resize:hover,
+.column-resize:focus-visible {
+  background: #386da738;
+  outline-offset: -2px;
+}
+.details-column-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 240px;
+  max-height: calc(100vh - 8px);
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid #c3cbd5;
+  background: #f9fafb;
+  box-shadow: 0 3px 14px #15233320;
+}
+.details-column-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 10px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+.details-column-menu button span {
+  width: 15px;
+}
+.details-column-menu kbd {
+  margin-inline-start: auto;
+  font: inherit;
+  color: #647082;
+}
+.details-column-menu [role="separator"] {
+  margin: 4px 6px;
+  border-top: 1px solid #dce1e7;
 }
 .marquee-details th,
 .marquee-details tr[data-index] td {
@@ -32,6 +97,15 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.marquee-details th:has(> button) {
+  padding: 0;
+}
+.marquee-details th.result-size {
+  text-align: right;
+}
+.marquee-details th > button:focus-visible {
+  outline-offset: -2px;
 }
 .marquee-details tr[data-index]:hover {
   background: #f0f3f7;

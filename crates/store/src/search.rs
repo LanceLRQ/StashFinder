@@ -241,6 +241,10 @@ impl SearchIndex {
     }
 }
 
+pub(crate) fn extension(name: &str) -> &str {
+    name.rsplit_once('.').map_or("", |(_, extension)| extension)
+}
+
 pub(crate) fn decode_name(bytes: &[u8]) -> Result<String> {
     ensure!(bytes.len().is_multiple_of(2), "UTF-16 名称字节数无效");
     let units = bytes

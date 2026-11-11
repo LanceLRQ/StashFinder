@@ -217,8 +217,11 @@ export default function SearchFilters({
                 ["path", "路径"],
                 ["partition", "分区"],
                 ["size", "大小"],
+                ["extension", "扩展名"],
+                ["type", "类型"],
                 ["modified", "修改时间"],
                 ["created", "创建时间"],
+                ["attributes", "属性"],
                 ["group", "重复组"],
               ].map(([v, l]) => (
                 <option key={v} value={v}>

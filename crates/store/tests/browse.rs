@@ -10,7 +10,56 @@ fn request() -> DirectoryRequest {
         parent: None,
         offset: 0,
         folders_only: false,
+        sort: Default::default(),
     }
+}
+
+#[test]
+fn directory_creation_sort_applies_before_paging_and_keeps_unknown_dates_last() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sorted.sqlite");
+    let mut db = Volume::create(&path, r#"{"filesystem_id":"fs","partition_id":"p"}"#).unwrap();
+    let g = db.begin_generation().unwrap();
+    let objects: Vec<_> = (0u8..=103)
+        .map(|id| Object {
+            identity: None,
+            id: vec![id],
+            source: "ntfs".into(),
+            kind: if id == 0 { "folder" } else { "file" }.into(),
+            size: None,
+            created: (id < 103).then(|| (u64::from(id) * 128).to_le_bytes()),
+            modified: None,
+            attributes: 0,
+        })
+        .collect();
+    let entries: Vec<_> = (0u8..=103)
+        .map(|id| Entry {
+            id: vec![id],
+            object: vec![id],
+            parent: (id != 0).then_some(vec![0]),
+            name: format!("file-{id:03}.txt").encode_utf16().collect(),
+        })
+        .collect();
+    db.write_batch(g, &objects, &entries, &[], None).unwrap();
+    db.complete(g).unwrap();
+    db.publish(g).unwrap();
+    let mut json = serde_json::to_value(request()).unwrap();
+    json["sort"] = serde_json::json!({"field":"created","descending":true});
+    let mut sorted: DirectoryRequest = serde_json::from_value(json).unwrap();
+    let first = browse::read(&path, &sorted).unwrap();
+    sorted.offset = first.next.unwrap();
+    sorted.generation = Some(first.generation);
+    sorted.revision = Some(first.revision);
+    let last = browse::read(&path, &sorted).unwrap();
+    assert_eq!(
+        first
+            .entries
+            .iter()
+            .chain(&last.entries)
+            .map(|r| r.entry[0])
+            .collect::<Vec<_>>(),
+        (1..=102).rev().chain([103]).collect::<Vec<_>>()
+    );
 }
 
 #[test]

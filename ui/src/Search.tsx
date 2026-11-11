@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { indexRequest, type SearchHit, type SearchPage } from "./index-api";
-import { connectionLabel, fileTime, fileSize } from "./browse-api";
+import { connectionLabel } from "./browse-api";
+import { fileColumnText } from "./file-columns";
 import {
   defaultCategories,
   emptyOptions,
@@ -662,6 +663,7 @@ export default function Search({
       <div className="search-body" onClick={() => setMenu(null)}>
         <VirtualResults
           grid={grid}
+          active={active}
           sort={options.sort}
           descending={options.descending}
           onSort={(sort) =>
@@ -737,7 +739,7 @@ export default function Search({
             }
             if (e.key === "Enter" && selectedRow) open(selectedRow);
           }}
-          row={(i, _scrollToRow, _columns, frame) => {
+          row={(i, _scrollToRow, _columns, frame, detailColumns) => {
             const marked = frame
               ? frame.toggle
                 ? selected(i) !== frame.hit
@@ -838,45 +840,54 @@ export default function Search({
               >
                 {!grid &&
                   (!r ? (
-                    <td colSpan={7}>正在读取…</td>
+                    <td colSpan={detailColumns.length}>正在读取…</td>
                   ) : (
-                    <>
-                      <td title={r.file.path}>{path}</td>
-                      <td>{r.partition_name}</td>
-                      <td
-                        className="result-size"
-                        title={
-                          r.file.size === null
-                            ? undefined
-                            : `${BigInt(r.file.size).toLocaleString()} B`
-                        }
-                      >
-                        {r.file.kind === "folder"
-                          ? "—"
-                          : r.file.size === null
-                            ? "未知"
-                            : fileSize(r.file.size)}
-                      </td>
-                      <td>{fileTime(r.file.modified)}</td>
-                      <td className="search-entry-status">
-                        <div>
-                          <span>
-                            {connectionLabel[r.connection] || "状态未确认"}
-                          </span>
-                          {r.partial ? (
-                            <small>未完成记录</small>
-                          ) : r.needs_validation ? (
-                            <small>索引待校验</small>
-                          ) : null}
-                        </div>
-                        <small className="search-entry-indexed">
-                          {r.indexed_at == null
-                            ? "索引时间未知"
-                            : new Date(r.indexed_at * 1000).toLocaleString()}
-                        </small>
-                      </td>
-                      <td>{r.duplicate_group || "—"}</td>
-                    </>
+                    detailColumns.slice(1).map(({ id }) => {
+                      if (id === "status") {
+                        const state =
+                          connectionLabel[r.connection] || "状态未确认";
+                        const note = r.partial
+                          ? "未完成记录"
+                          : r.needs_validation
+                            ? "索引待校验"
+                            : "";
+                        return (
+                          <td
+                            key={id}
+                            title={note ? `${state} · ${note}` : state}
+                          >
+                            <span>{state}</span>
+                            {note && (
+                              <>
+                                {" "}
+                                · <span>{note}</span>
+                              </>
+                            )}
+                          </td>
+                        );
+                      }
+                      const text =
+                        id === "path"
+                          ? path
+                          : id === "partition"
+                            ? r.partition_name
+                            : id === "group"
+                              ? String(r.duplicate_group || "—")
+                              : fileColumnText(r.file, id);
+                      return (
+                        <td
+                          key={id}
+                          className={id === "size" ? "result-size" : undefined}
+                          title={
+                            id === "size" && r.file.size !== null
+                              ? `${BigInt(r.file.size).toLocaleString()} B`
+                              : text
+                          }
+                        >
+                          {text}
+                        </td>
+                      );
+                    })
                   ))}
               </FileListItem>
             );

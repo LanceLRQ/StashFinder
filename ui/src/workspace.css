@@ -349,16 +349,6 @@
   width: 100%;
   text-align: left;
 }
-.directory-list table {
-  min-width: 440px;
-}
-.directory-list th:nth-child(2) {
-  width: 100px;
-  text-align: right;
-}
-.directory-list th:nth-child(3) {
-  width: 170px;
-}
 .search-results tr:hover {
   background: #f0f3f7;
 }
