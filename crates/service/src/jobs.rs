@@ -14,6 +14,7 @@ use stashfinder_store::{
     volume::Volume,
 };
 use std::{
+    collections::{HashMap, VecDeque},
     path::PathBuf,
     sync::{
         Arc, Condvar, Mutex,
@@ -21,6 +22,8 @@ use std::{
     },
     thread,
 };
+const MAX_SEARCH_SNAPSHOTS: usize = 64;
+
 struct SearchJob {
     id: u64,
     query: Query,
@@ -30,7 +33,7 @@ struct SearchJob {
 }
 #[derive(Default)]
 struct SearchState {
-    id: u64,
+    cancel: Arc<AtomicBool>,
     partitions: Vec<String>,
     done: bool,
     result: Option<Arc<ResultSet>>,
@@ -39,15 +42,14 @@ struct SearchState {
 }
 #[derive(Default)]
 struct Mailbox {
-    job: Option<SearchJob>,
-    cancel: Option<Arc<AtomicBool>>,
+    jobs: VecDeque<SearchJob>,
+    searches: HashMap<u64, SearchState>,
     stop: bool,
 }
 pub struct Indexes {
     selection: Mutex<crate::file_operations::Selection>,
     pub runner: crate::supervisor::Runner,
     mailbox: Arc<(Mutex<Mailbox>, Condvar)>,
-    search_state: Arc<Mutex<SearchState>>,
     sequence: AtomicU64,
 }
 impl Indexes {
@@ -57,33 +59,22 @@ impl Indexes {
         let caches = runner.caches();
         let states = runner.states();
         let mailbox = Arc::new((Mutex::new(Mailbox::default()), Condvar::new()));
-        let search_state = Arc::new(Mutex::new(SearchState::default()));
         let work_mailbox = mailbox.clone();
-        let work_state = search_state.clone();
         thread::spawn(move || {
             loop {
                 let job = {
                     let (lock, wake) = &*work_mailbox;
                     let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
-                    while state.job.is_none() && !state.stop {
+                    while state.jobs.is_empty() && !state.stop {
                         state = wake.wait(state).unwrap_or_else(|e| e.into_inner());
                     }
                     if state.stop {
                         return;
                     }
-                    state.job.take().expect("job checked")
+                    state.jobs.pop_front().expect("job checked")
                 };
-                let mut output = SearchState {
-                    id: job.id,
-                    partitions: job
-                        .assets
-                        .iter()
-                        .map(|a| a.registration.partition_id.clone())
-                        .collect(),
-                    done: true,
-                    ..Default::default()
-                };
-                let result = (|| -> Result<()> {
+                let mut unavailable = Vec::new();
+                let result = (|| -> Result<ResultSet> {
                     let catalog = Catalog::read(&root)?;
                     let mut sources = Vec::new();
                     for asset in job.assets {
@@ -136,29 +127,23 @@ impl Indexes {
                                     needs_validation,
                                 });
                             }
-                            Ok(None) => output
-                                .unavailable
+                            Ok(None) => unavailable
                                 .push(format!("{}：尚无可搜索索引", asset.registration.name)),
-                            Err(e) => output
-                                .unavailable
-                                .push(format!("{}：{e:#}", asset.registration.name)),
+                            Err(e) => {
+                                unavailable.push(format!("{}：{e:#}", asset.registration.name))
+                            }
                         }
                     }
-                    output.result = Some(Arc::new(ResultSet::run(
-                        sources,
-                        &job.query,
-                        &job.options,
-                        &job.cancel,
-                    )?));
-                    Ok(())
+                    ResultSet::run(sources, &job.query, &job.options, &job.cancel)
                 })();
-                if let Err(e) = result {
-                    output.error = Some(format!("{e:#}"));
-                    output.result = None;
-                }
-                let mut current = work_state.lock().unwrap_or_else(|e| e.into_inner());
-                if current.id == job.id {
-                    *current = output;
+                let mut state = work_mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(current) = state.searches.get_mut(&job.id) {
+                    current.done = true;
+                    match result {
+                        Ok(result) => current.result = Some(Arc::new(result)),
+                        Err(error) => current.error = Some(format!("{error:#}")),
+                    }
+                    current.unavailable = unavailable;
                 }
             }
         });
@@ -166,7 +151,6 @@ impl Indexes {
             selection,
             runner,
             mailbox,
-            search_state,
             sequence: AtomicU64::new(1),
         }
     }
@@ -197,8 +181,12 @@ impl Indexes {
             id, ..
         } = &origin
         {
-            let state = self.search_state.lock().unwrap_or_else(|e| e.into_inner());
-            ensure!(state.id == *id && state.done, "搜索尚未完成或已经过期");
+            let mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
+            let state = mailbox
+                .searches
+                .get(id)
+                .filter(|state| state.done)
+                .ok_or_else(|| anyhow::anyhow!("搜索尚未完成或已经过期"))?;
             Some(
                 state
                     .result
@@ -273,19 +261,21 @@ impl Indexes {
     pub fn observe(&self, snapshot: Snapshot) {
         if !snapshot.busy && snapshot.error.is_none() {
             let mut mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
-            let mut state = self.search_state.lock().unwrap_or_else(|e| e.into_inner());
-            if state.partitions.iter().any(|id| {
-                snapshot
-                    .assets
-                    .iter()
-                    .all(|a| a.registration.partition_id != *id)
-            }) {
-                if let Some(cancel) = mailbox.cancel.take() {
-                    cancel.store(true, Ordering::Release);
+            mailbox.searches.retain(|_, state| {
+                let registered = state.partitions.iter().all(|id| {
+                    snapshot
+                        .assets
+                        .iter()
+                        .any(|a| a.registration.partition_id == *id)
+                });
+                if !registered {
+                    state.cancel.store(true, Ordering::Release);
                 }
-                mailbox.job = None;
-                *state = SearchState::default();
-            }
+                registered
+            });
+            mailbox
+                .jobs
+                .retain(|job| !job.cancel.load(Ordering::Acquire));
         }
         self.runner.observe(snapshot);
     }
@@ -331,19 +321,22 @@ impl Indexes {
         let id = self.sequence.fetch_add(1, Ordering::Relaxed);
         let cancel = Arc::new(AtomicBool::new(false));
         let mut mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(old) = mailbox.cancel.take() {
-            old.store(true, Ordering::Release);
-        }
-        *self.search_state.lock().unwrap_or_else(|e| e.into_inner()) = SearchState {
+        ensure!(
+            mailbox.searches.len() < MAX_SEARCH_SNAPSHOTS,
+            "搜索快照过多，请关闭不需要的搜索标签页"
+        );
+        mailbox.searches.insert(
             id,
-            partitions: assets
-                .iter()
-                .map(|a| a.registration.partition_id.clone())
-                .collect(),
-            ..Default::default()
-        };
-        mailbox.cancel = Some(cancel.clone());
-        mailbox.job = Some(SearchJob {
+            SearchState {
+                cancel: cancel.clone(),
+                partitions: assets
+                    .iter()
+                    .map(|a| a.registration.partition_id.clone())
+                    .collect(),
+                ..Default::default()
+            },
+        );
+        mailbox.jobs.push_back(SearchJob {
             id,
             query,
             options: *request.options,
@@ -354,20 +347,10 @@ impl Indexes {
         Ok(id)
     }
     pub fn cancel_search(&self, id: u64) {
-        let current = self
-            .search_state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .id;
-        if id == current
-            && let Some(cancel) = &self
-                .mailbox
-                .0
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .cancel
-        {
-            cancel.store(true, Ordering::Release);
+        let mut mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = mailbox.searches.remove(&id) {
+            state.cancel.store(true, Ordering::Release);
+            mailbox.jobs.retain(|job| job.id != id);
         }
     }
     pub fn page(&self, id: u64, offset: usize) -> Result<SearchPage> {
@@ -376,8 +359,11 @@ impl Indexes {
         Ok(page)
     }
     pub fn batch(&self, id: u64, offset: usize, limit: usize) -> Result<SearchPage> {
-        let state = self.search_state.lock().unwrap_or_else(|e| e.into_inner());
-        ensure!(id == state.id, "搜索请求已过期");
+        let mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
+        let state = mailbox
+            .searches
+            .get(&id)
+            .ok_or_else(|| anyhow::anyhow!("搜索请求已过期"))?;
         ensure!((1..=100).contains(&limit), "搜索页大小无效");
         let result = state.result.clone();
         let mut page = SearchPage {
@@ -404,7 +390,7 @@ impl Indexes {
             bytes += value.len();
             page.unavailable.push(value);
         }
-        drop(state);
+        drop(mailbox);
         if let Some(result) = result {
             let rows = result.page(offset, limit)?;
             let mut size = serde_json::to_vec(&page)?.len();
@@ -427,8 +413,8 @@ impl Drop for Indexes {
     fn drop(&mut self) {
         let mut mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
         mailbox.stop = true;
-        if let Some(cancel) = &mailbox.cancel {
-            cancel.store(true, Ordering::Release);
+        for state in mailbox.searches.values() {
+            state.cancel.store(true, Ordering::Release);
         }
         self.mailbox.1.notify_one();
     }

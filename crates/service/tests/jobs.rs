@@ -144,6 +144,7 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
         assert!(batch.row.is_none());
         assert!(jobs.batch(id, 0, 0).is_err());
         assert!(jobs.batch(id, 3, 100).is_err());
+        let first_id = id;
         let mut inaccessible = snapshot.clone();
         inaccessible.assets[0].connection = "inaccessible".into();
         inaccessible.assets[0].error = Some("device access unavailable".into());
@@ -168,6 +169,16 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
         };
         assert!(page.unavailable.is_empty(), "{:?}", page.unavailable);
         assert_eq!(page.row.unwrap().connection, "inaccessible");
+        assert_eq!(
+            jobs.page(first_id, 0).unwrap().row.unwrap().connection,
+            "offline"
+        );
+        jobs.cancel_search(first_id);
+        assert!(jobs.page(first_id, 0).is_err());
+        assert_eq!(
+            jobs.page(id, 0).unwrap().row.unwrap().connection,
+            "inaccessible"
+        );
         jobs.observe(Snapshot::default());
         assert!(jobs.page(id, 0).is_err());
     }

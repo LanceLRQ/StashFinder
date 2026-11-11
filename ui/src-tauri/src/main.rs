@@ -4,7 +4,7 @@ use anyhow::{Context, Result, ensure};
 mod file_operations;
 use serde::Serialize;
 use stashfinder_windows::shell;
-use std::{path::PathBuf, sync::Mutex};
+use std::{collections::HashSet, path::PathBuf, sync::Mutex};
 use tauri::{AppHandle, Manager, State};
 mod preferences;
 mod runtime;
@@ -80,10 +80,19 @@ async fn asset_command(action: stashfinder_core::Action) -> Result<(), String> {
     }
 }
 
+#[derive(Default)]
+struct SearchSnapshots(Mutex<HashSet<u64>>);
+
 #[tauri::command]
 async fn index_request(
     action: stashfinder_core::Action,
+    snapshots: State<'_, SearchSnapshots>,
 ) -> Result<stashfinder_core::Response, String> {
+    use stashfinder_core::{Action, Response};
+    let released = match &action {
+        Action::SearchCancel { id } => Some(*id),
+        _ => None,
+    };
     match action {
         stashfinder_core::Action::IndexStart { .. }
         | stashfinder_core::Action::TaskCancel { .. }
@@ -96,9 +105,31 @@ async fn index_request(
         | stashfinder_core::Action::Directory(_)
         | stashfinder_core::Action::SearchPage { .. }
         | stashfinder_core::Action::SearchBatch { .. }
-        | stashfinder_core::Action::SearchCancel { .. } => runtime::request(action)
-            .await
-            .map_err(|error| format!("{error:#}")),
+        | stashfinder_core::Action::SearchCancel { .. } => {
+            let reply = runtime::request(action)
+                .await
+                .map_err(|error| format!("{error:#}"))?;
+            match &reply {
+                Response::SearchStarted(id) => {
+                    snapshots
+                        .0
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(*id);
+                }
+                Response::Accepted => {
+                    if let Some(id) = released {
+                        snapshots
+                            .0
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .remove(&id);
+                    }
+                }
+                _ => {}
+            }
+            Ok(reply)
+        }
         _ => Err("不是索引操作".into()),
     }
 }
@@ -333,6 +364,7 @@ fn run() -> Result<(), anyhow::Error> {
     let app = tauri::Builder::default()
         .setup(|app| runtime::setup(app.handle()).map_err(Into::into))
         .manage(Samples::default())
+        .manage(SearchSnapshots::default())
         .manage(file_operations::Operations::default())
         .manage(visuals::Visuals::default())
         .on_window_event(|window, event| {
@@ -375,8 +407,28 @@ fn run() -> Result<(), anyhow::Error> {
             edit_samples
         ])
         .build(context)?;
-    app.run(move |_, event| {
+    app.run(move |app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
+            let snapshots = app.state::<SearchSnapshots>();
+            let ids = std::mem::take(&mut *snapshots.0.lock().unwrap_or_else(|e| e.into_inner()));
+            if !ids.is_empty() {
+                tauri::async_runtime::block_on(async {
+                    let _ = tokio::time::timeout(stashfinder_windows::ipc::IO_TIMEOUT, async {
+                        for id in ids {
+                            if stashfinder_windows::ipc::request(
+                                runtime::pipe(),
+                                stashfinder_core::Action::SearchCancel { id },
+                            )
+                            .await
+                            .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    })
+                    .await;
+                });
+            }
             session.take();
         }
     });

@@ -54,7 +54,8 @@ export default function Search({
   assets,
   onBack,
   includePath = true,
-  request,
+  initialText = "",
+  onTextChange,
   active = true,
   onCommands,
   onLocate,
@@ -66,7 +67,8 @@ export default function Search({
   assets?: Asset[];
   onBack?: () => void;
   includePath?: boolean;
-  request?: { text: string; revision: number };
+  initialText?: string;
+  onTextChange?: (text: string) => void;
   active?: boolean;
   onCommands?: (context: FileCommandContext | null) => void;
   onLocate?: (hit: SearchHit, folder?: boolean) => void;
@@ -102,7 +104,7 @@ export default function Search({
     null,
   );
   const suppressClick = useRef(false);
-  const [text, setText] = useState(request?.text || "");
+  const [text, setText] = useState(initialText);
   const [namesOnly, setNamesOnly] = useState(!includePath);
   const [partition, setPartition] = useState("");
   const [options, setOptions] = useState<SearchOptions>(emptyOptions);
@@ -179,13 +181,7 @@ export default function Search({
   useEffect(() => {
     if (active) input.current?.focus();
     else setMenu(null);
-  }, [active, request]);
-  useEffect(() => {
-    if (request) {
-      setText(request.text);
-      setRevision((n) => n + 1);
-    }
-  }, [request]);
+  }, [active]);
   const extensionKey = JSON.stringify([
     ...new Set([
       ...categories
@@ -247,12 +243,21 @@ export default function Search({
     if (relevant) setRefreshWanted((n) => n + 1);
   }, [completedTasks, scopedPartition]);
 
-  function invalidate() {
+  function invalidate(keepCurrent = false) {
     const token = ++sequence.current;
-    const id = pendingId.current ?? queryId.current;
+    const ids = [
+      pendingId.current,
+      keepCurrent ? null : queryId.current,
+    ].filter((id) => id !== null);
     pendingId.current = null;
-    queryId.current = null;
-    return { token, id };
+    if (!keepCurrent) queryId.current = null;
+    return { token, ids };
+  }
+
+  function release(ids: number[]) {
+    return Promise.all(
+      ids.map((id) => indexRequest({ search_cancel: { id } })),
+    );
   }
 
   async function load(token: number, background: boolean) {
@@ -322,7 +327,10 @@ export default function Search({
     }
     if (token !== sequence.current) return;
     pendingId.current = null;
+    const previous = queryId.current;
     queryId.current = id;
+    if (previous !== null && previous !== id)
+      void release([previous]).catch(() => {});
     setTotal(page.total);
     setGroups(page.groups);
     setMissing(page.missing);
@@ -338,9 +346,8 @@ export default function Search({
 
   function fail(token: number, e: unknown, background: boolean) {
     if (token !== sequence.current) return;
-    const { id } = invalidate();
-    if (id !== null)
-      void indexRequest({ search_cancel: { id } }).catch(() => {});
+    const { ids } = invalidate(background);
+    void release(ids).catch(() => {});
     const message = String(e).replace(/^Error: /, "");
     if (background) setRefreshError(message);
     else setError(message);
@@ -371,9 +378,8 @@ export default function Search({
     }, 150);
     return () => {
       window.clearTimeout(timer);
-      const { id } = invalidate();
-      if (id !== null)
-        void indexRequest({ search_cancel: { id } }).catch(() => {});
+      const { ids } = invalidate();
+      void release(ids).catch(() => {});
     };
   }, [queryKey, revision, partitionKey]);
 
@@ -396,8 +402,6 @@ export default function Search({
       }
       handledRefresh.current = refreshWanted;
       const token = ++sequence.current;
-      // The service can invalidate the old ID before the start reply arrives.
-      queryId.current = null;
       setMenu(null);
       setRefreshError("");
       setRefreshing(true);
@@ -472,10 +476,10 @@ export default function Search({
     }
   }
   function cancel() {
-    const { token, id } = invalidate();
+    const { token, ids } = invalidate();
     handledRefresh.current = refreshWanted;
-    if (id !== null)
-      void indexRequest({ search_cancel: { id } }).catch((e) => {
+    if (ids.length)
+      void release(ids).catch((e) => {
         if (token === sequence.current)
           setError(`取消请求失败：${String(e).replace(/^Error: /, "")}`);
       });
@@ -591,12 +595,14 @@ export default function Search({
       <div className="search-toolbar">
         <input
           ref={input}
-          autoFocus
           type="search"
           aria-label="搜索文件或路径"
           placeholder="搜索文件名或路径…"
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            onTextChange?.(e.target.value);
+          }}
         />
         <select
           aria-label="分区范围"
@@ -655,6 +661,15 @@ export default function Search({
       )}
       <div className="search-body" onClick={() => setMenu(null)}>
         <VirtualResults
+          overlay={
+            !busy &&
+            !error &&
+            !total && (
+              <p className="search-empty-overlay" role="status">
+                没有匹配的文件
+              </p>
+            )
+          }
           grid={grid}
           active={active}
           sort={options.sort}
@@ -925,9 +940,6 @@ export default function Search({
           />
         )}
       </div>
-      {!busy && !error && !total && (
-        <p className="search-empty">没有匹配的文件</p>
-      )}
       <FileStatusBar>
         <span className="search-summary" role="status">
           {busy

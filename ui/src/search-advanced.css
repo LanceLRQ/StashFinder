@@ -1,6 +1,20 @@
-.search-app .search-empty {
+.search-result-pane {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.search-empty-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
   margin: 0;
-  padding: 12px;
+  padding: 16px;
+  background: rgb(248 250 252 / 35%);
+  color: #647082;
+  pointer-events: none;
 }
 .search-filters > div {
   width: 360px;

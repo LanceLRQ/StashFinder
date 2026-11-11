@@ -35,15 +35,24 @@ type BrowseTab = {
   focusEntry?: number[];
   view?: FileView;
 };
+type SearchTab = {
+  kind: "search";
+  id: number;
+  title: string;
+  initialText: string;
+  context?: SearchContext;
+  origin: number;
+};
+const searchTitle = (text: string) =>
+  text.trim() ? `搜索：${text.trim()}` : "搜索";
 const pages = {
-  search: { id: 0, title: "搜索", kind: "search" },
   overview: { id: -1, title: "概览", kind: "overview" },
   tasks: { id: -2, title: "任务", kind: "tasks" },
   settings: { id: -3, title: "设置", kind: "settings" },
   development: { id: -4, title: "开发验证", kind: "development" },
 } as const;
-type Tab = BrowseTab | (typeof pages)[keyof typeof pages];
-type AuxiliaryPage = Exclude<keyof typeof pages, "search">;
+type AuxiliaryPage = keyof typeof pages;
+type Tab = BrowseTab | SearchTab | (typeof pages)[AuxiliaryPage];
 const newTab = (id: number): BrowseTab => ({
   kind: "browse",
   id,
@@ -98,14 +107,11 @@ export default function Workspace({
     panels?.overview ? [pages.overview] : [newTab(1)],
   );
   const [active, setActive] = useState<number>(tabs[0].id);
-  const [query, setQuery] = useState({ text: "", revision: 0 });
   const sequence = useRef(1);
   const root = useRef<HTMLDivElement>(null);
   const partitionPicker = useRef<HTMLDialogElement>(null);
-  const returnTo = useRef(active);
   const locations = useRef(new Map<number, DirectoryPage>());
   const searchFocus = useRef(false);
-  const [searchContext, setSearchContext] = useState<SearchContext>();
   const [commands, setCommands] = useState<FileCommandContext | null>(null);
   const currentTab = tabs.find((tab) => tab.id === active);
   const hasFileStatusBar =
@@ -133,20 +139,23 @@ export default function Workspace({
   }, []);
   const activeRef = useRef(active);
   activeRef.current = active;
-  const search = useCallback((text: string) => {
-    if (activeRef.current !== pages.search.id)
-      returnTo.current = activeRef.current;
-    setQuery((q) => ({ text, revision: q.revision + 1 }));
-    setTabs((previous) =>
-      previous.some((tab) => tab.kind === "search")
-        ? previous
-        : [...previous, pages.search],
-    );
-    setActive(0);
+  const search = useCallback((initialText: string, context?: SearchContext) => {
+    const id = ++sequence.current;
+    const tab: SearchTab = {
+      id,
+      kind: "search",
+      initialText,
+      context,
+      title: searchTitle(initialText),
+      origin: activeRef.current,
+    };
+    setTabs((previous) => [...previous, tab]);
+    setActive(id);
   }, []);
+  const searchRevision = useRef(0);
   useEffect(() => {
-    if (request.revision > 0) {
-      setSearchContext(undefined);
+    if (request.revision > searchRevision.current) {
+      searchRevision.current = request.revision;
       search(request.text);
     }
   }, [request, search]);
@@ -222,7 +231,9 @@ export default function Workspace({
       setTabs((previous) =>
         previous.some((t) => t.id === id && t.title !== value)
           ? previous.map((t) =>
-              t.kind === "browse" && t.id === id ? { ...t, title: value } : t,
+              (t.kind === "browse" || t.kind === "search") && t.id === id
+                ? { ...t, title: value }
+                : t,
             )
           : previous,
       ),
@@ -236,6 +247,7 @@ export default function Workspace({
   function close(id: number) {
     if (id === pages.overview.id) return;
     locations.current.delete(id);
+    const closed = tabs.find((t) => t.id === id);
     const remaining = tabs.filter((t) => t.id !== id);
     if (!remaining.length) {
       const next = ++sequence.current;
@@ -245,8 +257,9 @@ export default function Workspace({
       setTabs(remaining);
       if (active === id)
         setActive(
-          id === 0 && remaining.some((t) => t.id === returnTo.current)
-            ? returnTo.current
+          closed?.kind === "search" &&
+            remaining.some((t) => t.id === closed.origin)
+            ? closed.origin
             : remaining[
                 Math.min(
                   tabs.findIndex((t) => t.id === id),
@@ -334,6 +347,10 @@ export default function Workspace({
       }
       if (e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
+        if (e.shiftKey) {
+          if (!e.repeat) search("");
+          return;
+        }
         const input = root.current.querySelector(
           'section:not([hidden]) input[type="search"]',
         ) as HTMLInputElement | null;
@@ -342,11 +359,9 @@ export default function Workspace({
           input.select();
         } else {
           searchFocus.current = true;
-          const file =
-            tabs.find(
-              (tab) => tab.id === returnTo.current && tab.kind === "browse",
-            ) ??
-            tabs.find((tab) => tab.kind === "browse" || tab.kind === "search");
+          const file = [...tabs]
+            .reverse()
+            .find((tab) => tab.kind === "browse" || tab.kind === "search");
           if (file) setActive(file.id);
           else add();
         }
@@ -382,7 +397,7 @@ export default function Workspace({
     }
     document.addEventListener("keydown", keyDown);
     return () => document.removeEventListener("keydown", keyDown);
-  }, [active, tabs, assets, commands, refreshCurrent]);
+  }, [active, tabs, assets, commands, refreshCurrent, search]);
   useEffect(() => {
     root.current
       ?.querySelector('[role="tab"][aria-selected="true"]')
@@ -402,6 +417,11 @@ export default function Workspace({
       accessKey: "f",
       items: [
         { label: "新建浏览标签页", shortcut: "Ctrl+T", run: add },
+        {
+          label: "新建搜索标签页",
+          shortcut: "Ctrl+Shift+F",
+          run: () => search(""),
+        },
         {
           label: "关闭标签页",
           shortcut: "Ctrl+W",
@@ -478,10 +498,7 @@ export default function Workspace({
           role="tab"
           aria-selected={active === tab.id}
           aria-controls={`file-tab-${tab.id}`}
-          onClick={() => {
-            if (tab.id === 0 && active !== 0) returnTo.current = active;
-            setActive(tab.id);
-          }}
+          onClick={() => setActive(tab.id)}
           title={tab.title}
           aria-label={tab.kind === "overview" ? tab.title : undefined}
         >
@@ -636,7 +653,8 @@ export default function Workspace({
                   }}
                   onSearch={(text) => {
                     const page = locations.current.get(tab.id);
-                    setSearchContext(
+                    search(
+                      text,
                       page && tab.partition
                         ? {
                             partition: tab.partition,
@@ -645,7 +663,6 @@ export default function Workspace({
                           }
                         : undefined,
                     );
-                    search(text);
                   }}
                   onTitle={title}
                   onChoose={(partition) => choosePartition(tab.id, partition)}
@@ -654,37 +671,41 @@ export default function Workspace({
             </section>
           );
         })}
-      {tabs.some((tab) => tab.kind === "search") && (
-        <section
-          role="tabpanel"
-          id="file-tab-0"
-          aria-label="搜索"
-          className="workspace-panel"
-          hidden={active !== 0}
-        >
-          {searchReady ? (
-            <Search
-              assets={assets}
-              partitions={assets.map((a) => ({
-                id: a.registration.partition_id,
-                name: a.registration.name,
-              }))}
-              includePath={includePath}
-              request={query}
-              active={visible && active === 0}
-              onCommands={setCommands}
-              onLocate={locate}
-              categories={categories}
-              completedTasks={completedTasks}
-              context={searchContext}
-            />
-          ) : (
-            <p className="browse-message" role="status">
-              正在读取搜索设置…
-            </p>
-          )}
-        </section>
-      )}
+      {tabs
+        .filter((tab): tab is SearchTab => tab.kind === "search")
+        .map((tab) => (
+          <section
+            role="tabpanel"
+            key={tab.id}
+            id={`file-tab-${tab.id}`}
+            aria-label={tab.title}
+            className="workspace-panel"
+            hidden={active !== tab.id}
+          >
+            {searchReady ? (
+              <Search
+                assets={assets}
+                partitions={assets.map((a) => ({
+                  id: a.registration.partition_id,
+                  name: a.registration.name,
+                }))}
+                includePath={includePath}
+                initialText={tab.initialText}
+                onTextChange={(text) => title(tab.id, searchTitle(text))}
+                active={visible && active === tab.id}
+                onCommands={setCommands}
+                onLocate={locate}
+                categories={categories}
+                completedTasks={completedTasks}
+                context={tab.context}
+              />
+            ) : (
+              <p className="browse-message" role="status">
+                正在读取搜索设置…
+              </p>
+            )}
+          </section>
+        ))}
       {panels &&
         (Object.keys(panels) as AuxiliaryPage[]).map((page) => {
           const tab = pages[page];

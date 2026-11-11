@@ -348,7 +348,7 @@ test("directory thumbnail modes preserve focus, selection and the tab's layout",
   fireEvent.change(screen.getByRole("searchbox"), {
     target: { value: "notes" },
   });
-  await screen.findByRole("tab", { name: "搜索" });
+  await screen.findByRole("tab", { name: "搜索：notes" });
   fireEvent.click(menu);
   expect(
     screen
@@ -635,7 +635,7 @@ test.each(["keyboard", "edit"])(
     expect(screen.getByRole("row", { name: /notes.txt/ })).toBeTruthy();
   },
 );
-test("keeps independent directory selection and scroll while a single search tab is reused", async () => {
+test("keeps directory selection and opens an independent search tab for each query", async () => {
   setup();
   choosePartition();
   const first = await screen.findByRole("row", { name: /Films/ });
@@ -645,7 +645,7 @@ test("keeps independent directory selection and scroll while a single search tab
   const list = within(screen.getByRole("tabpanel")).getByLabelText(
     "目录文件列表",
   );
-  list.scrollTop = 123;
+  fireEvent.scroll(list, { target: { scrollTop: 123 } });
   fireEvent.click(screen.getByRole("button", { name: "新建浏览标签页" }));
   choosePartition();
   await screen.findByRole("row", { name: /notes.txt/ });
@@ -667,8 +667,13 @@ test("keeps independent directory selection and scroll while a single search tab
   fireEvent.change(screen.getByRole("searchbox"), {
     target: { value: "other" },
   });
-  expect(screen.getAllByRole("tab", { name: "搜索" })).toHaveLength(1);
-  fireEvent.click(screen.getByRole("button", { name: "关闭搜索标签页" }));
+  expect(screen.getByRole("tab", { name: "搜索：movie" })).toBeTruthy();
+  expect(
+    screen.getByRole("tab", { name: "搜索：other", selected: true }),
+  ).toBeTruthy();
+  fireEvent.click(
+    screen.getByRole("button", { name: "关闭搜索：other标签页" }),
+  );
   expect(
     screen.getByRole("tab", { name: "Films" }).getAttribute("aria-selected"),
   ).toBe("true");
@@ -676,6 +681,121 @@ test("keeps independent directory selection and scroll while a single search tab
     within(screen.getByRole("tabpanel")).getByLabelText("目录文件列表")
       .scrollTop,
   ).toBe(123);
+  fireEvent.click(screen.getByRole("tab", { name: "搜索：movie" }));
+  expect(screen.getByRole("searchbox")).toHaveProperty("value", "movie");
+});
+
+test("keeps each search tab's filters, sorting and scroll while another query runs", async () => {
+  setup();
+  let id = 0;
+  const queries = new Map<number, string>();
+  vi.mocked(invoke).mockImplementation(async (_, args: any) => {
+    const { search_start, search_batch } = args.action;
+    if (search_start) {
+      queries.set(++id, search_start.text);
+      return { kind: "search_started", data: id };
+    }
+    if (search_batch) {
+      const { id: query, offset, limit } = search_batch;
+      const hits = Array.from({ length: limit }, (_, index) => ({
+        partition_id: "p",
+        filesystem_id: "fs",
+        partition_name: "Movies",
+        connection: "offline",
+        mounts: [],
+        generation: 1,
+        revision: 1,
+        partial: false,
+        needs_validation: false,
+        file: {
+          ...row(
+            offset + index + 2,
+            `${queries.get(query)}-${offset + index}.txt`,
+          ),
+          path: `results\\${queries.get(query)}-${offset + index}.txt`,
+        },
+      }));
+      return {
+        kind: "search_page",
+        data: {
+          id: query,
+          done: true,
+          rows: hits,
+          total: 1600,
+          groups: 0,
+          missing: 0,
+          unavailable: [],
+          error: null,
+        },
+      };
+    }
+    return { kind: "accepted" };
+  });
+  fireEvent.change(screen.getByRole("searchbox"), {
+    target: { value: "first" },
+  });
+  await screen.findByText("first-0.txt");
+  fireEvent.change(screen.getByLabelText("分区范围"), {
+    target: { value: "p" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "按大小排序" }));
+  const firstPanel = screen.getByRole("tabpanel");
+  await within(firstPanel).findByText("first-0.txt");
+  const firstResults = within(firstPanel).getByLabelText("搜索结果列表");
+  fireEvent.scroll(firstResults, {
+    target: { scrollTop: 3400, scrollLeft: 120 },
+  });
+  await within(firstPanel).findByText("first-100.txt");
+  const firstQuery = id;
+
+  fireEvent.keyDown(document, { ctrlKey: true, shiftKey: true, key: "F" });
+  fireEvent.change(screen.getByRole("searchbox"), {
+    target: { value: "second" },
+  });
+  await screen.findByText("second-0.txt");
+  expect(screen.getByRole("combobox", { name: "分区范围" })).toHaveProperty(
+    "value",
+    "",
+  );
+  expect(
+    screen
+      .getByRole("columnheader", { name: "名称" })
+      .getAttribute("aria-sort"),
+  ).toBe("ascending");
+  expect(
+    within(screen.getByRole("tabpanel")).getByLabelText("搜索结果列表")
+      .scrollTop,
+  ).toBe(0);
+  const secondQuery = id;
+
+  fireEvent.scroll(firstResults, { target: { scrollTop: 0, scrollLeft: 0 } });
+  fireEvent.click(screen.getByRole("tab", { name: "搜索：first" }));
+  expect(screen.getByRole("searchbox")).toHaveProperty("value", "first");
+  expect(screen.getByRole("combobox", { name: "分区范围" })).toHaveProperty(
+    "value",
+    "p",
+  );
+  expect(
+    screen
+      .getByRole("columnheader", { name: "大小" })
+      .getAttribute("aria-sort"),
+  ).toBe("ascending");
+  expect(firstResults.scrollTop).toBe(3400);
+  expect(firstResults.scrollLeft).toBe(120);
+  expect(id).toBe(secondQuery);
+  fireEvent.scroll(firstResults, { target: { scrollTop: 6800 } });
+  await within(firstPanel).findByText("first-200.txt");
+  fireEvent.click(
+    screen.getByRole("button", { name: "关闭搜索：first标签页" }),
+  );
+  expect(invoke).toHaveBeenCalledWith("index_request", {
+    action: { search_cancel: { id: firstQuery } },
+  });
+  expect(invoke).not.toHaveBeenCalledWith("index_request", {
+    action: { search_cancel: { id: secondQuery } },
+  });
+  fireEvent.click(screen.getByRole("tab", { name: "搜索：second" }));
+  expect(screen.getByRole("searchbox")).toHaveProperty("value", "second");
 });
 test("rejects stale pagination without discarding visible rows and refreshes the same directory", async () => {
   setup();
@@ -750,7 +870,7 @@ test("keeps the search field mounted during IME composition", async () => {
   fireEvent.change(input, { target: { value: "电影" } });
   expect(screen.queryByRole("tab", { name: "搜索" })).toBeNull();
   fireEvent.compositionEnd(input, { data: "电影" });
-  expect(await screen.findByRole("tab", { name: "搜索" })).toBeTruthy();
+  expect(await screen.findByRole("tab", { name: "搜索：电影" })).toBeTruthy();
   expect(screen.getByRole("searchbox")).toHaveProperty("value", "电影");
 });
 

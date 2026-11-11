@@ -90,6 +90,14 @@ test("locates an offline result by filesystem and parent identity", async () => 
   );
 });
 
+test("shows the no-match overlay inside the results area", async () => {
+  mockPage({ ...page, row: null, more: false });
+  render(<Search partitions={[]} />);
+  const message = await screen.findByText("没有匹配的文件");
+  expect(message.getAttribute("role")).toBe("status");
+  expect(message.closest(".search-body")).toBeTruthy();
+});
+
 test("shows offline relative paths, unknown metadata and bounded results without file operations", async () => {
   mockPage(page);
   render(<Search partitions={[]} onBack={() => {}} />);
@@ -374,6 +382,7 @@ test("keeps failed background results retryable and a new query supersedes the r
   expect(screen.getByText("正在搜索…")).toBeTruthy();
   await tick(150);
   expect(fixture.starts.at(-1)).toBe("changed");
+  expect(fixture.cancels).toContain(1);
   expect(fixture.cancels).toContain(3);
   expect(list.scrollTop).toBe(0);
   await tick(600);

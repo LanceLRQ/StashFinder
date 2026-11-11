@@ -203,7 +203,7 @@ test("starts in Home and keeps the query when switching back to search", async (
   fireEvent.click(screen.getByRole("tab", { name: "概览" }));
   fireEvent.click(screen.getByRole("tab", { name: "概览" }));
   expect(screen.getAllByRole("tab", { name: "概览" })).toHaveLength(1);
-  fireEvent.click(screen.getByRole("tab", { name: "搜索" }));
+  fireEvent.click(screen.getByRole("tab", { name: "搜索：aaa bbb" }));
   expect(
     screen.getByRole("searchbox", { name: "搜索文件或路径" }),
   ).toHaveProperty("value", "aaa bbb");

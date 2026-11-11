@@ -151,6 +151,8 @@ export default function DetailsViewport({
   const [top, setTop] = useState(0);
   const [height, setHeight] = useState(initialHeight);
   const [width, setWidth] = useState(0);
+  const savedScroll = useRef({ top: 0, left: 0 });
+  const hidden = useRef(false);
   const rowHeight = grid?.rowHeight ?? layout.rowHeight;
   const itemsPerRow = grid
     ? Math.max(1, Math.floor(width / grid.tileWidth))
@@ -221,7 +223,9 @@ export default function DetailsViewport({
   });
 
   function updatePosition(element: HTMLDivElement, scrolling: boolean) {
+    if (!active) return;
     const { scrollTop, clientHeight } = element;
+    savedScroll.current = { top: scrollTop, left: element.scrollLeft };
     const viewportHeight = clientHeight || height;
     setTop(scrollTop);
     setHeight(viewportHeight);
@@ -273,6 +277,10 @@ export default function DetailsViewport({
     return () => element.removeEventListener("wheel", wheel);
   }, [scale]);
   useLayoutEffect(() => {
+    if (!active) {
+      hidden.current = true;
+      return;
+    }
     const element = ref.current!;
     const old = previous.current;
     previous.current = {
@@ -310,7 +318,11 @@ export default function DetailsViewport({
         geometry,
       ).top;
       anchor.current = { index, physicalTop: element.scrollTop };
+    } else if (hidden.current) {
+      element.scrollTop = savedScroll.current.top;
     }
+    if (hidden.current) element.scrollLeft = savedScroll.current.left;
+    hidden.current = false;
     updatePosition(element, false);
     const item = focused.current;
     if (
@@ -322,6 +334,7 @@ export default function DetailsViewport({
       pendingFocus.current = item.dataset.index;
     }
   }, [
+    active,
     height,
     itemsPerRow,
     overscan,
