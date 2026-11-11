@@ -46,14 +46,27 @@
   background: #c42b1c;
   color: white;
 }
-.workspace-tabs {
+.workspace-tab-strip,
+.workspace-tabs,
+.workspace-tab-track {
   display: flex;
   align-items: end;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+}
+.workspace-tab-strip {
   padding: 10px 4px 0 8px;
+}
+.workspace-tabs,
+.workspace-tab-track {
   gap: 4px;
+}
+.workspace-tab-viewport {
+  min-width: 0;
+  overflow: hidden;
+}
+.workspace-tab-track {
+  position: relative;
+  width: max-content;
 }
 .workspace-tab {
   display: flex;
@@ -100,7 +113,8 @@
   padding: 4px 8px;
   color: #647082;
 }
-.workspace-tabs .tab-new {
+.workspace-tab-strip .tab-new,
+.workspace-tab-strip .tab-scroll {
   display: grid;
   place-items: center;
   flex: 0 0 36px;
@@ -109,6 +123,10 @@
   background: transparent;
   font-size: 20px;
   padding: 0;
+}
+.workspace-tab-strip .tab-scroll {
+  flex-basis: 28px;
+  font-size: 19px;
 }
 .app-menu {
   display: flex;
@@ -415,10 +433,6 @@
 .workspace-panel .search-toolbar select {
   max-width: 155px;
   padding: 7px 8px;
-}
-.workspace-panel .search-summary {
-  margin: 0;
-  white-space: nowrap;
 }
 .workspace-panel .search-results {
   flex: 1;

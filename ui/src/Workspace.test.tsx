@@ -120,6 +120,49 @@ function choosePartition(name = "Movies") {
   fireEvent.click(within(tree).getByRole("button", { name }));
 }
 
+test("only shows tab scroll buttons when tabs overflow and keeps Home available", () => {
+  render(
+    <Workspace
+      assets={[]}
+      includePath
+      request={{ text: "", revision: 0 }}
+      panels={{ overview: <p>概览</p> }}
+    />,
+  );
+  const next = () => screen.queryByRole("button", { name: "向右滚动标签页" });
+  expect(next()).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "新建浏览标签页" }));
+  const tab = screen.getByRole("tab", { name: "浏览", selected: true });
+  const viewport = tab.closest<HTMLElement>(".workspace-tab-viewport")!;
+  Object.defineProperties(viewport, {
+    clientWidth: { configurable: true, value: 160 },
+    scrollWidth: { configurable: true, value: 400 },
+    scrollBy: {
+      value: ({ left }: ScrollToOptions) => {
+        viewport.scrollLeft += left ?? 0;
+        fireEvent.scroll(viewport);
+      },
+    },
+  });
+  fireEvent.resize(window);
+  const previous = screen.getByRole("button", {
+    name: "向左滚动标签页",
+  }) as HTMLButtonElement;
+  expect(previous.disabled).toBe(true);
+  fireEvent.click(next()!);
+  expect(viewport.scrollLeft).toBe(160);
+  expect(previous.disabled).toBe(false);
+  fireEvent.click(previous);
+  expect(viewport.scrollLeft).toBe(0);
+  expect(viewport.contains(screen.getByRole("tab", { name: "概览" }))).toBe(
+    false,
+  );
+  Object.defineProperty(viewport, "clientWidth", { value: 500 });
+  fireEvent.resize(window);
+  expect(next()).toBeNull();
+  expect(previous.isConnected).toBe(false);
+});
+
 test("pins Home first, opens a partition once and returns to Home when it closes", async () => {
   const view = setup();
   const props = {

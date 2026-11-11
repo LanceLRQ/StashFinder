@@ -324,6 +324,11 @@ fn main() {
 
 fn run() -> Result<(), anyhow::Error> {
     let mut context = tauri::generate_context!();
+    let Some(_desktop_instance) =
+        stashfinder_windows::portable::DesktopInstance::acquire(&context.config().identifier)?
+    else {
+        return Ok(());
+    };
     let mut session = runtime::start(context.config_mut())?;
     let app = tauri::Builder::default()
         .setup(|app| runtime::setup(app.handle()).map_err(Into::into))

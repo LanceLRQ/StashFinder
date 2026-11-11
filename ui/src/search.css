@@ -39,12 +39,7 @@
   accent-color: #236856;
 }
 .search-summary {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 16px 0 10px;
-  font-size: 12px;
-  color: #53625d;
+  white-space: nowrap;
 }
 .search-results {
   border: 1px solid #d4d9d2;

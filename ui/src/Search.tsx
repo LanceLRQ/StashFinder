@@ -628,13 +628,6 @@ export default function Search({
           setNamesOnly={setNamesOnly}
         />
         {busy && <button onClick={cancel}>取消搜索</button>}
-        <span className="search-summary" role="status">
-          {busy
-            ? "正在搜索…"
-            : error
-              ? "搜索失败"
-              : `${total.toLocaleString()} 条结果`}
-        </span>
       </div>
       {error && (
         <p role="alert" className="asset-error">
@@ -936,6 +929,13 @@ export default function Search({
         <p className="search-empty">没有匹配的文件</p>
       )}
       <FileStatusBar>
+        <span className="search-summary" role="status">
+          {busy
+            ? "正在搜索…"
+            : error
+              ? "搜索失败"
+              : `${total.toLocaleString()} 条结果`}
+        </span>
         <span>
           {count
             ? `已选择 ${count.toLocaleString()} 项`

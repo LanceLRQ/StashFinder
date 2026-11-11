@@ -1,4 +1,13 @@
-use stashfinder_windows::portable::{Backend, Layout, Process, quote_argument};
+use stashfinder_windows::portable::{Backend, DesktopInstance, Layout, Process, quote_argument};
+
+#[test]
+fn desktop_instance_can_start_again_after_the_last_handle_closes() {
+    let name = format!("io.github.stashfinder.test.{}", std::process::id());
+    let owner = DesktopInstance::acquire(&name).unwrap().unwrap();
+    assert!(DesktopInstance::acquire(&name).unwrap().is_none());
+    drop(owner);
+    assert!(DesktopInstance::acquire(&name).unwrap().is_some());
+}
 
 #[test]
 fn backup_read_privilege_requires_an_existing_elevated_token() {

@@ -33,7 +33,7 @@ Offline records remain searchable after moving to another computer. Connected di
 
 The GUI requires an installed [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/). This lightweight package does not carry a fixed runtime or install one over the network. Install the runtime first if it is missing.
 
-The backend is elevated separately on each run. No Windows service or login startup entry is installed. Its endpoint is tied to this folder and isolated from the installed version. It stops on normal exit or when the GUI process ends. Canceling UAC has the same effect as choosing **Start later**. Unwritable directories and duplicate instances produce errors instead of falling back to another data directory. The application does not grant administrator access on another computer.
+The backend is elevated separately on each run. No Windows service or login startup entry is installed. Its endpoint is tied to this folder and isolated from the installed version. It stops on normal exit or when the GUI process ends. Canceling UAC has the same effect as choosing **Start later**. If the same account launches the desktop application again in the same Windows session, the new process exits. Unwritable directories produce an error and do not fall back to another data directory. The application does not grant administrator access on another computer.
 
 The elevated backend enables the account's existing backup read privilege to enumerate protected directories. It does not grant new account rights, change source file ACLs or enable restore/write privileges. The backend reports an error if system policy has not granted this read privilege.
 

@@ -216,6 +216,38 @@ pub fn is_elevated() -> bool {
     unsafe { IsUserAnAdmin().as_bool() }
 }
 
+pub struct DesktopInstance(HANDLE);
+
+impl DesktopInstance {
+    pub fn acquire(identifier: &str) -> Result<Option<Self>> {
+        use windows::Win32::{
+            Foundation::{ERROR_ALREADY_EXISTS, ERROR_SUCCESS, GetLastError, SetLastError},
+            System::Threading::{CreateMutexExW, SYNCHRONIZATION_SYNCHRONIZE},
+        };
+        let sid = crate::ipc::current_user_sid()?;
+        let name = HSTRING::from(format!(r"Local\{identifier}.Desktop.{sid}"));
+        // SAFETY: The name is NUL-terminated, and the returned handle stays open for the desktop lifetime.
+        unsafe {
+            SetLastError(ERROR_SUCCESS);
+            let instance = Self(
+                CreateMutexExW(None, &name, 0, SYNCHRONIZATION_SYNCHRONIZE.0)
+                    .context("无法创建桌面会话锁")?,
+            );
+            if GetLastError() == ERROR_ALREADY_EXISTS {
+                return Ok(None);
+            }
+            Ok(Some(instance))
+        }
+    }
+}
+
+impl Drop for DesktopInstance {
+    fn drop(&mut self) {
+        // SAFETY: This instance uniquely owns the handle returned by CreateMutexExW.
+        let _ = unsafe { CloseHandle(self.0) };
+    }
+}
+
 pub fn enable_backup_read() -> Result<()> {
     use windows::Win32::{
         Foundation::{ERROR_SUCCESS, GetLastError, LUID, SetLastError},
@@ -253,7 +285,7 @@ pub fn enable_backup_read() -> Result<()> {
             Ok(())
         })();
         CloseHandle(token)?;
-        result.context("无法启用便携后台的备份读取权限")
+        result.context("无法启用索引后台的备份读取权限")
     }
 }
 

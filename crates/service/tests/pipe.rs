@@ -53,6 +53,48 @@ async fn developer_backend_exits_when_its_launcher_closes_stdin() {
 }
 
 #[tokio::test]
+async fn foreground_backends_cannot_share_a_catalog_even_on_different_pipes() {
+    let first = format!(r"\\.\pipe\StashFinder.lock-first-{}", std::process::id());
+    let second = format!(r"\\.\pipe\StashFinder.lock-second-{}", std::process::id());
+    let data = tempfile::tempdir().unwrap();
+    let start = |pipe: &str| {
+        Server(
+            Command::new(env!("CARGO_BIN_EXE_stashfinder-service"))
+                .args(["--foreground", pipe, "--watch-stdin", "--data-dir"])
+                .arg(data.path())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        )
+    };
+    let mut original = start(&first);
+    assert_eq!(status(&first).await.unwrap().process_id, original.0.id());
+    let mut duplicate = start(&second);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        if let Some(exit) = duplicate.0.try_wait().unwrap() {
+            assert!(!exit.success());
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "second backend kept running"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(status(&first).await.unwrap().process_id, original.0.id());
+    drop(original.0.stdin.take());
+    assert!(original.0.wait().unwrap().success());
+    let replacement = start(&second);
+    assert_eq!(
+        status(&second).await.unwrap().process_id,
+        replacement.0.id()
+    );
+}
+
+#[tokio::test]
 async fn connects_to_real_process_rejects_bad_request_and_reconnects() {
     use stashfinder_core::{read_frame, write_frame};
     use tokio::net::windows::named_pipe::ClientOptions;

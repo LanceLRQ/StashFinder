@@ -34,7 +34,6 @@ fn main() -> Result<()> {
             anyhow::ensure!(parent.user_sid()? == owner, "桌面账户与安装账户不匹配");
             storage::use_admin_file_owner()?;
             enable_backup_read()?;
-            let _lock = storage::lock_backend(&root)?;
             run_session(
                 root,
                 INSTALLED_PIPE,
@@ -52,6 +51,11 @@ fn main() -> Result<()> {
         }
         Some("--foreground") => {
             let root = data_root(&args, false)?;
+            if is_elevated() {
+                enable_backup_read()?;
+            }
+            std::fs::create_dir_all(&root)?;
+            let _lock = storage::lock_backend(&root)?;
             let name = args
                 .get(1)
                 .filter(|s| !s.starts_with("--"))
@@ -150,6 +154,8 @@ fn run_session(
     mode: &str,
 ) -> Result<()> {
     anyhow::ensure!(!parent.wait(0)? && session.is_file(), "桌面会话已结束");
+    std::fs::create_dir_all(&root)?;
+    let _lock = storage::lock_backend(&root)?;
     tokio::runtime::Runtime::new()?.block_on(async {
         // Own the endpoint before starting any writer for this portable directory.
         let pipe = create_pipe(endpoint, owner, true)?;
@@ -233,6 +239,7 @@ fn run_service() -> Result<()> {
     let result = (|| -> Result<()> {
         let root = data_root(&args, true)?;
         storage::validate_service_root(&root)?;
+        enable_backup_read()?;
         let _lock = storage::lock_backend(&root)?;
         tokio::runtime::Runtime::new()?.block_on(async {
             let pipe = create_pipe(endpoint, &sid, true)?;

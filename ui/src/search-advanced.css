@@ -103,7 +103,3 @@
 .desktop .workspace-panel .search-toolbar select {
   max-width: 145px;
 }
-.desktop .workspace-panel .search-summary {
-  font-size: 11px;
-  max-width: 110px;
-}

@@ -97,7 +97,7 @@ test("shows offline relative paths, unknown metadata and bounded results without
   expect(screen.getByText("aaa\\movie.txt")).toBeTruthy();
   expect(screen.getByText("离线")).toBeTruthy();
   expect(screen.getAllByText("未知").length).toBeGreaterThan(0);
-  expect(screen.getByText("1 条结果")).toBeTruthy();
+  expect(screen.getByText("1 条结果").closest("footer")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "打开" })).toBeNull();
 });
 

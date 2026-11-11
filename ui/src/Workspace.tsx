@@ -13,6 +13,7 @@ import type { FileView } from "./file-view";
 import Search from "./Search";
 import WindowChrome from "./WindowChrome";
 import WorkspaceIcon from "./WorkspaceIcon";
+import WorkspaceTabs from "./WorkspaceTabs";
 import "./workspace.css";
 import type { Category, SearchContext } from "./search-options";
 import type { DirectoryPage } from "./browse-api";
@@ -467,61 +468,57 @@ export default function Workspace({
       ],
     },
   ];
+  function tabButton(tab: Tab) {
+    return (
+      <div
+        className={`workspace-tab ${active === tab.id ? "is-active" : ""}`}
+        key={tab.id}
+      >
+        <button
+          role="tab"
+          aria-selected={active === tab.id}
+          aria-controls={`file-tab-${tab.id}`}
+          onClick={() => {
+            if (tab.id === 0 && active !== 0) returnTo.current = active;
+            setActive(tab.id);
+          }}
+          title={tab.title}
+          aria-label={tab.kind === "overview" ? tab.title : undefined}
+        >
+          <WorkspaceIcon
+            name={
+              tab.kind === "browse"
+                ? "folder"
+                : tab.kind === "overview"
+                  ? "home"
+                  : tab.kind
+            }
+          />
+          {tab.kind !== "overview" && <span>{tab.title}</span>}
+        </button>
+        {tab.kind !== "overview" && (
+          <button
+            className="tab-close"
+            aria-label={`关闭${tab.title}标签页`}
+            onClick={() => close(tab.id)}
+          >
+            ×
+          </button>
+        )}
+      </div>
+    );
+  }
+  const home = tabs.find((tab) => tab.kind === "overview");
   return (
     <div className="file-workspace" ref={root}>
       <WindowChrome>
-        <div
-          className="workspace-tabs"
-          role="tablist"
-          aria-label="工作区标签页"
+        <WorkspaceTabs
+          active={active}
+          home={home && tabButton(home)}
+          onAdd={add}
         >
-          {tabs.map((tab) => (
-            <div
-              className={`workspace-tab ${active === tab.id ? "is-active" : ""}`}
-              key={tab.id}
-            >
-              <button
-                role="tab"
-                aria-selected={active === tab.id}
-                aria-controls={`file-tab-${tab.id}`}
-                onClick={() => {
-                  if (tab.id === 0 && active !== 0) returnTo.current = active;
-                  setActive(tab.id);
-                }}
-                title={tab.title}
-                aria-label={tab.kind === "overview" ? tab.title : undefined}
-              >
-                <WorkspaceIcon
-                  name={
-                    tab.kind === "browse"
-                      ? "folder"
-                      : tab.kind === "overview"
-                        ? "home"
-                        : tab.kind
-                  }
-                />
-                {tab.kind !== "overview" && <span>{tab.title}</span>}
-              </button>
-              {tab.kind !== "overview" && (
-                <button
-                  className="tab-close"
-                  aria-label={`关闭${tab.title}标签页`}
-                  onClick={() => close(tab.id)}
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          ))}
-          <button
-            className="tab-new"
-            aria-label="新建浏览标签页"
-            title="新建浏览标签页 (Ctrl+T)"
-            onClick={add}
-          >
-            +
-          </button>
-        </div>
+          {tabs.filter((tab) => tab.kind !== "overview").map(tabButton)}
+        </WorkspaceTabs>
       </WindowChrome>
       <AppMenu groups={groups} />
       <dialog
