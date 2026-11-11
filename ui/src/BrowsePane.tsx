@@ -359,29 +359,31 @@ export default function BrowsePane({
       },
     );
   }
-  const partitionSelect = (
-    <select
-      aria-label="浏览分区"
-      value=""
-      onChange={(e) => {
-        const next = e.target.value;
-        if (next === partition) navigate(null);
-        else onChoose(next);
-      }}
-    >
-      <option value="" disabled>
-        {asset?.registration.name ?? "选择分区"}
-      </option>
-      {assets.map(({ registration }) => (
-        <option
-          key={registration.partition_id}
-          value={registration.partition_id}
-        >
-          {registration.name}
-          {registration.partition_id === partition ? "（根目录）" : ""}
-        </option>
-      ))}
-    </select>
+  const partitionTree = tree && (
+    <nav className="directory-tree" aria-label="目录树">
+      {assets.map(({ registration }) => {
+        const current = registration.partition_id === partition;
+        return (
+          <DirectoryTree
+            key={registration.partition_id}
+            partition={registration.partition_id}
+            filesystem={registration.filesystem_id}
+            name={registration.name}
+            activePartition={current}
+            selected={current ? (page?.location ?? null) : null}
+            ancestors={current ? page?.ancestors : undefined}
+            version={
+              current && page
+                ? `${page.generation}:${page.revision}`
+                : undefined
+            }
+            onNavigate={
+              current ? navigate : () => onChoose(registration.partition_id)
+            }
+          />
+        );
+      })}
+    </nav>
   );
   return (
     <div
@@ -425,13 +427,8 @@ export default function BrowsePane({
       </div>
       {!asset ? (
         <div className="browse-body">
-          {tree && <nav className="directory-tree" aria-label="目录树" />}
+          {partitionTree}
           <div className="directory-main">
-            {breadcrumb && assets.length > 0 && (
-              <nav className="breadcrumbs" aria-label="目录位置">
-                {partitionSelect}
-              </nav>
-            )}
             <div className="search-empty">
               {emptyState ?? <p>选择已登记分区以浏览文件</p>}
             </div>
@@ -450,40 +447,7 @@ export default function BrowsePane({
             </p>
           )}
           <div className="browse-body">
-            {tree && (
-              <nav className="directory-tree" aria-label="目录树">
-                {assets.map(({ registration }) =>
-                  registration.partition_id === partition ? (
-                    <DirectoryTree
-                      key={partition}
-                      partition={partition!}
-                      filesystem={filesystem!}
-                      name={registration.name}
-                      selected={page?.location || null}
-                      ancestors={page?.ancestors}
-                      version={
-                        page ? `${page.generation}:${page.revision}` : ""
-                      }
-                      onNavigate={navigate}
-                    />
-                  ) : (
-                    <div
-                      className="tree-row other-partition"
-                      key={registration.partition_id}
-                    >
-                      <button
-                        className="tree-label"
-                        title={registration.name}
-                        onClick={() => onChoose(registration.partition_id)}
-                      >
-                        <span className="file-mark folder" aria-hidden="true" />
-                        {registration.name}
-                      </button>
-                    </div>
-                  ),
-                )}
-              </nav>
-            )}
+            {partitionTree}
             <div className="directory-main">
               {breadcrumb && (
                 <nav className="breadcrumbs" aria-label="目录位置">
@@ -498,7 +462,12 @@ export default function BrowsePane({
                   >
                     ↑
                   </button>
-                  {partitionSelect}
+                  <button
+                    title={asset.registration.name}
+                    onClick={() => navigate(null)}
+                  >
+                    {asset.registration.name}
+                  </button>
                   {page?.ancestors.slice(1).map((a) => (
                     <span key={a.entry.join(",")}>
                       <span aria-hidden="true"> / </span>

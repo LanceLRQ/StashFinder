@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { EntryRef } from "./file-operations";
 import { useFileVisual, useTypeIcon } from "./Visuals";
+import WorkspaceIcon from "./WorkspaceIcon";
 
 export default function FileIcon({
   name,
@@ -53,8 +54,10 @@ export default function FileIcon({
           draggable={false}
           onError={() => setBroken(url)}
         />
+      ) : folder ? (
+        <WorkspaceIcon name="folder" className="folder-placeholder" />
       ) : (
-        <span className={`file-mark ${folder ? "folder" : "file"}`} />
+        <span className="file-mark" />
       )}
     </span>
   );

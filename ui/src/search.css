@@ -84,12 +84,6 @@
   background: #f5f8f6;
   vertical-align: -2px;
 }
-.file-mark.folder {
-  width: 15px;
-  height: 11px;
-  border-color: #a68e46;
-  background: #eee1ae;
-}
 .search-empty {
   padding: 55px 20px;
   text-align: center;

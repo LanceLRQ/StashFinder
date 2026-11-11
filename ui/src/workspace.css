@@ -90,14 +90,7 @@
   white-space: nowrap;
 }
 .workspace-tab svg {
-  width: 16px;
-  height: 16px;
   flex: 0 0 auto;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 .workspace-tab .tab-close {
   padding: 4px 8px;
@@ -188,9 +181,6 @@
     color: GrayText;
   }
 }
-.tree-row.other-partition {
-  padding-left: 24px;
-}
 .browse-body > .search-empty {
   align-items: center;
   justify-content: center;
@@ -258,7 +248,8 @@
   padding: 8px 4px;
 }
 .tree-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
   align-items: center;
   min-width: 0;
 }
@@ -267,18 +258,29 @@
   background: transparent;
   padding: 5px 3px;
   font-size: 13px;
+  line-height: 18px;
+  min-height: 28px;
 }
 .tree-row .tree-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   text-align: left;
+  min-width: 0;
+}
+.tree-label > svg {
+  flex: 0 0 auto;
+  color: #526c83;
+}
+.tree-label > span {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex: 1;
-  min-width: 0;
 }
 .tree-row .tree-expander {
-  width: 24px;
-  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
 }
 .tree-label[aria-current="location"] {
   background: #e7edf4;
@@ -318,8 +320,9 @@
   overflow: hidden;
   vertical-align: middle;
 }
-.breadcrumbs select {
-  max-width: 200px;
+.breadcrumbs > span {
+  display: inline-flex;
+  align-items: center;
 }
 .browse-partitions {
   display: grid;

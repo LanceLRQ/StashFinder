@@ -24,9 +24,11 @@
   width: 28px;
   height: 36px;
 }
-.large-file-icon .file-mark.folder {
-  width: 44px;
-  height: 32px;
+.file-icon .folder-placeholder,
+.thumbnail-art .folder-placeholder {
+  width: 80%;
+  height: 80%;
+  color: #526c83;
 }
 .thumbnail-preview {
   margin: 18px 0;

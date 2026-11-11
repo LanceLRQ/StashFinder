@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { readDirectory, type DirectoryPage, type Ancestor } from "./browse-api";
+import WorkspaceIcon from "./WorkspaceIcon";
 
 export default function DirectoryTree({
   partition,
   filesystem,
   name,
   entry = null,
+  activePartition = true,
   selected,
   ancestors,
   version,
@@ -15,12 +17,14 @@ export default function DirectoryTree({
   filesystem: string;
   name: string;
   entry?: number[] | null;
+  activePartition?: boolean;
   selected: number[] | null;
   onNavigate: (id: number[] | null) => void;
   ancestors?: Ancestor[];
   version?: string;
 }) {
-  const [expanded, setExpanded] = useState(entry === null);
+  const [expanded, setExpanded] = useState(entry === null && activePartition);
+  const open = activePartition && expanded;
   const [page, setPage] = useState<DirectoryPage | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -31,7 +35,7 @@ export default function DirectoryTree({
       setExpanded(true);
   }, [ancestors, entry]);
   useEffect(() => {
-    if (!expanded) return;
+    if (!open) return;
     const token = ++request.current;
     setLoading(true);
     setError("");
@@ -57,7 +61,7 @@ export default function DirectoryTree({
     return () => {
       request.current++;
     };
-  }, [expanded, partition, filesystem, entry, refresh, version]);
+  }, [open, partition, filesystem, entry, refresh, version]);
   async function more() {
     if (!page || page.next === null || loading) return;
     const token = request.current;
@@ -86,27 +90,32 @@ export default function DirectoryTree({
       <div className="tree-row">
         <button
           className="tree-expander"
-          aria-label={`${expanded ? "收起" : "展开"}${name}`}
-          aria-expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
+          aria-label={`${open ? "收起" : "展开"}${name}`}
+          aria-expanded={open}
+          onClick={() => {
+            if (activePartition) setExpanded(!expanded);
+            else onNavigate(null);
+          }}
         >
-          {expanded ? "⌄" : "›"}
+          <WorkspaceIcon name={open ? "chevronDown" : "chevronRight"} />
         </button>
         <button
           className="tree-label"
           title={name}
           aria-current={
-            JSON.stringify(entry || page?.location) === JSON.stringify(selected)
+            activePartition &&
+            JSON.stringify(entry ?? page?.location ?? null) ===
+              JSON.stringify(selected)
               ? "location"
               : undefined
           }
           onClick={() => onNavigate(entry)}
         >
-          <span className="file-mark folder" aria-hidden="true" />
-          {name}
+          <WorkspaceIcon name={entry === null ? "drive" : "folder"} />
+          <span>{name}</span>
         </button>
       </div>
-      {expanded && (
+      {open && (
         <div className="tree-children">
           {error && (
             <div className="tree-error">

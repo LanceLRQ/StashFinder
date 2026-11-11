@@ -11,6 +11,7 @@ import BrowsePane from "./BrowsePane";
 import type { FileView } from "./file-view";
 import Search from "./Search";
 import WindowChrome from "./WindowChrome";
+import WorkspaceIcon from "./WorkspaceIcon";
 import "./workspace.css";
 import type { Category, SearchContext } from "./search-options";
 import { readDirectory, type DirectoryPage } from "./browse-api";
@@ -49,14 +50,6 @@ const newTab = (id: number): BrowseTab => ({
   filesystem: null,
   parent: null,
 });
-const tabIcons: Record<Tab["kind"], string> = {
-  browse: "M2 5h5l2 2h9v10H2z",
-  search: "M14 9a5 5 0 1 1-10 0 5 5 0 0 1 10 0Zm-1 4 5 5",
-  overview: "M3 12h14v5H3z M3 12l3-7h8l3 7 M6 14.5h1",
-  tasks: "M4 4h12v14H4z M7 8h6 M7 12h6",
-  settings: "M3 6h14 M3 14h14 M7 3v6 M13 11v6",
-  development: "m7 5-5 5 5 5 m6-10 5 5-5 5",
-};
 const locationKey = "stashfinder.last-directory";
 function savedLocation() {
   try {
@@ -574,9 +567,15 @@ export default function Workspace({
                 }}
                 title={tab.title}
               >
-                <svg viewBox="0 0 20 20" aria-hidden="true">
-                  <path d={tabIcons[tab.kind]} />
-                </svg>
+                <WorkspaceIcon
+                  name={
+                    tab.kind === "browse"
+                      ? "folder"
+                      : tab.kind === "overview"
+                        ? "drive"
+                        : tab.kind
+                  }
+                />
                 <span>{tab.title}</span>
               </button>
               <button

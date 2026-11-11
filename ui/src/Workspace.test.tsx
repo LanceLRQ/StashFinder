@@ -115,11 +115,75 @@ function setup() {
   );
 }
 
+function choosePartition(name = "Movies") {
+  const tree = screen.getByRole("navigation", { name: "目录树" });
+  fireEvent.click(within(tree).getByRole("button", { name }));
+}
+
+test("lists every partition in a new tab and expands the chosen partition from the tree", async () => {
+  const view = setup();
+  const backup = {
+    ...asset,
+    registration: {
+      ...asset.registration,
+      partition_id: "backup",
+      name: "Backup",
+    },
+  };
+  view.rerender(
+    <Workspace
+      assets={[asset, backup]}
+      includePath
+      request={{ text: "", revision: 0 }}
+      startupReady
+    />,
+  );
+  await screen.findByRole("row", { name: /notes.txt/ });
+  fireEvent.click(screen.getByRole("button", { name: "新建浏览标签页" }));
+  const tree = within(screen.getByRole("navigation", { name: "目录树" }));
+  for (const name of ["Movies", "Backup"]) {
+    expect(
+      tree.getByRole("button", { name }).querySelector("svg"),
+    ).toBeTruthy();
+    expect(
+      tree
+        .getByRole("button", { name: `展开${name}` })
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
+  }
+  expect(screen.queryByRole("combobox", { name: "浏览分区" })).toBeNull();
+  fireEvent.click(tree.getByRole("button", { name: "展开Backup" }));
+  const opened = within(screen.getByRole("navigation", { name: "目录树" }));
+  const folder = await opened.findByRole("button", { name: "Films" });
+  const folderShape = folder.querySelector("svg path")?.getAttribute("d");
+  expect(folderShape).toBeTruthy();
+  expect(folderShape).not.toBe(
+    opened
+      .getByRole("button", { name: "Backup" })
+      .querySelector("svg path")
+      ?.getAttribute("d"),
+  );
+  const listed = await screen.findByRole("row", { name: /Films/ });
+  expect(listed.querySelector(".file-icon svg path")?.getAttribute("d")).toBe(
+    folderShape,
+  );
+  expect(
+    opened.getByRole("button", { name: "收起Backup" }).querySelector("svg"),
+  ).toBeTruthy();
+  fireEvent.click(folder);
+  await screen.findByRole("row", { name: /movie.mkv/ });
+  const breadcrumb = within(
+    screen.getByRole("navigation", { name: "目录位置" }),
+  );
+  fireEvent.click(breadcrumb.getByRole("button", { name: "Backup" }));
+  await screen.findByRole("row", { name: /notes.txt/ });
+  fireEvent.click(opened.getByRole("button", { name: "收起Backup" }));
+  expect(opened.queryByRole("button", { name: "Films" })).toBeNull();
+});
+
 test("directory thumbnail modes preserve focus, selection and the tab's layout", async () => {
   setup();
-  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
-    target: { value: "p" },
-  });
+  choosePartition();
   const row = await screen.findByRole("row", { name: /notes.txt/ });
   row.focus();
   fireEvent.click(row);
@@ -164,9 +228,7 @@ test("directory thumbnail modes preserve focus, selection and the tab's layout",
 }, 15000);
 test("refreshes the current directory once from either workspace entry", async () => {
   setup();
-  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
-    target: { value: "p" },
-  });
+  choosePartition();
   const row = await screen.findByRole("row", { name: /notes.txt/ });
   const reads = () =>
     vi
@@ -199,16 +261,9 @@ test("keeps partition switching reachable when the tree and breadcrumbs are hidd
       request={{ text: "", revision: 0 }}
     />,
   );
-  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
-    target: { value: "p" },
-  });
+  choosePartition();
   await screen.findByRole("row", { name: /notes.txt/ });
-  expect(
-    within(screen.getByRole("navigation", { name: "目录位置" })).getByRole(
-      "combobox",
-      { name: "浏览分区" },
-    ),
-  ).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "浏览分区" })).toBeNull();
   expect(screen.queryByRole("complementary", { name: "预览窗格" })).toBeNull();
   for (const name of ["目录树", "面包屑"]) {
     fireEvent.click(screen.getByRole("button", { name: "查看" }));
@@ -227,9 +282,7 @@ test("keeps partition switching reachable when the tree and breadcrumbs are hidd
 
 test("published index changes refresh the current directory without changing its location", async () => {
   const view = setup();
-  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
-    target: { value: "p" },
-  });
+  choosePartition();
   fireEvent.doubleClick(await screen.findByRole("row", { name: /Films/ }));
   await screen.findByRole("row", { name: /movie.mkv/ });
   vi.mocked(readDirectory).mockClear();
@@ -291,9 +344,7 @@ test.each(["online", "offline"] as const)(
       "true",
     );
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
-    fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
-      target: { value: "p" },
-    });
+    choosePartition();
     const notes = await screen.findByRole("row", { name: /notes.txt/ });
     const films = screen.getByRole("row", { name: /Films/ });
     const list = screen.getByLabelText("目录文件列表");
@@ -413,9 +464,7 @@ test.each(["keyboard", "edit"])(
         />
       </FileOperations>,
     );
-    fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
-      target: { value: "p" },
-    });
+    choosePartition();
     await screen.findByRole("row", { name: /notes.txt/ });
     if (source === "keyboard") {
       fireEvent.keyDown(screen.getByLabelText("目录文件列表"), {
@@ -441,9 +490,7 @@ test.each(["keyboard", "edit"])(
 );
 test("keeps independent directory selection and scroll while a single search tab is reused", async () => {
   setup();
-  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
-    target: { value: "p" },
-  });
+  choosePartition();
   const first = await screen.findByRole("row", { name: /Films/ });
   fireEvent.doubleClick(first);
   const file = await screen.findByRole("row", { name: /movie.mkv/ });
@@ -453,9 +500,7 @@ test("keeps independent directory selection and scroll while a single search tab
   );
   list.scrollTop = 123;
   fireEvent.click(screen.getByRole("button", { name: "新建浏览标签页" }));
-  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
-    target: { value: "p" },
-  });
+  choosePartition();
   await screen.findByRole("row", { name: /notes.txt/ });
   fireEvent.click(screen.getByRole("tab", { name: "Films" }));
   expect(
@@ -491,9 +536,7 @@ test("rejects stale pagination without discarding visible rows and refreshes the
     if (r.offset) throw new Error("目录索引已更新，请刷新");
     return { ...root, next: r.folders_only ? null : 2 };
   });
-  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
-    target: { value: "p" },
-  });
+  choosePartition();
   fireEvent.click(await screen.findByRole("button", { name: "加载更多文件" }));
   expect(await screen.findByRole("alert")).toHaveProperty(
     "textContent",
@@ -508,9 +551,7 @@ test("rejects stale pagination without discarding visible rows and refreshes the
 });
 test("ignores late directory responses and navigates to the nearest surviving ancestor", async () => {
   setup();
-  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
-    target: { value: "p" },
-  });
+  choosePartition();
   fireEvent.doubleClick(await screen.findByRole("row", { name: /Films/ }));
   await screen.findByRole("row", { name: /movie.mkv/ });
   let finish!: (p: DirectoryPage) => void;
@@ -537,9 +578,7 @@ test("ignores late directory responses and navigates to the nearest surviving an
 });
 test("shows offline metadata and allows panes and breadcrumbs to be hidden", async () => {
   setup();
-  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
-    target: { value: "p" },
-  });
+  choosePartition();
   fireEvent.click(await screen.findByRole("row", { name: /notes.txt/ }));
   const toggle = (name: string) => {
     fireEvent.click(screen.getByRole("button", { name: "查看" }));
@@ -569,9 +608,7 @@ test("keeps the search field mounted during IME composition", async () => {
 
 test("keeps multi-selection and location when the partition name and drive letter change", async () => {
   const view = setup();
-  fireEvent.change(screen.getByRole("combobox", { name: "浏览分区" }), {
-    target: { value: "p" },
-  });
+  choosePartition();
   fireEvent.click(await screen.findByRole("row", { name: /Films/ }));
   fireEvent.click(screen.getByRole("row", { name: /notes.txt/ }), {
     ctrlKey: true,
