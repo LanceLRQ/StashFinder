@@ -9,7 +9,7 @@ use std::{
 };
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT},
+        Foundation::{CloseHandle, ERROR_CANCELLED, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT},
         System::Threading::{
             GetProcessId, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
             WaitForSingleObject,
@@ -159,7 +159,7 @@ impl Process {
             )?
         }))
     }
-    pub fn launch_elevated(executable: &Path, args: &[String]) -> Result<Self> {
+    pub fn launch_elevated(executable: &Path, args: &[String]) -> Result<Option<Self>> {
         let _apartment = crate::shell::Apartment::new()?;
         let executable = crate::file_operations::shell_path(executable)?;
         let verb = HSTRING::from("runas");
@@ -181,11 +181,12 @@ impl Process {
         };
         // SAFETY: All strings and the writable result structure outlive ShellExecuteExW.
         // NOCLOSEPROCESS transfers the returned handle to this wrapper.
-        unsafe {
-            ShellExecuteExW(&mut info).context("无法启动索引后台，可能已取消管理员授权")?;
+        match unsafe { ShellExecuteExW(&mut info) } {
+            Err(error) if error.code() == ERROR_CANCELLED.to_hresult() => return Ok(None),
+            result => result.context("无法启动索引后台")?,
         }
         ensure!(!info.hProcess.is_invalid(), "Windows 未返回索引后台进程");
-        Ok(Self(info.hProcess))
+        Ok(Some(Self(info.hProcess)))
     }
     pub fn id(&self) -> u32 {
         // SAFETY: The owned process handle is alive for the duration of this call.
@@ -254,6 +255,47 @@ pub fn enable_backup_read() -> Result<()> {
         CloseHandle(token)?;
         result.context("无法启用便携后台的备份读取权限")
     }
+}
+
+pub fn confirm_index_backend() -> Result<bool> {
+    use windows::{
+        Win32::UI::Controls::{
+            TASKDIALOG_BUTTON, TASKDIALOGCONFIG, TASKDIALOGCONFIG_0, TD_INFORMATION_ICON,
+            TDF_ALLOW_DIALOG_CANCELLATION, TaskDialogIndirect,
+        },
+        core::w,
+    };
+
+    const START: i32 = 100;
+    let buttons = [
+        TASKDIALOG_BUTTON {
+            nButtonID: START,
+            pszButtonText: w!("启动索引后台"),
+        },
+        TASKDIALOG_BUTTON {
+            nButtonID: 101,
+            pszButtonText: w!("稍后启动"),
+        },
+    ];
+    let dialog = TASKDIALOGCONFIG {
+        cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
+        dwFlags: TDF_ALLOW_DIALOG_CANCELLATION,
+        pszWindowTitle: w!("StashFinder"),
+        pszMainInstruction: w!("磁盘索引需要管理员权限"),
+        pszContent: w!("启动后台时，Windows 可能会请求授权。选择稍后启动仍可打开设置。"),
+        Anonymous1: TASKDIALOGCONFIG_0 {
+            pszMainIcon: TD_INFORMATION_ICON,
+        },
+        cButtons: buttons.len() as u32,
+        pButtons: buttons.as_ptr(),
+        nDefaultButton: START,
+        ..Default::default()
+    };
+    let mut selected = 0;
+    // SAFETY: The config, button array, static text and result live through the modal call.
+    unsafe { TaskDialogIndirect(&dialog, Some(&mut selected), None, None) }
+        .context("无法显示索引后台启动提示")?;
+    Ok(selected == START)
 }
 
 pub fn show_error(message: &str) {

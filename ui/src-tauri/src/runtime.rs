@@ -2,11 +2,14 @@ use anyhow::{Context, Result, ensure};
 pub use stashfinder_windows::portable::show_error;
 use stashfinder_windows::{
     ipc,
-    portable::{Layout, Process, is_elevated},
+    portable::{Layout, Process, confirm_index_backend, is_elevated},
 };
 use std::{
     fs::File,
-    sync::OnceLock,
+    sync::{
+        OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tauri::{
@@ -19,6 +22,7 @@ use tauri::{
 static PORTABLE: OnceLock<Option<Layout>> = OnceLock::new();
 static INSTALLED: OnceLock<bool> = OnceLock::new();
 static WINDOWS_SERVICE: OnceLock<bool> = OnceLock::new();
+static BACKEND_DEFERRED: AtomicBool = AtomicBool::new(false);
 pub fn pipe() -> &'static str {
     PORTABLE
         .get()
@@ -39,7 +43,16 @@ fn windows_service() -> bool {
     WINDOWS_SERVICE.get().copied().unwrap_or(false)
 }
 
+fn ensure_backend_requested() -> Result<()> {
+    ensure!(
+        !BACKEND_DEFERRED.load(Ordering::Relaxed),
+        "本次未启动索引后台。退出并重新打开 StashFinder 后可选择启动。"
+    );
+    Ok(())
+}
+
 pub async fn status() -> Result<stashfinder_core::Status> {
+    ensure_backend_requested()?;
     let pid = if windows_service() {
         Some(tokio::task::spawn_blocking(stashfinder_windows::scm::ensure_running).await??)
     } else {
@@ -56,6 +69,7 @@ pub async fn status() -> Result<stashfinder_core::Status> {
 }
 
 pub async fn snapshot() -> Result<stashfinder_core::assets::Snapshot> {
+    ensure_backend_requested()?;
     if windows_service() {
         status().await?;
     }
@@ -63,6 +77,7 @@ pub async fn snapshot() -> Result<stashfinder_core::assets::Snapshot> {
 }
 
 pub async fn request(action: stashfinder_core::Action) -> Result<stashfinder_core::Response> {
+    ensure_backend_requested()?;
     if windows_service() {
         status().await?;
     }
@@ -105,11 +120,24 @@ pub fn configure(config: &mut Config, layout: Option<&Layout>) {
 }
 
 pub struct Session {
+    _backend: Option<Backend>,
     _lock: Option<File>,
+}
+impl Session {
+    fn defer(lock: Option<File>) -> Self {
+        BACKEND_DEFERRED.store(true, Ordering::Relaxed);
+        Self {
+            _backend: None,
+            _lock: lock,
+        }
+    }
+}
+
+struct Backend {
     marker: Option<tempfile::NamedTempFile>,
     process: Process,
 }
-impl Drop for Session {
+impl Drop for Backend {
     fn drop(&mut self) {
         self.marker.take();
         if !matches!(self.process.wait(15_000), Ok(true)) {
@@ -136,9 +164,18 @@ pub fn start(config: &mut Config) -> Result<Option<Session>> {
         !is_elevated(),
         "请以普通权限双击 StashFinder。程序会单独为索引后台申请管理员权限。"
     );
-    let (lock, marker, mode) = if let Some(layout) = &layout {
+    let backend = executable.with_file_name("stashfinder-service.exe");
+    ensure!(
+        backend.is_file(),
+        "缺少 stashfinder-service.exe，请重新安装或完整解压便携包"
+    );
+    let lock = layout.as_ref().map(Layout::lock).transpose()?;
+    if !confirm_index_backend()? {
+        return Ok(Some(Session::defer(lock)));
+    }
+
+    let (marker, mode) = if let Some(layout) = &layout {
         (
-            Some(layout.lock()?),
             tempfile::Builder::new()
                 .prefix("session-")
                 .suffix(".guard")
@@ -147,7 +184,6 @@ pub fn start(config: &mut Config) -> Result<Option<Session>> {
         )
     } else {
         (
-            None,
             tempfile::Builder::new()
                 .prefix("stashfinder-session-")
                 .suffix(".guard")
@@ -155,11 +191,6 @@ pub fn start(config: &mut Config) -> Result<Option<Session>> {
             "desktop_session",
         )
     };
-    let backend = executable.with_file_name("stashfinder-service.exe");
-    ensure!(
-        backend.is_file(),
-        "缺少 stashfinder-service.exe，请重新安装或完整解压便携包"
-    );
     let mut args = if let Some(layout) = &layout {
         vec![
             "--portable".into(),
@@ -172,9 +203,10 @@ pub fn start(config: &mut Config) -> Result<Option<Session>> {
     };
     args.push(std::process::id().to_string());
     args.push(marker.path().to_string_lossy().into_owned());
-    let process = Process::launch_elevated(&backend, &args)?;
-    let session = Session {
-        _lock: lock,
+    let Some(process) = Process::launch_elevated(&backend, &args)? else {
+        return Ok(Some(Session::defer(lock)));
+    };
+    let backend = Backend {
         marker: Some(marker),
         process,
     };
@@ -182,15 +214,18 @@ pub fn start(config: &mut Config) -> Result<Option<Session>> {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         ensure!(
-            !session.process.wait(0)?,
+            !backend.process.wait(0)?,
             "索引后台启动失败。请确认当前账户是安装时的桌面账户，且没有其他索引后台在运行。"
         );
         if let Ok(status) = runtime.block_on(ipc::status(pipe())) {
             ensure!(
-                status.process_id == session.process.id() && status.mode == mode,
+                status.process_id == backend.process.id() && status.mode == mode,
                 "索引后台身份不匹配"
             );
-            return Ok(Some(session));
+            return Ok(Some(Session {
+                _backend: Some(backend),
+                _lock: lock,
+            }));
         }
         ensure!(Instant::now() < deadline, "索引后台启动超时");
         std::thread::sleep(Duration::from_millis(100));
@@ -260,6 +295,31 @@ pub fn app_exit(app: tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deferring_the_backend_preserves_the_portable_lock_and_explains_its_absence() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("StashFinder.exe");
+        std::fs::write(&executable, b"test").unwrap();
+        std::fs::write(root.path().join("portable.json"), br#"{"version":1}"#).unwrap();
+        let layout = Layout::discover(&executable).unwrap().unwrap();
+
+        let session = Session::defer(Some(layout.lock().unwrap()));
+        assert!(layout.lock().is_err());
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let status_error = runtime.block_on(status()).unwrap_err();
+        let snapshot_error = runtime.block_on(snapshot()).unwrap_err();
+        let request_error = runtime
+            .block_on(request(stashfinder_core::Action::Refresh))
+            .unwrap_err();
+        assert!(status_error.to_string().contains("本次未启动索引后台"));
+        assert_eq!(snapshot_error.to_string(), status_error.to_string());
+        assert_eq!(request_error.to_string(), status_error.to_string());
+
+        drop(session);
+        assert!(layout.lock().is_ok());
+    }
+
     #[test]
     fn portable_overrides_every_tauri_directory_and_webview_storage() {
         let root = tempfile::tempdir().unwrap();

@@ -41,7 +41,7 @@ npm --prefix ui run dev:desktop
 
 从仓库根目录运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-installer.ps1`。生成的 NSIS 安装包位于 `target/release/bundle/nsis/`。
 
-安装时保留默认的 `Program Files\StashFinder` 位置。首次安装默认由桌面管理后台，打开时为索引进程确认 UAC，退出后后台随之停止。勾选安装 Windows 服务后，安装器会注册并启动自动运行的 `StashFinder` 服务，关闭界面后服务继续运行。服务停止时，打开界面或在“关于与诊断”重新连接会尝试启动。两种模式下界面都以普通权限运行，共用受保护的 `%ProgramData%\StashFinder` 和原安装账户。
+安装时保留默认的 `Program Files\StashFinder` 位置。首次安装默认由桌面管理后台。打开应用时可选择“启动索引后台”或“稍后启动”。启动时按 Windows 提示确认 UAC，退出应用后后台随之停止。勾选安装 Windows 服务后，安装器会注册并启动自动运行的 `StashFinder` 服务，关闭界面后服务继续运行。服务停止时，打开界面或在“关于与诊断”重新连接会尝试启动。两种模式下界面都以普通权限运行，共用受保护的 `%ProgramData%\StashFinder` 和原安装账户。
 
 退出桌面后重新运行安装包可切换模式。安装器记住上次选择。静默安装用 `/S /SERVICE` 或 `/S /NOSERVICE` 显式指定，单独使用 `/S` 沿用已保存的选择。卸载移除服务注册并保留索引目录。实机验收应分别核对桌面退出后会话后台停止、服务模式下关闭桌面后服务继续运行，以及切换后索引仍可读。
 
