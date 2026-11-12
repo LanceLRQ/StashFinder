@@ -74,6 +74,118 @@ function menu(group: string, action: string) {
   fireEvent.click(screen.getByRole("menuitem", { name: action }));
 }
 
+test("remembers the browse preset and copies it only into new search tabs", async () => {
+  const original = vi.mocked(invoke).getMockImplementation()!;
+  let saved: any = await original("preferences_get");
+  vi.mocked(invoke).mockImplementation(async (command, args: any) => {
+    if (command === "preferences_get") return saved;
+    if (command === "preferences_set") return (saved = args.preferences);
+    return original(command, args);
+  });
+  let desktop = render(<Desktop />);
+  menu("文件", "新建浏览标签页");
+  fireEvent.click(screen.getByRole("button", { name: "查看" }));
+  fireEvent.click(
+    await screen.findByRole("menuitemradio", { name: "筛选器：图片" }),
+  );
+  await waitFor(() => expect(saved.browse_filter).toBe("category:图片"));
+  desktop.unmount();
+  desktop = render(<Desktop />);
+  menu("文件", "新建浏览标签页");
+  fireEvent.click(screen.getByRole("button", { name: "查看" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("menuitemradio", {
+        name: "筛选器：图片",
+        checked: true,
+      }),
+    ).toBeTruthy(),
+  );
+  fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+  menu("文件", "新建搜索标签页");
+  const starts = () =>
+    vi
+      .mocked(invoke)
+      .mock.calls.flatMap(([, args]: any) =>
+        args?.action?.search_start ? [args.action.search_start] : [],
+      );
+  await waitFor(() =>
+    expect(starts().at(-1)?.options.extensions).toContain("jpg"),
+  );
+  const first = screen.getByRole("searchbox", { name: "搜索文件或路径" });
+  fireEvent.change(first, { target: { value: "first" } });
+  fireEvent.click(screen.getByRole("button", { name: /筛选器/ }));
+  let dialog = screen.getByRole("dialog", { name: "筛选器" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "清除筛选" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "应用" }));
+  await waitFor(() =>
+    expect(
+      starts().find((r) => r.text === "first")?.options.extensions,
+    ).toEqual([]),
+  );
+  menu("文件", "新建搜索标签页");
+  await waitFor(() =>
+    expect(starts().at(-1)?.options.extensions).toContain("jpg"),
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "搜索：first" }));
+  fireEvent.click(screen.getByRole("button", { name: /筛选器/ }));
+  dialog = screen.getByRole("dialog", { name: "筛选器" });
+  expect(within(dialog).getByRole("checkbox", { name: "图片" })).toHaveProperty(
+    "checked",
+    false,
+  );
+  expect(saved.browse_filter).toBe("category:图片");
+});
+
+test("saves only reusable conditions and does not apply a draft closed with X", async () => {
+  render(<Desktop />);
+  menu("文件", "新建搜索标签页");
+  await screen.findByText("没有匹配的文件");
+  fireEvent.click(screen.getByRole("button", { name: "筛选器" }));
+  const dialog = within(screen.getByRole("dialog", { name: "筛选器" }));
+  fireEvent.change(dialog.getByLabelText("自定义扩展名"), {
+    target: { value: "pdf" },
+  });
+  fireEvent.change(dialog.getByLabelText("最小字节数"), {
+    target: { value: "100" },
+  });
+  fireEvent.click(dialog.getByRole("checkbox", { name: "仅在线" }));
+  fireEvent.change(dialog.getByLabelText("预设名称"), {
+    target: { value: "大型 PDF" },
+  });
+  fireEvent.click(dialog.getByRole("button", { name: "另存为预设" }));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("preferences_set", {
+      preferences: expect.objectContaining({
+        filter_presets: [
+          expect.objectContaining({
+            name: "大型 PDF",
+            rule: expect.objectContaining({
+              extensions: ["pdf"],
+              size: { min: "100", max: null },
+            }),
+          }),
+        ],
+      }),
+    }),
+  );
+  const saved = vi
+    .mocked(invoke)
+    .mock.calls.find(([command]) => command === "preferences_set")![1] as any;
+  expect(saved.preferences.filter_presets[0].rule).not.toHaveProperty(
+    "online_only",
+  );
+  fireEvent.click(dialog.getByRole("button", { name: "关闭" }));
+  fireEvent.click(screen.getByRole("button", { name: "筛选器" }));
+  const reopened = within(screen.getByRole("dialog", { name: "筛选器" }));
+  expect(reopened.getByLabelText("自定义扩展名")).toHaveProperty("value", "");
+  expect(reopened.getByRole("checkbox", { name: "仅在线" })).toHaveProperty(
+    "checked",
+    false,
+  );
+  expect(reopened.getByRole("option", { name: "大型 PDF" })).toBeTruthy();
+});
+
 test("refreshes the active search from the menu and F5 without intercepting IME", async () => {
   render(<Desktop />);
   fireEvent.change(screen.getByRole("searchbox"), {
@@ -101,7 +213,8 @@ test("refreshes the active search from the menu and F5 without intercepting IME"
   fireEvent.keyDown(input, { key: "F5", isComposing: true });
   expect(screen.queryByRole("button", { name: "取消搜索" })).toBeNull();
   fireEvent.keyDown(input, { key: "F5" });
-  expect(screen.getByRole("button", { name: "取消搜索" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "取消搜索" })).toBeNull();
+  expect(screen.getByText("正在搜索…")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "查看" }));
   expect(screen.getByRole("menuitem", { name: "刷新当前页" })).toHaveProperty(
     "ariaDisabled",
@@ -287,7 +400,11 @@ test("shows Home with legacy preferences and applies the search default", async 
   fireEvent.change(overviewSearch, { target: { value: "test" } });
   fireEvent.submit(overviewSearch.closest("form")!);
   await screen.findByRole("searchbox", { name: "搜索文件或路径" });
-  fireEvent.click(within(screen.getByRole("tabpanel")).getByText("筛选"));
+  fireEvent.click(
+    within(screen.getByRole("tabpanel")).getByRole("button", {
+      name: "筛选器",
+    }),
+  );
   expect(screen.getByRole("checkbox", { name: "仅文件名" })).toHaveProperty(
     "checked",
     true,

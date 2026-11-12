@@ -119,8 +119,9 @@ test("sends filename and partition filters, and distinguishes errors from empty 
     "索引不可用",
   );
   expect(screen.queryByText("没有匹配的文件")).toBeNull();
-  fireEvent.click(screen.getByText("筛选"));
+  fireEvent.click(screen.getByRole("button", { name: "筛选器" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "仅文件名" }));
+  fireEvent.click(screen.getByRole("button", { name: "应用" }));
   fireEvent.change(screen.getByRole("combobox", { name: "分区范围" }), {
     target: { value: "p" },
   });

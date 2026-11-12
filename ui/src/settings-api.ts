@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Category } from "./search-options";
+import type { Category, FilterPreset } from "./search-options";
 
 export type Page = "overview" | "files" | "tasks" | "settings";
 export type Preferences = {
@@ -8,6 +8,8 @@ export type Preferences = {
   start_page: Page;
   include_path: boolean;
   categories?: Category[];
+  filter_presets?: FilterPreset[];
+  browse_filter?: string | null;
 };
 export const defaultPreferences: Preferences = {
   version: 1,

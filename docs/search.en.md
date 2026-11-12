@@ -35,6 +35,8 @@ PCRE2 uses UTF/UCP with per-match limits of 100,000 match steps, depth 128, and 
 
 Selected types combine with OR, then AND with other conditions. Settings → Files and search can add, edit and remove extension categories. Leading dots and case are normalized; names must be unique, and extensions cannot contain paths or wildcards. Categories are stored in the current user's configuration without changing system associations.
 
+The search toolbar's Filter dialog contains built-in file types and personal presets. Save file or folder kind, extensions, size and creation or modification dates as a preset. In the file browser, select a preset from the View menu to filter the current folder's list while keeping the directory tree available. The app remembers that choice and uses it as the default for new searches; each search tab can override or clear it. Closing the dialog discards unapplied search conditions.
+
 A search started from browsing can target its original partition or folder and descendants. Individual partitions, online-only and historical-record filters are also available. Folder scope uses indexed directory IDs; missing directories produce an error instead of a same-name fallback.
 
 ## Duplicate candidates
@@ -55,6 +57,6 @@ A candidate group needs two distinct file objects. Multiple hard links alone do 
 
 Column headers and filters sort the complete result set; unknown numeric values remain last. The UI loads a bounded viewport window instead of creating millions of DOM rows. Ctrl/Shift selection crosses pages, and Ctrl+A selects the entire query result. Context actions can browse a result's parent in a new tab.
 
-Queries can be cancelled and newer requests invalidate older responses. The backend retains index snapshots so updates do not reorder an existing query's pages. Unavailable partitions are listed while others remain searchable; query failure and an empty result are distinct.
+Changing the query, applying new conditions or closing a search tab cancels the replaced query and ignores its old responses. The backend retains index snapshots so updates do not reorder an existing query's pages. Unavailable partitions are listed while others remain searchable; query failure and an empty result are distinct.
 
 References: [Everything searching](https://www.voidtools.com/support/everything/searching/), [PCRE2 patterns](https://www.pcre.org/current/doc/html/pcre2pattern.html). Measurements are in the [query baseline](query-performance.en.md).

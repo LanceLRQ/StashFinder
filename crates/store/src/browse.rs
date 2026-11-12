@@ -1,8 +1,50 @@
-use crate::search::{decode_name, decode_time, extension};
+use crate::search::{decode_name, decode_time, decode_time_value, extension};
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, functions::FunctionFlags, params};
-use stashfinder_core::{MAX_FRAME, browse::*, index::SearchRow};
+use stashfinder_core::{
+    MAX_FRAME,
+    browse::*,
+    index::SearchRow,
+    search::{FileFilter, Record},
+};
 use std::{collections::HashSet, path::Path};
+
+pub(crate) fn filter_clause(db: &Connection, rule: Option<&FileFilter>) -> Result<&'static str> {
+    let Some(rule) = rule else {
+        return Ok("");
+    };
+    let filter = rule.compile()?;
+    let match_extension = !rule.extensions.is_empty();
+    let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
+    db.create_scalar_function("sf_matches", 5, flags, move |ctx| {
+        let sql_error =
+            |e: anyhow::Error| rusqlite::Error::UserFunctionError(e.into_boxed_dyn_error());
+        let folded_name = if match_extension {
+            decode_name(ctx.get_raw(0).as_blob()?)
+                .map_err(sql_error)?
+                .to_lowercase()
+        } else {
+            String::new()
+        };
+        let kind: String = ctx.get(1)?;
+        filter
+            .matches_record(
+                &Record {
+                    name: "",
+                    folded_name: &folded_name,
+                    parent: "",
+                    folded_parent: "",
+                    kind: &kind,
+                    size: ctx.get::<Option<i64>>(2)?.map(|size| size as u64),
+                    created: decode_time_value(ctx.get(3)?).map_err(sql_error)?,
+                    modified: decode_time_value(ctx.get(4)?).map_err(sql_error)?,
+                },
+                &[],
+            )
+            .map_err(sql_error)
+    })?;
+    Ok(" AND sf_matches(p.name,o.kind,o.size,o.created,o.modified)")
+}
 
 /// Read only the local catalog. One SQLite snapshot covers the version, ancestors and children.
 pub fn read(path: &Path, request: &DirectoryRequest) -> Result<DirectoryPage> {
@@ -35,6 +77,7 @@ pub fn read(path: &Path, request: &DirectoryRequest) -> Result<DirectoryPage> {
             bytes
         }))
     })?;
+    let filter_clause = filter_clause(&db, request.filter.as_deref())?;
     let tx = db.transaction()?;
     ensure!(
         matches!(
@@ -112,8 +155,15 @@ pub fn read(path: &Path, request: &DirectoryRequest) -> Result<DirectoryPage> {
         .map(|a| a.name.as_str())
         .collect::<Vec<_>>()
         .join("\\");
+    let children = format!(
+        "FROM paths p JOIN objects o ON o.generation=p.generation AND o.id=p.object WHERE p.generation=?1 AND p.parent=?2 AND (?3=0 OR o.kind='folder'){filter_clause}"
+    );
     let mut page = DirectoryPage {
-        total:usize::try_from(tx.query_row("SELECT count(*) FROM paths p JOIN objects o ON o.generation=p.generation AND o.id=p.object WHERE p.generation=?1 AND p.parent=?2 AND (?3=0 OR o.kind='folder')",params![generation,location,request.folders_only],|r|r.get::<_,i64>(0))?)?,
+        total: usize::try_from(tx.query_row(
+            &format!("SELECT count(*) {children}"),
+            params![generation, location, request.folders_only],
+            |r| r.get::<_, i64>(0),
+        )?)?,
         filesystem_id: request.filesystem_id.clone(),
         generation: generation.to_string(),
         revision: revision.to_string(),
@@ -142,7 +192,7 @@ pub fn read(path: &Path, request: &DirectoryRequest) -> Result<DirectoryPage> {
     } else {
         "ASC"
     };
-    let mut statement=tx.prepare(&format!("SELECT p.id,p.object,p.name,o.kind,o.size,o.created,o.modified,o.attributes FROM paths p JOIN objects o ON o.generation=p.generation AND o.id=p.object WHERE p.generation=?1 AND p.parent=?2 AND (?3=0 OR o.kind='folder') ORDER BY o.kind DESC,{field} {direction},p.id LIMIT 101 OFFSET ?4"))?;
+    let mut statement=tx.prepare(&format!("SELECT p.id,p.object,p.name,o.kind,o.size,o.created,o.modified,o.attributes {children} ORDER BY o.kind DESC,{field} {direction},p.id LIMIT 101 OFFSET ?4"))?;
     let mut rows = statement.query(params![
         generation,
         location,

@@ -25,6 +25,7 @@ import {
   type EntryRef,
 } from "./file-operations";
 import type { FileRow } from "./browse-api";
+import type { FileFilter } from "./search-options";
 
 export default function BrowsePane({
   id,
@@ -44,6 +45,7 @@ export default function BrowsePane({
   onCommands,
   view,
   onView,
+  filter,
 }: {
   id: number;
   asset?: Asset;
@@ -67,6 +69,7 @@ export default function BrowsePane({
   view: FileView;
   onView: (view: FileView) => void;
   emptyState?: ReactNode;
+  filter?: FileFilter;
 }) {
   const [parent, setParent] = useState(initialParent);
   const operations = useFileOperations();
@@ -111,9 +114,20 @@ export default function BrowsePane({
   }, [id, page, partition, active, onLocation]);
   currentPage.current = page;
   const parentKey = JSON.stringify(parent);
+  const filterKey = filter ? JSON.stringify(filter) : "";
+  const appliedFilter = useRef(filterKey);
   useEffect(() => {
     if (!partition || !filesystem) return;
     const token = ++request.current;
+    const rule = filterKey ? (JSON.parse(filterKey) as FileFilter) : undefined;
+    if (appliedFilter.current !== filterKey) {
+      setPage(null);
+      setSelection([]);
+      setAllSelected(false);
+      setEditing(null);
+      setMenu(null);
+      setNotice("");
+    }
     setBusy(true);
     setError("");
     async function load() {
@@ -124,6 +138,7 @@ export default function BrowsePane({
           filesystem_id: filesystem!,
           parent: JSON.parse(parentKey),
           ...(sort && { sort }),
+          ...(rule && { filter: rule }),
         });
       } catch (e) {
         if (token !== request.current) return;
@@ -138,6 +153,7 @@ export default function BrowsePane({
               filesystem_id: filesystem!,
               parent: ancestor.entry,
               ...(sort && { sort }),
+              ...(rule && { filter: rule }),
             });
             break;
           } catch (fallbackError) {
@@ -163,6 +179,7 @@ export default function BrowsePane({
         setNotice("");
       }
       appliedSort.current = sort;
+      appliedFilter.current = filterKey;
       setPage(result);
       if (!previous)
         setSelection((ids) =>
@@ -184,7 +201,7 @@ export default function BrowsePane({
     return () => {
       request.current++;
     };
-  }, [partition, filesystem, parentKey, refresh, sort]);
+  }, [partition, filesystem, parentKey, refresh, sort, filterKey]);
   useEffect(() => {
     onTitle(
       id,
@@ -235,6 +252,7 @@ export default function BrowsePane({
             kind: "directory",
             context: ref,
             all: override ? false : allSelected,
+            ...(!override && allSelected && filter && { filter }),
           },
           entries:
             override ?? selection.map((key) => key.split(",").map(Number)),
@@ -353,7 +371,13 @@ export default function BrowsePane({
     });
   }
   async function more() {
-    if (!page || page.next === null || busy || appliedSort.current !== sort)
+    if (
+      !page ||
+      page.next === null ||
+      busy ||
+      appliedSort.current !== sort ||
+      appliedFilter.current !== filterKey
+    )
       return;
     const token = request.current;
     setBusy(true);
@@ -367,6 +391,7 @@ export default function BrowsePane({
       revision: page.revision,
       offset: page.next,
       ...(sort && { sort }),
+      ...(filter && { filter }),
     }).then(
       (value) => {
         if (token === request.current) {

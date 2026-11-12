@@ -1,4 +1,5 @@
 use crate::index::SearchRow;
+use crate::search::FileFilter;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
@@ -34,6 +35,8 @@ pub struct DirectoryRequest {
     pub folders_only: bool,
     #[serde(default)]
     pub sort: DirectorySort,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<Box<FileFilter>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

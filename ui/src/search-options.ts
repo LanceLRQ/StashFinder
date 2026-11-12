@@ -45,19 +45,81 @@ export const defaultCategories: Category[] = [
   { name: "程序", extensions: ["exe", "msi", "dll", "bat", "cmd", "ps1"] },
 ];
 export type Range = { min: string | null; max: string | null };
+export type FileFilter = {
+  extensions: string[];
+  include_folders: boolean;
+  kind: "file" | "folder" | null;
+  size: Range;
+  created: Range;
+  modified: Range;
+};
+export type FilterPreset = { id: string; name: string; rule: FileFilter };
+export type FilterSelection = {
+  rule: FileFilter;
+  types: string[];
+  custom: string;
+  id?: string;
+};
+export const noPresets: FilterPreset[] = [];
+export const emptyFileFilter: FileFilter = {
+  extensions: [],
+  include_folders: false,
+  kind: null,
+  size: { min: null, max: null },
+  created: { min: null, max: null },
+  modified: { min: null, max: null },
+};
+export const noFilter: FilterSelection = {
+  rule: emptyFileFilter,
+  types: [],
+  custom: "",
+};
+export const hasFileFilter = (rule: FileFilter) =>
+  rule.extensions.length > 0 ||
+  rule.kind !== null ||
+  [rule.size, rule.created, rule.modified].some((r) => r.min || r.max);
+
+export function selectFilter(
+  id: string | null,
+  categories: Category[],
+  presets: FilterPreset[],
+): FilterSelection {
+  const preset = presets.find((p) => p.id === id);
+  if (preset) {
+    return {
+      id: preset.id,
+      rule: preset.rule,
+      types:
+        preset.rule.include_folders || preset.rule.kind === "folder"
+          ? ["@folder"]
+          : [],
+      custom: preset.rule.extensions.join(","),
+    };
+  }
+  if (id === "@folder") {
+    return {
+      ...noFilter,
+      types: [id],
+      rule: { ...emptyFileFilter, kind: "folder" },
+    };
+  }
+  const category = categories.find((c) => `category:${c.name}` === id);
+  return category
+    ? {
+        ...noFilter,
+        types: [`category:${category.name}`],
+        rule: { ...emptyFileFilter, extensions: category.extensions },
+      }
+    : noFilter;
+}
 export type SearchContext = {
   partition: string;
   entry: number[];
   name: string;
 };
-export type SearchOptions = {
+export type SearchOptions = FileFilter & {
   case_sensitive: boolean;
   mode: string;
-  extensions: string[];
-  kind: string | null;
-  size: Range;
-  created: Range;
-  modified: Range;
   online_only: boolean;
   include_history: boolean;
   duplicate: string[];
@@ -66,13 +128,9 @@ export type SearchOptions = {
   scope: { partition_id: string; entry: number[]; recursive: boolean } | null;
 };
 export const emptyOptions: SearchOptions = {
+  ...emptyFileFilter,
   case_sensitive: false,
   mode: "contains",
-  extensions: [],
-  kind: null,
-  size: { min: null, max: null },
-  created: { min: null, max: null },
-  modified: { min: null, max: null },
   online_only: false,
   include_history: false,
   duplicate: [],

@@ -81,7 +81,7 @@ fn previous_schema_text_records_remain_readable_without_migrating_offline_data()
     };
     assert!(file_operations::record(&path, &root).unwrap().folder);
     assert_eq!(
-        file_operations::directory_refs(&path, &root, true)
+        file_operations::directory_refs(&path, &root, true, None)
             .unwrap()
             .len(),
         2

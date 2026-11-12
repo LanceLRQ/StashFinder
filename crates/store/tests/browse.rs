@@ -11,7 +11,127 @@ fn request() -> DirectoryRequest {
         offset: 0,
         folders_only: false,
         sort: Default::default(),
+        filter: None,
     }
+}
+
+#[test]
+fn filters_direct_children_before_count_sort_and_paging_with_search_semantics() {
+    use stashfinder_core::search::{Query, QueryOptions};
+    use stashfinder_store::search::{
+        SearchIndex,
+        query::{ResultSet, Source},
+    };
+    use std::sync::{Arc, atomic::AtomicBool};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("filtered.sqlite");
+    let mut db = Volume::create(&path, r#"{"filesystem_id":"fs","partition_id":"p"}"#).unwrap();
+    let g = db.begin_generation().unwrap();
+    let objects = (0..=242u8)
+        .map(|id| Object {
+            identity: None,
+            id: vec![id],
+            source: "scan".into(),
+            kind: if id == 0 || id == 241 {
+                "folder"
+            } else {
+                "file"
+            }
+            .into(),
+            size: (id % 19 != 0).then_some(i64::from(id)),
+            created: Some(u64::from(id).to_le_bytes()),
+            modified: None,
+            attributes: 0,
+        })
+        .collect::<Vec<_>>();
+    let entries = (0..=242u8)
+        .map(|id| Entry {
+            id: vec![id],
+            object: vec![id],
+            parent: (id != 0).then_some(vec![if id == 242 { 241 } else { 0 }]),
+            name: format!("file-{id:03}.{}", if id % 2 == 0 { "JPG" } else { "txt" })
+                .encode_utf16()
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    db.write_batch(g, &objects, &entries, &[], None).unwrap();
+    db.complete(g).unwrap();
+    db.publish_snapshot(g).unwrap();
+
+    let filter = serde_json::json!({"extensions":["jpg"],"kind":"file","size":{"min":"8","max":null},"created":{"min":"10","max":null}});
+    let mut input = serde_json::to_value(request()).unwrap();
+    input["filter"] = filter.clone();
+    let mut req: DirectoryRequest = serde_json::from_value(input).unwrap();
+    let first = browse::read(&path, &req).unwrap();
+    req.generation = Some(first.generation.clone());
+    req.revision = Some(first.revision.clone());
+    req.offset = first
+        .next
+        .expect("matching children spill into the next page");
+    let last = browse::read(&path, &req).unwrap();
+    let actual = first
+        .entries
+        .iter()
+        .chain(&last.entries)
+        .map(|r| r.entry[0])
+        .collect::<Vec<_>>();
+    let expected = (10..=240u8)
+        .filter(|id| id % 2 == 0 && id % 19 != 0)
+        .collect::<Vec<_>>();
+    assert_eq!(actual, expected);
+    assert_eq!(
+        (first.total, last.total, last.next),
+        (expected.len(), expected.len(), None)
+    );
+
+    let mut options: QueryOptions = serde_json::from_value(filter).unwrap();
+    options.scope = Some(stashfinder_core::search::Scope {
+        partition_id: "p".into(),
+        entry: vec![0],
+        recursive: false,
+    });
+    let query = Query::compile("", false, &options).unwrap();
+    let search = ResultSet::run(
+        vec![Source {
+            id: "p".into(),
+            name: "P".into(),
+            filesystem: "fs".into(),
+            connection: "offline".into(),
+            mounts: vec![],
+            index: Arc::new(SearchIndex::load(&db).unwrap().unwrap()),
+            needs_validation: false,
+        }],
+        &query,
+        &options,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let hits = search
+        .page(0, 100)
+        .unwrap()
+        .into_iter()
+        .chain(search.page(100, 100).unwrap())
+        .map(|r| r.file.entry[0])
+        .collect::<Vec<_>>();
+    assert_eq!(actual, hits);
+    let selection = stashfinder_store::file_operations::directory_refs(
+        &path,
+        &stashfinder_core::file_operations::EntryRef {
+            partition_id: "p".into(),
+            filesystem_id: "fs".into(),
+            generation: first.generation,
+            revision: first.revision,
+            entry: vec![0],
+        },
+        true,
+        req.filter.as_deref(),
+    )
+    .unwrap();
+    assert_eq!(
+        selection.iter().map(|row| row.entry[0]).collect::<Vec<_>>(),
+        expected
+    );
 }
 
 #[test]

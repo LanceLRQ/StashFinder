@@ -91,18 +91,23 @@ export default function Desktop() {
     };
   }, []);
   async function save(next: Preferences) {
-    if (saveLock.current) return;
+    if (saveLock.current) return false;
     saveLock.current = true;
     setSaving(true);
-    await writePreferences(next).then(
+    const ok = await writePreferences(next).then(
       (value) => {
         setPreferences(value);
         setPreferenceError("");
+        return true;
       },
-      (e) => setPreferenceError(`设置未保存：${String(e)}`),
+      (e) => {
+        setPreferenceError(`设置未保存：${String(e)}`);
+        return false;
+      },
     );
     setSaving(false);
     saveLock.current = false;
+    return ok;
   }
 
   return (
@@ -113,6 +118,15 @@ export default function Desktop() {
             assets={assets}
             includePath={preferences.include_path}
             categories={preferences.categories}
+            browseFilter={preferences.browse_filter}
+            filterPresets={preferences.filter_presets}
+            onBrowseFilter={(id) =>
+              void save({ ...preferences, browse_filter: id })
+            }
+            onSavePresets={(filter_presets) =>
+              save({ ...preferences, filter_presets })
+            }
+            savingFilters={saving || !loaded}
             request={searchRequest}
             searchReady={loaded}
             browseRequest={browseRequest}
@@ -179,7 +193,9 @@ export default function Desktop() {
                 <Settings
                   preferences={preferences}
                   saving={saving || !loaded}
-                  onSave={save}
+                  onSave={async (next) => {
+                    await save(next);
+                  }}
                   tasks={tasks.data}
                   taskError={tasks.error}
                   onTasksRefresh={tasks.refresh}

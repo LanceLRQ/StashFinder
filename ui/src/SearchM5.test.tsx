@@ -196,6 +196,22 @@ test("frames an unloaded million-result window and blocks an oversized operation
   const list = screen.getByLabelText("搜索结果列表");
   const view = within(list);
   await view.findByText("file-0.txt", {}, { timeout: 5000 });
+  fireEvent.click(screen.getByRole("button", { name: "筛选器" }));
+  const dialog = screen.getByRole("dialog", { name: "筛选器" });
+  fireEvent.change(within(dialog).getByLabelText("自定义扩展名"), {
+    target: { value: "txt" },
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "应用" }));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("index_request", {
+      action: {
+        search_start: expect.objectContaining({
+          options: expect.objectContaining({ extensions: ["txt"] }),
+        }),
+      },
+    }),
+  );
+  await view.findByText("file-0.txt", {}, { timeout: 5000 });
   const height = 500;
   Object.defineProperties(list, {
     clientWidth: { value: 704 },
@@ -391,11 +407,14 @@ function mock(connection = "offline", total = 10_000_000) {
 test("uses the same backend options for type, duplicates and match settings", async () => {
   mock();
   render(<Search partitions={[]} />);
-  fireEvent.click(screen.getByText("筛选"));
+  fireEvent.click(screen.getByRole("button", { name: "筛选器" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "图片" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "文件夹" }));
   fireEvent.change(screen.getByLabelText("重复项"), {
     target: { value: "name;size" },
   });
   fireEvent.click(screen.getByLabelText("区分大小写"));
+  fireEvent.click(screen.getByRole("button", { name: "应用" }));
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("index_request", {
       action: {
@@ -403,6 +422,8 @@ test("uses the same backend options for type, duplicates and match settings", as
           options: expect.objectContaining({
             case_sensitive: true,
             duplicate: ["name", "size"],
+            extensions: expect.arrayContaining(["jpg"]),
+            include_folders: true,
           }),
         }),
       },
@@ -573,7 +594,7 @@ test("copies the full selection descriptor instead of the visible result cache",
     }),
   );
 });
-test("reports a failed cancellation request without an unhandled rejection", async () => {
+test("a failed automatic cancellation does not prevent the replacement search", async () => {
   vi.mocked(invoke).mockImplementation(async (_, args: any) => {
     if (args.action.search_start) return { kind: "search_started", data: 1 };
     if (args.action.search_batch) return new Promise(() => {});
@@ -586,10 +607,15 @@ test("reports a failed cancellation request without an unhandled rejection", asy
       action: { search_batch: { id: 1, offset: 0, limit: 32 } },
     }),
   );
-  fireEvent.click(screen.getByText("取消搜索"));
+  expect(screen.queryByRole("button", { name: "取消搜索" })).toBeNull();
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "new" } });
   await waitFor(() =>
-    expect(screen.getByRole("alert").textContent).toBe(
-      "取消请求失败：后台连接已断开",
-    ),
+    expect(invoke).toHaveBeenCalledWith("index_request", {
+      action: { search_start: expect.objectContaining({ text: "new" }) },
+    }),
   );
+  expect(invoke).toHaveBeenCalledWith("index_request", {
+    action: { search_cancel: { id: 1 } },
+  });
+  expect(screen.queryByRole("alert")).toBeNull();
 });

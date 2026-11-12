@@ -125,7 +125,11 @@ impl Selection {
         );
         let catalog = Catalog::read(&self.root)?;
         let directory = match &origin {
-            SelectionOrigin::Directory { context, all } => {
+            SelectionOrigin::Directory {
+                context,
+                all,
+                filter,
+            } => {
                 let registration = catalog.get(&context.partition_id)?;
                 ensure!(
                     registration.filesystem_id == context.filesystem_id,
@@ -139,7 +143,12 @@ impl Selection {
                 };
                 ensure!(parent.folder, "所选条目不是目录");
                 if *all {
-                    file_operations::directory_refs(&path, context, records_only)?
+                    file_operations::directory_refs(
+                        &path,
+                        context,
+                        records_only,
+                        filter.as_deref(),
+                    )?
                 } else {
                     vec![]
                 }
@@ -224,7 +233,7 @@ impl Selection {
             return Ok(rows.len());
         }
         let rows = match &slot.origin {
-            SelectionOrigin::Directory { context, all } => {
+            SelectionOrigin::Directory { context, all, .. } => {
                 if *all {
                     slot.directory
                         .iter()

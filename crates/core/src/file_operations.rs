@@ -42,8 +42,16 @@ pub const MAX_SELECTED: usize = 10_000;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SelectionOrigin {
-    Directory { context: EntryRef, all: bool },
-    Search { id: u64, range: Option<[usize; 2]> },
+    Directory {
+        context: EntryRef,
+        all: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filter: Option<Box<crate::search::FileFilter>>,
+    },
+    Search {
+        id: u64,
+        range: Option<[usize; 2]>,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

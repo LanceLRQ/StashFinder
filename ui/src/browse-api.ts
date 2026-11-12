@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { SearchHit } from "./index-api";
+import type { FileFilter } from "./search-options";
 
 export type FileRow = SearchHit["file"];
 export type Ancestor = { entry: number[]; name: string };
@@ -25,6 +26,7 @@ export type DirectoryRequest = {
   offset?: number;
   folders_only?: boolean;
   sort?: DirectorySort;
+  filter?: FileFilter;
 };
 export type DirectorySortField =
   | "name"

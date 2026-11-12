@@ -11,7 +11,12 @@ export type EntryRef = {
   entry: number[];
 };
 export type SelectionOrigin =
-  | { kind: "directory"; context: EntryRef; all: boolean }
+  | {
+      kind: "directory";
+      context: EntryRef;
+      all: boolean;
+      filter?: import("./search-options").FileFilter;
+    }
   | { kind: "search"; id: number; range: [number, number] | null };
 export type SelectionInput = {
   origin: SelectionOrigin;

@@ -180,8 +180,8 @@ impl SearchIndex {
                         "file"
                     },
                     size: row.get::<_, Option<i64>>(4)?.map(|n| n as u64),
-                    created: decode_time(row.get(5)?)?.map(|s| s.parse()).transpose()?,
-                    modified: decode_time(row.get(6)?)?.map(|s| s.parse()).transpose()?,
+                    created: decode_time_value(row.get(5)?)?,
+                    modified: decode_time_value(row.get(6)?)?,
                     attributes: row.get(7)?,
                 },
             });
@@ -262,13 +262,16 @@ pub(crate) fn decode_name(bytes: &[u8]) -> Result<String> {
 }
 
 pub(crate) fn decode_time(bytes: Option<Vec<u8>>) -> Result<Option<String>> {
+    Ok(decode_time_value(bytes)?.map(|value| value.to_string()))
+}
+
+pub(crate) fn decode_time_value(bytes: Option<Vec<u8>>) -> Result<Option<u64>> {
     bytes
         .map(|b| {
             Ok(u64::from_le_bytes(
                 b.try_into()
                     .map_err(|_| anyhow::anyhow!("FILETIME 长度无效"))?,
-            )
-            .to_string())
+            ))
         })
         .transpose()
 }

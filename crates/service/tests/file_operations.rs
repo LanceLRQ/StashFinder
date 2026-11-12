@@ -14,6 +14,7 @@ fn visual_inspection_keeps_offline_identity_and_does_not_replace_an_operation_se
             SelectionOrigin::Directory {
                 context: context.clone(),
                 all: false,
+                filter: None,
             },
             &snapshot,
         )
@@ -139,6 +140,7 @@ fn fixture_with(count: u32, long: bool) -> (tempfile::TempDir, Indexes, Snapshot
             offset: 0,
             folders_only: false,
             sort: Default::default(),
+            filter: None,
         },
     )
     .unwrap();
@@ -171,6 +173,7 @@ fn an_existing_snapshot_remains_usable_during_background_asset_refresh() {
             SelectionOrigin::Directory {
                 context: context.clone(),
                 all: true,
+                filter: None,
             },
             &snapshot,
         )
@@ -187,8 +190,15 @@ fn an_existing_snapshot_remains_usable_during_background_asset_refresh() {
     assert!(jobs.selection_page(id, 0, &snapshot).is_err());
     assert!(jobs.selection_destination(&context, &snapshot).is_err());
     assert!(
-        jobs.selection_begin(SelectionOrigin::Directory { context, all: true }, &snapshot)
-            .is_err()
+        jobs.selection_begin(
+            SelectionOrigin::Directory {
+                context,
+                all: true,
+                filter: None,
+            },
+            &snapshot
+        )
+        .is_err()
     );
 }
 
@@ -196,7 +206,14 @@ fn an_existing_snapshot_remains_usable_during_background_asset_refresh() {
 fn directory_selection_includes_unloaded_rows_and_preparation_can_be_cancelled() {
     let (_dir, jobs, snapshot, context) = fixture();
     let id = jobs
-        .selection_begin(SelectionOrigin::Directory { context, all: true }, &snapshot)
+        .selection_begin(
+            SelectionOrigin::Directory {
+                context,
+                all: true,
+                filter: None,
+            },
+            &snapshot,
+        )
         .unwrap();
     jobs.selection_add(
         id,
@@ -222,6 +239,7 @@ fn preflight_rejects_offline_identity_change_and_stale_directory_versions() {
             SelectionOrigin::Directory {
                 context: context.clone(),
                 all: false,
+                filter: None,
             },
             &snapshot,
         )
@@ -244,7 +262,8 @@ fn preflight_rejects_offline_identity_change_and_stale_directory_versions() {
         jobs.selection_begin(
             SelectionOrigin::Directory {
                 context: bad,
-                all: true
+                all: true,
+                filter: None,
             },
             &snapshot
         )
@@ -317,7 +336,14 @@ fn offline_text_records_use_complete_selection_without_source_access() {
     snapshot.assets[0].connection = "offline".into();
     snapshot.assets[0].mounts.clear();
     let id = jobs
-        .selection_begin_records(SelectionOrigin::Directory { context, all: true }, &snapshot)
+        .selection_begin_records(
+            SelectionOrigin::Directory {
+                context,
+                all: true,
+                filter: None,
+            },
+            &snapshot,
+        )
         .unwrap();
     assert_eq!(jobs.selection_seal(id).unwrap(), 3);
     let page = jobs.selection_page(id, 0, &snapshot).unwrap();
@@ -329,7 +355,14 @@ fn offline_text_records_use_complete_selection_without_source_access() {
 fn oversized_selection_is_rejected_instead_of_truncated() {
     let (_dir, jobs, snapshot, context) = fixture_with(10_002, false);
     let id = jobs
-        .selection_begin(SelectionOrigin::Directory { context, all: true }, &snapshot)
+        .selection_begin(
+            SelectionOrigin::Directory {
+                context,
+                all: true,
+                filter: None,
+            },
+            &snapshot,
+        )
         .unwrap();
     assert!(jobs.selection_seal(id).is_err());
     assert!(jobs.selection_page(id, 0, &snapshot).is_err());
@@ -339,7 +372,14 @@ fn oversized_selection_is_rejected_instead_of_truncated() {
 fn selection_pages_are_bounded_by_encoded_bytes_without_losing_rows() {
     let (_dir, jobs, snapshot, context) = fixture_with(65, true);
     let id = jobs
-        .selection_begin(SelectionOrigin::Directory { context, all: true }, &snapshot)
+        .selection_begin(
+            SelectionOrigin::Directory {
+                context,
+                all: true,
+                filter: None,
+            },
+            &snapshot,
+        )
         .unwrap();
     assert_eq!(jobs.selection_seal(id).unwrap(), 64);
     let mut offset = 0;
@@ -370,6 +410,7 @@ fn rejected_selection_chunk_does_not_apply_partial_toggles() {
             SelectionOrigin::Directory {
                 context,
                 all: false,
+                filter: None,
             },
             &snapshot,
         )

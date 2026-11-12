@@ -5,7 +5,12 @@ import { fileColumnText } from "./file-columns";
 import {
   defaultCategories,
   emptyOptions,
+  hasFileFilter,
+  noFilter,
+  noPresets,
   type Category,
+  type FilterPreset,
+  type FilterSelection,
   type SearchContext,
   type SearchOptions,
 } from "./search-options";
@@ -60,6 +65,10 @@ export default function Search({
   onCommands,
   onLocate,
   categories = defaultCategories,
+  initialFilter = noFilter,
+  presets = noPresets,
+  onSavePresets,
+  savingFilters = false,
   context,
   indexes = noIndexes,
 }: {
@@ -73,6 +82,10 @@ export default function Search({
   onCommands?: (context: FileCommandContext | null) => void;
   onLocate?: (hit: SearchHit, folder?: boolean) => void;
   categories?: Category[];
+  initialFilter?: FilterSelection;
+  presets?: FilterPreset[];
+  onSavePresets?: (presets: FilterPreset[]) => Promise<boolean>;
+  savingFilters?: boolean;
   context?: SearchContext;
   indexes?: PartitionIndexes;
 }) {
@@ -108,17 +121,16 @@ export default function Search({
   const [namesOnly, setNamesOnly] = useState(!includePath);
   const [partition, setPartition] = useState("");
   const [options, setOptions] = useState<SearchOptions>(emptyOptions);
-  const [types, setTypes] = useState<string[]>([]);
-  useEffect(() => {
-    setTypes((previous) => {
-      const next = previous.filter(
-        (t) =>
-          t === "@folder" || categories.some((c) => t === `category:${c.name}`),
-      );
-      return next.length === previous.length ? previous : next;
-    });
-  }, [categories]);
-  const [custom, setCustom] = useState("");
+  const [filter, setFilter] = useState(initialFilter);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filterActive =
+    hasFileFilter(filter.rule) ||
+    namesOnly !== !includePath ||
+    options.case_sensitive ||
+    options.mode !== "contains" ||
+    !!options.duplicate.length ||
+    options.online_only ||
+    options.include_history;
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
   const [total, setTotal] = useState(0);
@@ -180,20 +192,11 @@ export default function Search({
   );
   useEffect(() => {
     if (active) input.current?.focus();
-    else setMenu(null);
+    else {
+      setMenu(null);
+      setFilterOpen(false);
+    }
   }, [active]);
-  const extensionKey = JSON.stringify([
-    ...new Set([
-      ...categories
-        .filter((c) => types.includes(`category:${c.name}`))
-        .flatMap((c) => c.extensions),
-      ...custom
-        .split(/[,;]/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    ]),
-  ]);
-  const folder = types.includes("@folder");
   const partitionIds = partitions.map((item) => item.id);
   const partitionKey = JSON.stringify([...partitionIds].sort());
   const validContext =
@@ -208,16 +211,13 @@ export default function Search({
   const scopedPartition = scope.startsWith("@")
     ? validContext?.partition
     : scope;
-  const extensions = JSON.parse(extensionKey) as string[];
   const queryKey = JSON.stringify({
     text,
     names_only: namesOnly,
     partitions: scopedPartition ? [scopedPartition] : [],
     options: {
       ...options,
-      extensions,
-      kind: folder && !extensions.length ? "folder" : null,
-      include_folders: folder && !!extensions.length,
+      ...filter.rule,
       scope:
         validContext && scope === "@folder"
           ? {
@@ -247,14 +247,14 @@ export default function Search({
   }, [indexes, scopedPartition]);
 
   function invalidate(keepCurrent = false) {
-    const token = ++sequence.current;
+    ++sequence.current;
     const ids = [
       pendingId.current,
       keepCurrent ? null : queryId.current,
     ].filter((id) => id !== null);
     pendingId.current = null;
     if (!keepCurrent) queryId.current = null;
-    return { token, ids };
+    return ids;
   }
 
   function release(ids: number[]) {
@@ -349,7 +349,7 @@ export default function Search({
 
   function fail(token: number, e: unknown, background: boolean) {
     if (token !== sequence.current) return;
-    const { ids } = invalidate(background);
+    const ids = invalidate(background);
     void release(ids).catch(() => {});
     const message = String(e).replace(/^Error: /, "");
     if (background) setRefreshError(message);
@@ -381,7 +381,7 @@ export default function Search({
     }, 150);
     return () => {
       window.clearTimeout(timer);
-      const { ids } = invalidate();
+      const ids = invalidate();
       void release(ids).catch(() => {});
     };
   }, [queryKey, revision, partitionKey]);
@@ -477,17 +477,6 @@ export default function Search({
       anchor.current = i;
       setSelection([i, i + 1]);
     }
-  }
-  function cancel() {
-    const { token, ids } = invalidate();
-    handledRefresh.current = refreshWanted;
-    if (ids.length)
-      void release(ids).catch((e) => {
-        if (token === sequence.current)
-          setError(`取消请求失败：${String(e).replace(/^Error: /, "")}`);
-      });
-    setBusy(false);
-    setError("搜索已取消");
   }
   const knownSelected = [...cache]
     .filter(([i]) => selected(i))
@@ -625,18 +614,33 @@ export default function Search({
             </option>
           ))}
         </select>
-        <SearchFilters
-          options={options}
-          setOptions={setOptions}
-          categories={categories}
-          types={types}
-          setTypes={setTypes}
-          custom={custom}
-          setCustom={setCustom}
-          namesOnly={namesOnly}
-          setNamesOnly={setNamesOnly}
-        />
-        {busy && <button onClick={cancel}>取消搜索</button>}
+        <button
+          type="button"
+          aria-label="筛选器"
+          aria-haspopup="dialog"
+          onClick={() => setFilterOpen(true)}
+        >
+          {filterActive ? "筛选器 · 已启用" : "筛选器"}
+        </button>
+        {active && filterOpen && (
+          <SearchFilters
+            initialOptions={options}
+            categories={categories}
+            initialFilter={filter}
+            initialNamesOnly={namesOnly}
+            defaultNamesOnly={!includePath}
+            presets={presets}
+            onSavePresets={onSavePresets}
+            savingPresets={savingFilters}
+            onClose={() => setFilterOpen(false)}
+            onApply={(nextFilter, nextOptions, nextNamesOnly) => {
+              setFilter(nextFilter);
+              setOptions(nextOptions);
+              setNamesOnly(nextNamesOnly);
+              setFilterOpen(false);
+            }}
+          />
+        )}
       </div>
       {error && (
         <p role="alert" className="asset-error">

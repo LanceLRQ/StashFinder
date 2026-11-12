@@ -210,6 +210,7 @@ fn directory(
             offset: 0,
             folders_only: false,
             sort: Default::default(),
+            filter: None,
         }),
     )?
     else {
@@ -253,6 +254,7 @@ fn prepare(
         Action::FileSelectionBegin(SelectionOrigin::Directory {
             context: context.clone(),
             all: true,
+            filter: None,
         }),
     )?
     else {
@@ -626,6 +628,7 @@ fn registered_ntfs_recycle_sample_for_explorer_restore() {
                 Action::FileSelectionBegin(SelectionOrigin::Directory {
                     context,
                     all: false,
+                    filter: None,
                 }),
             )?
             else {

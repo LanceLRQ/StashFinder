@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -17,7 +18,16 @@ import WindowChrome from "./WindowChrome";
 import WorkspaceIcon from "./WorkspaceIcon";
 import WorkspaceTabs from "./WorkspaceTabs";
 import "./workspace.css";
-import type { Category, SearchContext } from "./search-options";
+import {
+  defaultCategories,
+  hasFileFilter,
+  noPresets,
+  selectFilter,
+  type Category,
+  type FilterPreset,
+  type FilterSelection,
+  type SearchContext,
+} from "./search-options";
 import type { DirectoryPage } from "./browse-api";
 import AppMenu, { type MenuGroup } from "./AppMenu";
 import {
@@ -44,6 +54,7 @@ type SearchTab = {
   initialText: string;
   context?: SearchContext;
   origin: number;
+  initialFilter?: FilterSelection;
 };
 const searchTitle = (text: string) =>
   text.trim() ? `搜索：${text.trim()}` : "搜索";
@@ -67,7 +78,12 @@ export default function Workspace({
   includePath,
   request,
   browseRequest,
-  categories,
+  categories = defaultCategories,
+  browseFilter = null,
+  filterPresets = noPresets,
+  onBrowseFilter,
+  onSavePresets,
+  savingFilters,
   indexes,
   automatic,
   paused = [],
@@ -83,6 +99,11 @@ export default function Workspace({
   request: { text: string; revision: number };
   browseRequest?: { partition: string; revision: number };
   categories?: Category[];
+  browseFilter?: string | null;
+  filterPresets?: FilterPreset[];
+  onBrowseFilter?: (id: string | null) => void;
+  onSavePresets?: (presets: FilterPreset[]) => Promise<boolean>;
+  savingFilters?: boolean;
   indexes?: PartitionIndexes;
   automatic?: boolean;
   paused?: string[];
@@ -111,6 +132,10 @@ export default function Workspace({
   const searchFocus = useRef(false);
   const [commands, setCommands] = useState<FileCommandContext | null>(null);
   const currentTab = tabs.find((tab) => tab.id === active);
+  const browseSelection = useMemo(
+    () => selectFilter(browseFilter, categories, filterPresets),
+    [browseFilter, categories, filterPresets],
+  );
   const hasFileStatusBar =
     currentTab?.kind === "overview" ||
     (currentTab?.kind === "search" && searchReady) ||
@@ -134,19 +159,23 @@ export default function Workspace({
   }, []);
   const activeRef = useRef(active);
   activeRef.current = active;
-  const search = useCallback((initialText: string, context?: SearchContext) => {
-    const id = ++sequence.current;
-    const tab: SearchTab = {
-      id,
-      kind: "search",
-      initialText,
-      context,
-      title: searchTitle(initialText),
-      origin: activeRef.current,
-    };
-    setTabs((previous) => [...previous, tab]);
-    setActive(id);
-  }, []);
+  const search = useCallback(
+    (initialText: string, context?: SearchContext) => {
+      const id = ++sequence.current;
+      const tab: SearchTab = {
+        id,
+        kind: "search",
+        initialText,
+        context,
+        title: searchTitle(initialText),
+        origin: activeRef.current,
+        initialFilter: searchReady ? browseSelection : undefined,
+      };
+      setTabs((previous) => [...previous, tab]);
+      setActive(id);
+    },
+    [browseSelection, searchReady],
+  );
   const searchRevision = useRef(0);
   useEffect(() => {
     if (request.revision > searchRevision.current) {
@@ -456,6 +485,23 @@ export default function Workspace({
           run: () => refreshCurrent?.(),
         },
         ...(commands?.views ?? []),
+        ...(currentTab?.kind === "browse" && onBrowseFilter
+          ? [
+              { id: null, name: "无筛选" },
+              { id: "@folder", name: "文件夹" },
+              ...categories.map((c) => ({
+                id: `category:${c.name}`,
+                name: c.name,
+              })),
+              ...filterPresets,
+            ].map(({ id, name }) => ({
+              label: `${id?.startsWith("user:") ? "我的预设" : "筛选器"}：${name}`,
+              radio: true,
+              checked: id === browseFilter,
+              disabled: savingFilters,
+              run: () => onBrowseFilter(id),
+            }))
+          : []),
       ],
     },
     {
@@ -577,6 +623,11 @@ export default function Workspace({
                 </p>
               ) : (
                 <BrowsePane
+                  filter={
+                    hasFileFilter(browseSelection.rule)
+                      ? browseSelection.rule
+                      : undefined
+                  }
                   active={visible && active === tab.id}
                   view={tab.view ?? "details"}
                   onView={(view) =>
@@ -674,6 +725,10 @@ export default function Workspace({
                 onCommands={setCommands}
                 onLocate={locate}
                 categories={categories}
+                initialFilter={tab.initialFilter ?? browseSelection}
+                presets={filterPresets}
+                onSavePresets={onSavePresets}
+                savingFilters={savingFilters}
                 indexes={indexes}
                 context={tab.context}
               />

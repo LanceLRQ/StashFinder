@@ -1,91 +1,319 @@
+import { useState } from "react";
+import Modal from "./Modal";
 import {
   dateBoundary,
   dateLabel,
   emptyOptions,
+  hasFileFilter,
+  noFilter,
+  selectFilter,
   type Category,
+  type FileFilter,
+  type FilterPreset,
+  type FilterSelection,
   type SearchOptions,
 } from "./search-options";
 export default function SearchFilters({
-  options,
-  setOptions,
+  initialOptions,
+  initialFilter,
   categories,
-  types,
-  setTypes,
-  custom,
-  setCustom,
-  namesOnly,
-  setNamesOnly,
+  initialNamesOnly,
+  defaultNamesOnly,
+  presets,
+  onSavePresets,
+  savingPresets,
+  onApply,
+  onClose,
 }: {
-  options: SearchOptions;
-  setOptions: (o: SearchOptions) => void;
+  initialOptions: SearchOptions;
+  initialFilter: FilterSelection;
   categories: Category[];
-  types: string[];
-  setTypes: (s: string[]) => void;
-  custom: string;
-  setCustom: (s: string) => void;
-  namesOnly: boolean;
-  setNamesOnly: (value: boolean) => void;
+  initialNamesOnly: boolean;
+  defaultNamesOnly: boolean;
+  presets: FilterPreset[];
+  onSavePresets?: (presets: FilterPreset[]) => Promise<boolean>;
+  savingPresets: boolean;
+  onApply: (
+    filter: FilterSelection,
+    options: SearchOptions,
+    namesOnly: boolean,
+  ) => void;
+  onClose: () => void;
 }) {
+  const [options, setOptions] = useState(initialOptions);
+  const [filter, setFilter] = useState(initialFilter);
+  const [namesOnly, setNamesOnly] = useState(initialNamesOnly);
+  const selectedPreset = presets.find((p) => p.id === filter.id);
+  const [name, setName] = useState(selectedPreset?.name ?? "");
+  const [error, setError] = useState("");
+  const { rule, types, custom } = filter;
   const update = (key: keyof SearchOptions, value: unknown) =>
     setOptions({ ...options, [key]: value });
-  const count =
-    Number(options.case_sensitive) +
-    Number(options.mode !== "contains") +
-    Number(options.duplicate.length > 0) +
-    Number(options.online_only) +
-    Number(options.include_history) +
-    Number(!!options.size.min || !!options.size.max) +
-    Number(!!options.modified.min || !!options.modified.max) +
-    Number(!!options.created.min || !!options.created.max);
+  const updateRule = (next: Partial<FileFilter>) =>
+    setFilter({ ...filter, rule: { ...rule, ...next } });
+  function changeTypes(nextTypes: string[], nextCustom: string) {
+    const extensions = [
+      ...new Set([
+        ...categories
+          .filter((c) => nextTypes.includes(`category:${c.name}`))
+          .flatMap((c) => c.extensions),
+        ...nextCustom
+          .split(/[,;]/)
+          .map((part) => part.trim())
+          .filter(Boolean),
+      ]),
+    ];
+    const folder = nextTypes.includes("@folder");
+    setFilter({
+      ...filter,
+      types: nextTypes,
+      custom: nextCustom,
+      rule: {
+        ...rule,
+        extensions,
+        include_folders: folder && extensions.length > 0,
+        kind: folder
+          ? extensions.length
+            ? null
+            : "folder"
+          : rule.kind === "file"
+            ? "file"
+            : null,
+      },
+    });
+  }
+  async function savePreset(replace: boolean) {
+    if (!onSavePresets) return;
+    const preset = {
+      id: (replace && selectedPreset?.id) || `user:${crypto.randomUUID()}`,
+      name: name.trim(),
+      rule,
+    };
+    const ok = await onSavePresets(
+      replace
+        ? presets.map((p) => (p.id === preset.id ? preset : p))
+        : [...presets, preset],
+    );
+    setError(ok ? "" : "预设未保存，请检查名称、扩展名和范围。");
+    if (ok)
+      setFilter((current) =>
+        current === filter ? { ...current, id: preset.id } : current,
+      );
+  }
   return (
-    <>
-      <details className="view-menu type-filter">
-        <summary>{types.length ? `类型 ${types.length}` : "全部类型"}</summary>
-        <div>
-          <label>
-            <input
-              type="checkbox"
-              checked={types.includes("@folder")}
-              onChange={(e) =>
-                setTypes(
-                  e.target.checked
-                    ? [...types, "@folder"]
-                    : types.filter((t) => t !== "@folder"),
-                )
-              }
-            />
-            文件夹
-          </label>
-          {categories.map((c) => (
-            <label key={c.name}>
-              <input
-                type="checkbox"
-                checked={types.includes(`category:${c.name}`)}
-                onChange={(e) =>
-                  setTypes(
-                    e.target.checked
-                      ? [...types, `category:${c.name}`]
-                      : types.filter((t) => t !== `category:${c.name}`),
-                  )
-                }
-              />
-              {c.name}
+    <Modal
+      title="筛选器"
+      className="search-filter-dialog"
+      onClose={onClose}
+      actions={
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setFilter(noFilter);
+              setName("");
+              setError("");
+              setNamesOnly(defaultNamesOnly);
+              setOptions({
+                ...emptyOptions,
+                sort: options.sort,
+                descending: options.descending,
+              });
+            }}
+          >
+            清除筛选
+          </button>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => onApply(filter, options, namesOnly)}
+          >
+            应用
+          </button>
+        </>
+      }
+    >
+      <div className="search-filter-content">
+        <fieldset>
+          <legend>系统预设</legend>
+          <div className="search-filter-types">
+            {[
+              { id: "@folder", name: "文件夹" },
+              ...categories.map((c) => ({
+                id: `category:${c.name}`,
+                name: c.name,
+              })),
+            ].map(({ id, name }) => (
+              <label key={id}>
+                <input
+                  type="checkbox"
+                  checked={types.includes(id)}
+                  onChange={(e) =>
+                    changeTypes(
+                      e.target.checked
+                        ? [...types, id]
+                        : types.filter((t) => t !== id),
+                      custom,
+                    )
+                  }
+                />
+                {name}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        {onSavePresets && (
+          <fieldset className="search-filter-fields">
+            <legend>我的预设</legend>
+            <label>
+              选用预设
+              <select
+                aria-label="我的预设"
+                value={selectedPreset?.id ?? ""}
+                onChange={(e) => {
+                  const preset = presets.find((p) => p.id === e.target.value);
+                  setFilter(
+                    preset
+                      ? selectFilter(preset.id, categories, presets)
+                      : noFilter,
+                  );
+                  setName(preset?.name ?? "");
+                  setError("");
+                }}
+              >
+                <option value="">未选择</option>
+                {presets.map((preset) => (
+                  <option value={preset.id} key={preset.id}>
+                    {preset.name}
+                  </option>
+                ))}
+              </select>
             </label>
-          ))}
+            <label>
+              预设名称
+              <input
+                aria-label="预设名称"
+                maxLength={80}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </label>
+            <div className="search-filter-preset-actions">
+              <button
+                type="button"
+                disabled={savingPresets || !name.trim() || !hasFileFilter(rule)}
+                onClick={() => void savePreset(false)}
+              >
+                另存为预设
+              </button>
+              {selectedPreset && (
+                <>
+                  <button
+                    type="button"
+                    disabled={
+                      savingPresets || !name.trim() || !hasFileFilter(rule)
+                    }
+                    onClick={() => void savePreset(true)}
+                  >
+                    保存修改
+                  </button>
+                  <button
+                    type="button"
+                    disabled={savingPresets}
+                    onClick={() => {
+                      void onSavePresets(
+                        presets.filter((p) => p.id !== selectedPreset.id),
+                      ).then((ok) => {
+                        setError(ok ? "" : "未能移除预设。");
+                        if (ok) {
+                          setFilter({ ...filter, id: undefined });
+                          setName("");
+                        }
+                      });
+                    }}
+                  >
+                    移除预设
+                  </button>
+                </>
+              )}
+            </div>
+            {error && (
+              <p className="search-filter-preset-actions" role="alert">
+                {error}
+              </p>
+            )}
+          </fieldset>
+        )}
+        <fieldset className="search-filter-fields">
+          <legend>文件条件</legend>
           <label>
             扩展名
             <input
               aria-label="自定义扩展名"
               placeholder="mkv,mp4"
               value={custom}
-              onChange={(e) => setCustom(e.target.value)}
+              onChange={(e) => changeTypes(types, e.target.value)}
             />
           </label>
-        </div>
-      </details>
-      <details className="view-menu search-filters">
-        <summary>筛选{count ? ` ${count}` : ""}</summary>
-        <div>
+          <label>
+            <input
+              type="checkbox"
+              checked={rule.kind === "file"}
+              onChange={(e) =>
+                setFilter({
+                  ...filter,
+                  types: types.filter((id) => id !== "@folder"),
+                  rule: {
+                    ...rule,
+                    include_folders: false,
+                    kind: e.target.checked ? "file" : null,
+                  },
+                })
+              }
+            />
+            仅文件
+          </label>
+          {(["min", "max"] as const).map((key) => (
+            <label key={key}>
+              {key === "min" ? "最小字节数" : "最大字节数"}
+              <input
+                type="number"
+                min="0"
+                value={rule.size[key] || ""}
+                onChange={(e) =>
+                  updateRule({
+                    size: { ...rule.size, [key]: e.target.value || null },
+                  })
+                }
+              />
+            </label>
+          ))}
+          {(["modified", "created"] as const).map((field) => (
+            <fieldset className="search-filter-date" key={field}>
+              <legend>{field === "modified" ? "修改日期" : "创建日期"}</legend>
+              {(["min", "max"] as const).map((key) => (
+                <input
+                  key={key}
+                  aria-label={`${field === "modified" ? "修改" : "创建"}${key === "min" ? "起始日期" : "结束日期"}`}
+                  type="date"
+                  value={dateLabel(rule[field][key])}
+                  min="1601-01-01"
+                  max="9999-12-30"
+                  onChange={(e) =>
+                    updateRule({
+                      [field]: {
+                        ...rule[field],
+                        [key]: dateBoundary(e.target.value, key === "max"),
+                      },
+                    })
+                  }
+                />
+              ))}
+            </fieldset>
+          ))}
+        </fieldset>
+        <fieldset className="search-filter-fields">
+          <legend>本次搜索</legend>
           <label>
             <input
               type="checkbox"
@@ -151,44 +379,6 @@ export default function SearchFilters({
               ))}
             </select>
           </label>
-          {(["min", "max"] as const).map((key) => (
-            <label key={key}>
-              {key === "min" ? "最小字节数" : "最大字节数"}
-              <input
-                aria-label={key === "min" ? "最小字节数" : "最大字节数"}
-                type="number"
-                min="0"
-                value={options.size[key] || ""}
-                onChange={(e) =>
-                  update("size", {
-                    ...options.size,
-                    [key]: e.target.value || null,
-                  })
-                }
-              />
-            </label>
-          ))}
-          {(["modified", "created"] as const).map((field) => (
-            <fieldset key={field}>
-              <legend>{field === "modified" ? "修改日期" : "创建日期"}</legend>
-              {(["min", "max"] as const).map((key) => (
-                <input
-                  key={key}
-                  aria-label={`${field === "modified" ? "修改" : "创建"}${key === "min" ? "起始日期" : "结束日期"}`}
-                  type="date"
-                  value={dateLabel(options[field][key])}
-                  min="1601-01-01"
-                  max="9999-12-30"
-                  onChange={(e) =>
-                    update(field, {
-                      ...options[field],
-                      [key]: dateBoundary(e.target.value, key === "max"),
-                    })
-                  }
-                />
-              ))}
-            </fieldset>
-          ))}
           <label>
             <input
               type="checkbox"
@@ -238,21 +428,8 @@ export default function SearchFilters({
             />
             降序
           </label>
-          <button
-            onClick={() => {
-              setOptions({
-                ...emptyOptions,
-                sort: options.sort,
-                descending: options.descending,
-              });
-              setTypes([]);
-              setCustom("");
-            }}
-          >
-            清除筛选
-          </button>
-        </div>
-      </details>
-    </>
+        </fieldset>
+      </div>
+    </Modal>
   );
 }

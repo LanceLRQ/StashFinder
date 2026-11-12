@@ -83,6 +83,7 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
             offset: 0,
             folders_only: false,
             sort: Default::default(),
+            filter: None,
         };
         let directory = jobs.runner.directory(&request).unwrap();
         assert_eq!(directory.entries[0].name, "offline.txt");

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
-use stashfinder_core::{MAX_FRAME, file_operations::*};
+use stashfinder_core::{MAX_FRAME, file_operations::*, search::FileFilter};
 use std::{collections::HashSet, path::Path};
 
 /// Resolve raw names in one local database snapshot, without touching the source volume.
@@ -142,15 +142,23 @@ pub fn directory_refs(
     path: &Path,
     context: &EntryRef,
     records_only: bool,
+    filter: Option<&FileFilter>,
 ) -> Result<Vec<EntryRef>> {
     let mut db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let predicate = crate::browse::filter_clause(&db, filter)?;
     let tx = db.transaction()?;
     ensure!(
         resolve_in(&tx, context, true, records_only)?.folder,
         "粘贴或选择目标不是目录"
     );
-    let mut stmt =
-        tx.prepare("SELECT id FROM paths WHERE generation=?1 AND parent=?2 ORDER BY id LIMIT ?3")?;
+    let sql = if predicate.is_empty() {
+        "SELECT id FROM paths WHERE generation=?1 AND parent=?2 ORDER BY id LIMIT ?3".into()
+    } else {
+        format!(
+            "SELECT p.id FROM paths p JOIN objects o ON o.generation=p.generation AND o.id=p.object WHERE p.generation=?1 AND p.parent=?2{predicate} ORDER BY p.id LIMIT ?3"
+        )
+    };
+    let mut stmt = tx.prepare(&sql)?;
     let rows = stmt
         .query_map(
             params![

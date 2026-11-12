@@ -38,11 +38,39 @@ pub enum SortField {
     Type,
     Attributes,
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Range {
     pub min: Option<String>,
     pub max: Option<String>,
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FileFilter {
+    pub extensions: Vec<String>,
+    pub include_folders: bool,
+    pub kind: Option<String>,
+    pub size: Range,
+    pub created: Range,
+    pub modified: Range,
+}
+
+impl FileFilter {
+    pub fn compile(&self) -> Result<Query> {
+        Query::compile(
+            "",
+            false,
+            &QueryOptions {
+                extensions: self.extensions.clone(),
+                include_folders: self.include_folders,
+                kind: self.kind.clone(),
+                size: self.size.clone(),
+                created: self.created.clone(),
+                modified: self.modified.clone(),
+                ..QueryOptions::default()
+            },
+        )
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
