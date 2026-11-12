@@ -5,9 +5,9 @@ import {
   useRef,
   useState,
   type ReactNode,
-  type KeyboardEvent,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import Modal from "./Modal";
 import type {
   EntryRef,
   FileAction,
@@ -203,26 +203,6 @@ export default function FileOperations({ children }: { children: ReactNode }) {
     setMessage("操作已取消");
     running.current = false;
   }
-  function dialogKey(e: KeyboardEvent<HTMLDivElement>, escape: () => void) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      escape();
-    }
-    if (e.key !== "Tab") return;
-    const buttons = [
-      ...e.currentTarget.querySelectorAll<HTMLButtonElement>(
-        "button:not(:disabled)",
-      ),
-    ];
-    if (e.shiftKey && document.activeElement === buttons[0]) {
-      e.preventDefault();
-      buttons.at(-1)?.focus();
-    } else if (!e.shiftKey && document.activeElement === buttons.at(-1)) {
-      e.preventDefault();
-      buttons[0]?.focus();
-    }
-  }
   const api = {
     run: (
       selection: SelectionInput,
@@ -284,9 +264,7 @@ export default function FileOperations({ children }: { children: ReactNode }) {
                 : "正在执行文件操作…")}
       </span>
       {report && !active && (
-        <button onClick={() => setShowReport((v) => !v)}>
-          {showReport ? "收起结果" : "查看结果"}
-        </button>
+        <button onClick={() => setShowReport(true)}>查看结果</button>
       )}
       {active && <button onClick={() => void cancel()}>取消</button>}
     </div>
@@ -297,20 +275,26 @@ export default function FileOperations({ children }: { children: ReactNode }) {
         {children}
       </StatusContext.Provider>
       {showReport && report && (
-        <div
-          role="dialog"
-          aria-label="文件操作结果"
+        <Modal
+          title="文件操作结果"
           className="operation-results"
+          onClose={() => setShowReport(false)}
+          actions={
+            report.next !== null && (
+              <button
+                onClick={() =>
+                  void readReport(
+                    sequence.current,
+                    report.id,
+                    report.next!,
+                  ).catch((e) => setError(String(e)))
+                }
+              >
+                加载更多结果
+              </button>
+            )
+          }
         >
-          <div>
-            <strong>文件操作结果</strong>
-            <button
-              onClick={() => setShowReport(false)}
-              aria-label="关闭文件操作结果"
-            >
-              ×
-            </button>
-          </div>
           <table>
             <thead>
               <tr>
@@ -338,92 +322,50 @@ export default function FileOperations({ children }: { children: ReactNode }) {
               ))}
             </tbody>
           </table>
-          {report.next !== null && (
-            <button
-              onClick={() =>
-                void readReport(
-                  sequence.current,
-                  report.id,
-                  report.next!,
-                ).catch((e) => setError(String(e)))
-              }
-            >
-              加载更多结果
-            </button>
-          )}
-        </div>
+        </Modal>
       )}
       {status?.close_requested && (
-        <div className="operation-backdrop">
-          <div
-            role="alertdialog"
-            aria-modal="true"
-            aria-label="文件操作仍在进行"
-            className="operation-confirm"
-            onKeyDown={(e) =>
-              dialogKey(e, () => {
-                void invoke("file_keep_open");
-                setStatus({ ...status, close_requested: false });
-              })
-            }
-          >
-            <p>文件操作仍在进行。</p>
-            <div>
-              <button
-                autoFocus
-                onClick={() => {
-                  void invoke("file_keep_open").catch((e) =>
-                    setError(String(e)),
-                  );
-                  setStatus({ ...status, close_requested: false });
-                }}
-              >
-                等待完成
-              </button>
-              <button onClick={() => void cancel()}>取消操作</button>
-            </div>
-          </div>
-        </div>
+        <Modal
+          role="alertdialog"
+          title="文件操作仍在进行"
+          onClose={() => {
+            void invoke("file_keep_open").catch((e) => setError(String(e)));
+            setStatus({ ...status, close_requested: false });
+          }}
+          actions={<button onClick={() => void cancel()}>取消操作</button>}
+        >
+          <p>关闭此提示后，文件操作会继续。</p>
+        </Modal>
       )}
       {confirm && (
-        <div className="operation-backdrop">
-          <div
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="operation-title"
-            className="operation-confirm"
-            onKeyDown={(e) => dialogKey(e, () => void cancel())}
-          >
-            <h2 id="operation-title">
-              {confirm.action === "delete" ? "永久删除" : "移入回收站"}{" "}
-              {confirm.summary.count.toLocaleString()} 项？
-            </h2>
-            {confirm.action === "delete" && <p>这些文件将不经过回收站。</p>}
-            <ul>
-              {confirm.summary.names.map((name, i) => (
-                <li key={i}>{name}</li>
-              ))}
-            </ul>
-            <div>
-              <button autoFocus onClick={() => void cancel()}>
-                取消
-              </button>
-              <button
-                className="danger"
-                onClick={() => {
-                  const token = sequence.current;
-                  void execute(confirm.summary, confirm.action, confirm.changed)
-                    .catch((e) => fail(e, token))
-                    .finally(() => {
-                      running.current = false;
-                    });
-                }}
-              >
-                确认{confirm.action === "delete" ? "永久删除" : "删除"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <Modal
+          role="alertdialog"
+          className="operation-confirm"
+          title={`${confirm.action === "delete" ? "永久删除" : "移入回收站"} ${confirm.summary.count.toLocaleString()} 项？`}
+          onClose={() => void cancel()}
+          actions={
+            <button
+              className="danger"
+              onClick={() => {
+                const token = sequence.current;
+                void execute(confirm.summary, confirm.action, confirm.changed)
+                  .catch((e) => fail(e, token))
+                  .finally(() => {
+                    running.current = false;
+                  });
+              }}
+            >
+              确认{confirm.action === "delete" ? "永久删除" : "删除"}
+            </button>
+          }
+        >
+          {confirm.action === "delete" && <p>这些文件将不经过回收站。</p>}
+          <ul>
+            {confirm.summary.names.map((name, i) => (
+              <li key={i}>{name}</li>
+            ))}
+          </ul>
+        </Modal>
       )}
     </Context.Provider>
   );

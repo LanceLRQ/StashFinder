@@ -60,9 +60,10 @@ export default function CategoryEditor({
       </div>
       {categories.map((c, i) => (
         <div className="category-row" key={c.name}>
-          <strong>{c.name}</strong>
+          <strong title={c.name}>{c.name}</strong>
           <span title={c.extensions.join(", ")}>{c.extensions.join(", ")}</span>
           <button
+            aria-label={`编辑 ${c.name}`}
             disabled={saving}
             onClick={() => {
               setEditing(i);
@@ -71,13 +72,14 @@ export default function CategoryEditor({
               setError("");
             }}
           >
-            编辑 {c.name}
+            编辑
           </button>
           <button
+            aria-label={`移除 ${c.name}`}
             disabled={saving}
             onClick={() => void onSave(categories.filter((_, n) => n !== i))}
           >
-            移除 {c.name}
+            移除
           </button>
         </div>
       ))}

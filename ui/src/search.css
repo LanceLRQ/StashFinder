@@ -88,10 +88,11 @@
   margin: 12px 0;
   font-size: 12px;
   color: #98600e;
+  overflow-x: auto;
 }
 .search-unavailable p {
   margin: 6px 0;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 .index-dialog label {
   display: flex;

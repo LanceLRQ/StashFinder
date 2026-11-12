@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import Modal from "./Modal";
 import SampleList, { type Sample, type FileAction } from "./SampleList";
 import "./style.css";
 
@@ -24,6 +25,7 @@ export default function App() {
     ids: number[];
   } | null>(null);
   const [newName, setNewName] = useState("");
+  const renameInput = useRef<HTMLInputElement>(null);
 
   async function checkConnection() {
     setChecking(true);
@@ -86,11 +88,6 @@ export default function App() {
           .pop() ?? "",
       );
     } else void sampleAction(action, ids);
-  }
-
-  function closeDialog() {
-    setPending(null);
-    document.querySelector<HTMLElement>(".sample-list")?.focus();
   }
 
   return (
@@ -169,33 +166,29 @@ export default function App() {
         </p>
       </section>
       {pending && (
-        <div className="dialog-backdrop">
+        <Modal
+          className="operation-dialog"
+          title={
+            pending.action === "rename"
+              ? "重命名"
+              : pending.action === "delete"
+                ? "永久删除"
+                : "移入回收站"
+          }
+          onClose={() => setPending(null)}
+          initialFocus={renameInput}
+          actions={
+            <button type="submit" form="sample-operation-form">
+              {pending.action === "rename"
+                ? "确定"
+                : pending.action === "delete"
+                  ? "永久删除"
+                  : "移入回收站"}
+            </button>
+          }
+        >
           <form
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="operation-title"
-            className="operation-dialog"
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.preventDefault();
-                closeDialog();
-              }
-              if (event.key === "Tab") {
-                const controls =
-                  event.currentTarget.querySelectorAll<HTMLElement>(
-                    "input, button",
-                  );
-                const first = controls[0],
-                  last = controls[controls.length - 1];
-                if (event.shiftKey && document.activeElement === first) {
-                  event.preventDefault();
-                  last.focus();
-                } else if (!event.shiftKey && document.activeElement === last) {
-                  event.preventDefault();
-                  first.focus();
-                }
-              }
-            }}
+            id="sample-operation-form"
             onSubmit={(event) => {
               event.preventDefault();
               const { action, ids } = pending;
@@ -207,13 +200,6 @@ export default function App() {
               );
             }}
           >
-            <h2 id="operation-title">
-              {pending.action === "rename"
-                ? "重命名"
-                : pending.action === "delete"
-                  ? "永久删除"
-                  : "移入回收站"}
-            </h2>
             <p>
               {pending.action === "delete"
                 ? "将永久删除所选样本及目录内容，不经过回收站。"
@@ -232,31 +218,15 @@ export default function App() {
               <label>
                 新名称
                 <input
-                  autoFocus
+                  ref={renameInput}
                   value={newName}
                   onFocus={(event) => event.target.select()}
                   onChange={(event) => setNewName(event.target.value)}
                 />
               </label>
             )}
-            <div className="dialog-actions">
-              <button
-                type="button"
-                autoFocus={pending.action !== "rename"}
-                onClick={closeDialog}
-              >
-                取消
-              </button>
-              <button type="submit">
-                {pending.action === "rename"
-                  ? "确定"
-                  : pending.action === "delete"
-                    ? "永久删除"
-                    : "移入回收站"}
-              </button>
-            </div>
           </form>
-        </div>
+        </Modal>
       )}
       <footer>仅用于可丢弃样本。拖出仅复制。</footer>
     </div>

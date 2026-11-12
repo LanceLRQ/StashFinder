@@ -360,8 +360,9 @@
   gap: 4px;
   padding: 0;
   list-style: none;
-  max-height: 50vh;
-  overflow: auto;
+  width: max-content;
+  min-width: 100%;
+  white-space: nowrap;
 }
 .browse-partitions button {
   width: 100%;

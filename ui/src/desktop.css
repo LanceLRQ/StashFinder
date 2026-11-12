@@ -122,13 +122,6 @@ input[type="radio"] {
   align-items: center;
   gap: 6px;
 }
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 20px;
-}
-
 .index-spinner {
   flex: none;
   width: 12px;
@@ -162,9 +155,17 @@ input[type="radio"] {
 .desktop .assets-app > .asset-error {
   margin: 0;
 }
+.disk-list:has(> .asset-empty) {
+  display: flex;
+  flex: 1;
+}
+.disk-list:has(> .asset-empty) + .asset-details {
+  display: none;
+}
 .desktop .asset-empty {
-  border: 0;
-  padding: 32px 0;
+  margin: auto;
+  justify-items: center;
+  text-align: center;
 }
 .desktop .search-toolbar {
   padding: 16px 20px;

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { indexRequest, type IndexStatus } from "./index-api";
+import Modal from "./Modal";
 
 export const indexLabels: Record<string, string> = {
   loading: "恢复索引中",
@@ -196,7 +197,6 @@ export function IndexModeDialog({
   onClose: () => void;
   onStarted: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
   const [choice, setMode] = useState<
     "journal" | "scan_only" | "create_journal"
   >(ntfs && !journalMissing ? "journal" : "scan_only");
@@ -210,11 +210,6 @@ export function IndexModeDialog({
     : journalMissing
       ? "此分区没有 USN 日志。构建完成前，保留已有索引。"
       : "重新读取这个分区。构建完成前，保留已有索引。";
-  useEffect(() => {
-    const element = dialog.current!;
-    element.showModal();
-    return () => element.close();
-  }, []);
   async function submit() {
     if (sending || !eligible || (mode === "create_journal" && !consent)) return;
     setSending(true);
@@ -225,18 +220,22 @@ export function IndexModeDialog({
     setSending(false);
   }
   return (
-    <dialog
-      ref={dialog}
+    <Modal
       className="asset-dialog index-dialog"
-      aria-labelledby={`index-${partitionId}`}
-      onCancel={(e) => {
-        e.preventDefault();
-        if (!sending) onClose();
-      }}
+      title={`${title} ${name}`}
+      onClose={onClose}
+      closeDisabled={sending}
+      actions={
+        <button
+          disabled={
+            sending || !eligible || (mode === "create_journal" && !consent)
+          }
+          onClick={() => void submit()}
+        >
+          {rebuild ? "确认重建" : "开始索引"}
+        </button>
+      }
     >
-      <h2 id={`index-${partitionId}`}>
-        {title} {name}
-      </h2>
       {error && (
         <p className="asset-error" role="alert">
           {error}
@@ -290,19 +289,6 @@ export function IndexModeDialog({
           </label>
         </>
       )}
-      <div className="dialog-actions">
-        <button disabled={sending} onClick={onClose}>
-          取消
-        </button>
-        <button
-          disabled={
-            sending || !eligible || (mode === "create_journal" && !consent)
-          }
-          onClick={() => void submit()}
-        >
-          {rebuild ? "确认重建" : "开始索引"}
-        </button>
-      </div>
-    </dialog>
+    </Modal>
   );
 }

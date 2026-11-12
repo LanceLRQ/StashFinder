@@ -155,9 +155,9 @@ test("cache controls show real bytes, resize immediately and clear without losin
     name: "清空图片缓存？",
   });
   expect(document.activeElement).toBe(
-    screen.getByRole("button", { name: "取消" }),
+    screen.getByRole("button", { name: "关闭" }),
   );
-  fireEvent.keyDown(dialog, { key: "Escape" });
+  fireEvent(dialog, new Event("cancel", { cancelable: true }));
   expect(
     vi
       .mocked(invoke)

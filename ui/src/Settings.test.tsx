@@ -5,20 +5,12 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeAll, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import Desktop from "./Desktop";
 import Settings from "./Settings";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-beforeAll(() => {
-  HTMLDialogElement.prototype.showModal = function () {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function () {
-    this.open = false;
-  };
-});
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
@@ -225,7 +217,7 @@ test("disabling automatic updates requires confirmation and a failed save retain
   fireEvent.click(toggle);
   expect(screen.getByRole("dialog")).toBeTruthy();
   expect(enabled).toBe(true);
-  fireEvent.click(screen.getByRole("button", { name: "保持开启" }));
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
   expect(enabled).toBe(true);
   fireEvent.click(toggle);
   fail = true;

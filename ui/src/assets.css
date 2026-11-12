@@ -39,9 +39,6 @@
 .connection.inaccessible {
   color: #98600e;
 }
-.asset-dialog::backdrop {
-  background: #172a3040;
-}
 .asset-dialog input:not([type="checkbox"], [type="radio"]) {
   border: 1px solid #aebbb4;
   border-radius: 3px;
@@ -70,25 +67,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.asset-dialog {
-  position: fixed;
-  inset: 0;
-  margin: auto;
-  box-sizing: border-box;
-  width: min(440px, calc(100vw - 40px));
-  max-height: calc(100vh - 40px);
-  overflow: auto;
-  border: 1px solid #b9c3bd;
-  border-radius: 6px;
-  padding: 24px;
-  box-shadow: 0 10px 36px #182d3033;
-  z-index: 10;
-  color: #24302e;
-}
-.asset-dialog h2 {
-  margin: 0 0 18px;
-  font-size: 20px;
-}
 .asset-dialog label {
   display: grid;
   gap: 6px;
@@ -97,26 +75,22 @@
   font-size: 13px;
   color: #53625d;
 }
-.asset-dialog .dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 20px;
+.registration-dialog {
+  --modal-width: 680px;
 }
-.asset-dialog[open]:has(.candidate-section) {
-  display: flex;
-  flex-direction: column;
-  width: min(720px, calc(100vw - 40px));
+.registration-count {
+  align-self: center;
+  margin-inline-end: auto;
+  color: #647082;
+  white-space: nowrap;
 }
-.candidate-section {
-  min-height: 0;
-  overflow: auto;
+.registration-dialog .registration-submit:not(:disabled) {
+  border-color: #386da7;
+  background: #edf5ff;
+  color: #18476f;
 }
-.asset-dialog:has(.candidate-section) > .dialog-actions {
-  flex-shrink: 0;
-  border-top: 1px solid #dce1e7;
-  padding-top: 12px;
+.registration-dialog .registration-submit:hover:not(:disabled) {
+  background: #dfeeff;
 }
 .asset-return {
   padding: 12px 28px 0;
@@ -184,8 +158,7 @@
   color: #456c96;
 }
 
-.disk-card-content,
-.candidate-copy {
+.disk-card-content {
   display: grid;
   flex: 1;
   gap: 4px;
@@ -193,7 +166,7 @@
 }
 
 .disk-card-content strong,
-.candidate-copy span {
+.disk-card-content small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -215,7 +188,8 @@
 .disk-card-meta {
   display: flex;
   align-items: baseline;
-  flex-wrap: wrap;
+  white-space: nowrap;
+  overflow: hidden;
   gap: 4px 12px;
   font-size: 12px;
   color: #536176;
@@ -410,6 +384,9 @@
   outline-offset: 2px;
 }
 .candidate-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
   flex: 1;
 }
@@ -418,6 +395,8 @@
   align-items: baseline;
   gap: 6px;
   min-width: 0;
+  flex: 1;
+  white-space: nowrap;
 }
 .candidate-title span {
   overflow: hidden;
@@ -425,7 +404,8 @@
   white-space: nowrap;
 }
 .candidate-copy small {
-  margin-top: 2px;
+  flex-shrink: 0;
+  white-space: nowrap;
   color: #59687c;
 }
 .asset-dialog .candidate-status {

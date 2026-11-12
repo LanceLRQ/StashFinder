@@ -57,8 +57,6 @@ export default function FileListItem({
         onSubmit={editing.onSubmit}
         onCancel={editing.onCancel}
       />
-    ) : grid ? (
-      <span className="thumbnail-name">{file.name}</span>
     ) : (
       file.name
     ));
@@ -84,8 +82,16 @@ export default function FileListItem({
         file ? (
           <>
             {icon}
-            {name}
-            {location && <span className="thumbnail-location">{location}</span>}
+            {editing ? (
+              name
+            ) : (
+              <span className="thumbnail-label">
+                {name}
+                {location && (
+                  <span className="thumbnail-location"> · {location}</span>
+                )}
+              </span>
+            )}
           </>
         ) : (
           "正在读取…"

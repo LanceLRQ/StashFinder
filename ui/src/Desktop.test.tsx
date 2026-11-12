@@ -7,19 +7,11 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import Desktop from "./Desktop";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-beforeAll(() => {
-  HTMLDialogElement.prototype.showModal = function () {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function () {
-    this.open = false;
-  };
-});
 beforeEach(() => {
   vi.mocked(invoke).mockImplementation(async (command, args: any) => {
     if (command === "preferences_get")
@@ -354,7 +346,7 @@ test("opens registration over Home and restores its trigger", async () => {
   expect(
     screen.getByRole("tab", { name: "概览", selected: true }),
   ).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "关闭登记" }));
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
   await waitFor(() => expect(document.activeElement).toBe(entry));
   expect(
     vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "asset_snapshot"),

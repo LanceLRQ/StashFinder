@@ -6,6 +6,7 @@ export default defineConfig({
   server: { port: 1420, strictPort: true },
   test: {
     environment: "jsdom",
+    setupFiles: ["./src/test-setup.ts"],
     clearMocks: true,
     css: { include: /file-operations\.css(?:$|\?)/ },
   },

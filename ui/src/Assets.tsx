@@ -7,10 +7,10 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
-import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import IndexControls from "./IndexControls";
 import { FileStatusBar } from "./FileOperations";
+import Modal from "./Modal";
 import WorkspaceIcon from "./WorkspaceIcon";
 import "./assets.css";
 
@@ -22,36 +22,6 @@ import type {
   AssetAction,
 } from "./asset-api";
 export type { AssetSnapshot } from "./asset-api";
-function Modal({
-  title,
-  onCancel,
-  children,
-}: {
-  title: string;
-  onCancel: () => void;
-  children: ReactNode;
-}) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const dialog = ref.current!;
-    dialog.showModal();
-    return () => dialog.close();
-  }, []);
-  return createPortal(
-    <dialog
-      ref={ref}
-      className="asset-dialog"
-      aria-labelledby={title}
-      onCancel={(event) => {
-        event.preventDefault();
-        onCancel();
-      }}
-    >
-      {children}
-    </dialog>,
-    document.body,
-  );
-}
 
 function bytes(value: number | null | undefined) {
   if (value == null) return "未知";
@@ -200,24 +170,22 @@ export default function Assets({
   }
 
   async function register(allowWeak = false) {
-    if (!data || lock.current) return;
-    const eligible = data.candidates.filter(
-      (c) =>
-        !c.blocked && !c.registered && c.observation.candidate_id in selected,
-    );
-    if (!eligible.length) return;
-    if (!allowWeak && eligible.some((c) => c.weak)) {
+    if (!data || data.busy || lock.current || !selectedCandidates.length)
+      return;
+    if (!allowWeak && selectedCandidates.some((c) => c.weak)) {
+      setRegisterOpen(false);
       setWeakConfirm(true);
       return;
     }
     setWeakConfirm(false);
+    closeRegistration();
     lock.current = true;
     setWorking(true);
     setMessage("");
     let current = data;
     const errors: string[] = [];
     const completed: string[] = [];
-    for (const candidate of eligible) {
+    for (const candidate of selectedCandidates) {
       const candidate_id = candidate.observation.candidate_id;
       const name = selected[candidate_id];
       const success = await invoke("asset_command", {
@@ -263,6 +231,7 @@ export default function Assets({
     onStatus?.({ error: error || "", working });
   }, [error, working, onStatus]);
   const registrationTrigger = useRef<HTMLElement | null>(null);
+  const renameInput = useRef<HTMLInputElement>(null);
   function openRegistration() {
     if (!data || data.busy || lock.current) return;
     registrationTrigger.current = document.activeElement as HTMLElement;
@@ -290,6 +259,10 @@ export default function Assets({
   }
   const candidates = (data?.candidates ?? []).filter(
     (candidate) => candidate.registered || !candidate.blocked,
+  );
+  const selectedCandidates = candidates.filter(
+    (candidate) =>
+      !candidate.registered && candidate.observation.candidate_id in selected,
   );
   const current = data?.assets.find(
     (asset) => asset.registration.partition_id === selectedPartition,
@@ -582,21 +555,34 @@ export default function Assets({
       </div>
       {data && registerOpen && (
         <Modal
-          title="candidate-title"
-          onCancel={() => {
-            if (!working) closeRegistration();
-          }}
+          title="选择分区登记"
+          className="asset-dialog registration-dialog"
+          onClose={closeRegistration}
+          actions={
+            <>
+              <span className="registration-count" aria-live="polite">
+                {selectedCandidates.length > 0 &&
+                  `已选 ${selectedCandidates.length} 个分区`}
+              </span>
+              <button
+                className="registration-submit"
+                disabled={disabled || !selectedCandidates.length}
+                onClick={() => void register()}
+              >
+                登记所选分区
+              </button>
+            </>
+          }
         >
-          <h2 id="candidate-title">选择分区登记</h2>
           {error && (
             <p className="asset-error" role="alert">
               {error}
             </p>
           )}
-          <section
-            className="candidate-section"
-            aria-labelledby="candidate-title"
-          >
+          <div className="candidate-section">
+            {data.busy && !candidates.length && !error && (
+              <p role="status">正在读取分区…</p>
+            )}
             {!candidates.length && !data.busy && !error && (
               <p>当前没有可登记的分区。</p>
             )}
@@ -644,25 +630,6 @@ export default function Assets({
                 );
               })}
             </div>
-          </section>
-          <div className="dialog-actions">
-            <button autoFocus disabled={working} onClick={closeRegistration}>
-              关闭登记
-            </button>
-            <button
-              disabled={
-                disabled ||
-                !candidates.some(
-                  (candidate) =>
-                    !candidate.blocked &&
-                    !candidate.registered &&
-                    candidate.observation.candidate_id in selected,
-                )
-              }
-              onClick={() => void register()}
-            >
-              登记所选分区
-            </button>
           </div>
         </Modal>
       )}
@@ -688,30 +655,13 @@ export default function Assets({
       </FileStatusBar>
       {removing && (
         <Modal
-          title="remove-title"
-          onCancel={() => {
-            if (!working) setRemoving(null);
-          }}
-        >
-          <h2 id="remove-title">移除 {removing.name} 的登记？</h2>
-          <p>
-            将停止此分区的索引任务并清理 StashFinder 的分区索引。磁盘文件和 NTFS
-            日志会保留。
-          </p>
-          {error && (
-            <p className="asset-error" role="alert">
-              {error}
-            </p>
-          )}
-          <div className="dialog-actions">
+          title={`移除 ${removing.name} 的登记？`}
+          className="asset-dialog"
+          onClose={() => setRemoving(null)}
+          closeDisabled={working}
+          actions={
             <button
-              autoFocus
-              disabled={working}
-              onClick={() => setRemoving(null)}
-            >
-              取消
-            </button>
-            <button
+              className="danger"
               disabled={disabled}
               onClick={() =>
                 void command({
@@ -726,17 +676,40 @@ export default function Assets({
             >
               移除登记
             </button>
-          </div>
+          }
+        >
+          <p>
+            将停止此分区的索引任务并清理 StashFinder 的分区索引。磁盘文件和 NTFS
+            日志会保留。
+          </p>
+          {error && (
+            <p className="asset-error" role="alert">
+              {error}
+            </p>
+          )}
         </Modal>
       )}
       {rename && (
         <Modal
-          title="rename-title"
-          onCancel={() => {
-            if (!disabled) setRename(null);
-          }}
+          title="修改分区名称"
+          className="asset-dialog"
+          onClose={() => setRename(null)}
+          closeDisabled={disabled}
+          initialFocus={renameInput}
+          actions={
+            <button
+              type="submit"
+              form="partition-rename-form"
+              disabled={
+                disabled || !name.trim() || Array.from(name.trim()).length > 128
+              }
+            >
+              保存名称
+            </button>
+          }
         >
           <form
+            id="partition-rename-form"
             onSubmit={(e) => {
               e.preventDefault();
               void command({
@@ -746,11 +719,10 @@ export default function Assets({
               });
             }}
           >
-            <h2 id="rename-title">修改分区名称</h2>
             <label>
               分区名称
               <input
-                autoFocus
+                ref={renameInput}
                 value={name}
                 disabled={disabled}
                 onChange={(e) => setName(e.target.value)}
@@ -758,45 +730,26 @@ export default function Assets({
             </label>
             <p>仅修改软件内名称，不修改硬盘卷标。</p>
             {error && <p className="asset-error">{error}</p>}
-            <div className="dialog-actions">
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() => setRename(null)}
-              >
-                取消
-              </button>
-              <button
-                disabled={
-                  disabled ||
-                  !name.trim() ||
-                  Array.from(name.trim()).length > 128
-                }
-              >
-                保存名称
-              </button>
-            </div>
           </form>
         </Modal>
       )}
       {weakConfirm && (
-        <Modal title="weak-title" onCancel={() => setWeakConfirm(false)}>
-          <h2 id="weak-title">身份信息不足</h2>
+        <Modal
+          title="身份信息不足"
+          className="asset-dialog"
+          onClose={() => {
+            setWeakConfirm(false);
+            setRegisterOpen(true);
+          }}
+          actions={
+            <button disabled={disabled} onClick={() => void register(true)}>
+              按新分区登记
+            </button>
+          }
+        >
           <p>
             这些分区可以按新分区登记，但再次接入时可能无法自动识别。不会自动关联已有记录。
           </p>
-          <div className="dialog-actions">
-            <button autoFocus onClick={() => setWeakConfirm(false)}>
-              取消
-            </button>
-            <button
-              onClick={() => {
-                void register(true);
-              }}
-            >
-              按新分区登记
-            </button>
-          </div>
         </Modal>
       )}
     </div>

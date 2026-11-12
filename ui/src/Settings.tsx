@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import CategoryEditor from "./CategoryEditor";
 import CacheSettings from "./CacheSettings";
+import Modal from "./Modal";
 import type { Preferences, ServiceStatus } from "./settings-api";
 import { taskCommand, type TaskSnapshot } from "./task-api";
 
@@ -30,13 +31,6 @@ export default function Settings({
   const [confirmDisable, setConfirmDisable] = useState(false);
   const [policySaving, setPolicySaving] = useState(false);
   const [policyError, setPolicyError] = useState("");
-  const confirmRef = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    if (!confirmDisable) return;
-    const dialog = confirmRef.current!;
-    dialog.showModal();
-    return () => dialog.close();
-  }, [confirmDisable]);
   async function setAutomatic(enabled: boolean) {
     if (policySaving) return;
     setPolicySaving(true);
@@ -215,16 +209,20 @@ export default function Settings({
         )}
       </div>
       {confirmDisable && (
-        <dialog
-          ref={confirmRef}
+        <Modal
           className="asset-dialog"
-          aria-labelledby="disable-auto-title"
-          onCancel={(e) => {
-            e.preventDefault();
-            if (!policySaving) setConfirmDisable(false);
-          }}
+          title="关闭自动更新？"
+          onClose={() => setConfirmDisable(false)}
+          closeDisabled={policySaving}
+          actions={
+            <button
+              disabled={policySaving}
+              onClick={() => void setAutomatic(false)}
+            >
+              关闭自动更新
+            </button>
+          }
         >
-          <h2 id="disable-auto-title">关闭自动更新？</h2>
           <p>
             之后的文件变化不会自动进入索引；已有任务继续，离线记录仍可搜索。
           </p>
@@ -233,21 +231,7 @@ export default function Settings({
               {policyError}
             </p>
           )}
-          <div className="dialog-actions">
-            <button
-              disabled={policySaving}
-              onClick={() => setConfirmDisable(false)}
-            >
-              保持开启
-            </button>
-            <button
-              disabled={policySaving}
-              onClick={() => void setAutomatic(false)}
-            >
-              关闭自动更新
-            </button>
-          </div>
-        </dialog>
+        </Modal>
       )}
     </div>
   );

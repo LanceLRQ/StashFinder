@@ -110,6 +110,7 @@
 .development-app .file-browser {
   border: 1px solid #d4d9d2;
   user-select: none;
+  overflow-x: auto;
 }
 .development-app .file-columns,
 .development-app .sample {
@@ -118,6 +119,7 @@
   align-items: center;
   gap: 12px;
   padding: 7px 10px;
+  white-space: nowrap;
 }
 .development-app .file-columns {
   background: #f5f6f3;
@@ -199,38 +201,20 @@
 .development-app footer {
   margin-top: 20px;
 }
-.development-app .dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: #0005;
-  display: grid;
-  place-items: center;
-  z-index: 2;
-}
-.development-app .operation-dialog {
-  background: white;
-  border: 1px solid #bdc8c0;
-  padding: 24px;
-  width: min(600px, 90vw);
-  max-height: 85vh;
-  overflow: auto;
+.operation-dialog {
+  --modal-width: 600px;
   font-size: 13px;
 }
-.development-app .operation-dialog ul {
-  overflow-wrap: anywhere;
+.operation-dialog ul {
+  white-space: nowrap;
   padding-left: 20px;
 }
-.development-app .operation-dialog input {
+.operation-dialog input {
   display: block;
   width: 100%;
   margin: 8px 0 20px;
   padding: 8px;
   font: inherit;
-}
-.development-app .dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
 }
 @media (max-width: 700px) {
   .development-app {

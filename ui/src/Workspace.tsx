@@ -10,6 +10,7 @@ import type { PartitionIndexes } from "./task-api";
 import type { SearchHit } from "./index-api";
 import BrowsePane from "./BrowsePane";
 import { FileStatusBar } from "./FileOperations";
+import Modal from "./Modal";
 import type { FileView } from "./file-view";
 import Search from "./Search";
 import WindowChrome from "./WindowChrome";
@@ -105,7 +106,7 @@ export default function Workspace({
   const [active, setActive] = useState<number>(tabs[0].id);
   const sequence = useRef(1);
   const root = useRef<HTMLDivElement>(null);
-  const partitionPicker = useRef<HTMLDialogElement>(null);
+  const [partitionPickerOpen, setPartitionPickerOpen] = useState(false);
   const locations = useRef(new Map<number, DirectoryPage>());
   const searchFocus = useRef(false);
   const [commands, setCommands] = useState<FileCommandContext | null>(null);
@@ -418,7 +419,7 @@ export default function Workspace({
               {
                 label: "切换浏览分区…",
                 disabled: !assets.length,
-                run: () => partitionPicker.current?.showModal(),
+                run: () => setPartitionPickerOpen(true),
               },
             ]
           : []),
@@ -520,30 +521,27 @@ export default function Workspace({
         </WorkspaceTabs>
       </WindowChrome>
       <AppMenu groups={groups} />
-      <dialog
-        ref={partitionPicker}
-        className="asset-dialog"
-        aria-labelledby="browse-partition-title"
-      >
-        <h2 id="browse-partition-title">切换浏览分区</h2>
-        <ul className="browse-partitions">
-          {assets.map(({ registration }) => (
-            <li key={registration.partition_id}>
-              <button
-                onClick={() => {
-                  partitionPicker.current?.close();
-                  choosePartition(active, registration.partition_id);
-                }}
-              >
-                {registration.name}
-              </button>
-            </li>
-          ))}
-        </ul>
-        <form method="dialog">
-          <button>取消</button>
-        </form>
-      </dialog>
+      {partitionPickerOpen && (
+        <Modal
+          title="切换浏览分区"
+          onClose={() => setPartitionPickerOpen(false)}
+        >
+          <ul className="browse-partitions">
+            {assets.map(({ registration }) => (
+              <li key={registration.partition_id}>
+                <button
+                  onClick={() => {
+                    setPartitionPickerOpen(false);
+                    choosePartition(active, registration.partition_id);
+                  }}
+                >
+                  {registration.name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Modal>
+      )}
       {notice}
       {device?.error && active !== pages.overview.id && (
         <p className="browse-message desktop-error" role="alert">

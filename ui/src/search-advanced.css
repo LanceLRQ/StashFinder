@@ -76,16 +76,18 @@
   font-size: 12px;
 }
 .category-row strong {
-  width: 70px;
-  flex-shrink: 0;
+  flex: 0 1 9em;
 }
 .category-row span {
   flex: 1;
+  color: #647082;
+}
+.category-row strong,
+.category-row span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #647082;
 }
 .category-row button {
   font-size: 12px;

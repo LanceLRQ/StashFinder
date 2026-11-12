@@ -7,7 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeAll, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import Workspace from "./Workspace";
 import FileOperations from "./FileOperations";
 import DirectoryTree from "./DirectoryTree";
@@ -20,14 +20,6 @@ vi.mock("./browse-api", async (original) => ({
   readDirectory: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-beforeAll(() => {
-  HTMLDialogElement.prototype.showModal = function () {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function () {
-    this.open = false;
-  };
-});
 afterEach(() => {
   cleanup();
   localStorage.clear();
@@ -416,7 +408,16 @@ test("keeps partition switching reachable when the tree and breadcrumbs are hidd
   fireEvent.click(screen.getByRole("button", { name: "文件" }));
   fireEvent.click(screen.getByRole("menuitem", { name: "切换浏览分区…" }));
   const dialog = screen.getByRole("dialog", { name: "切换浏览分区" });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Backup" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "文件" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "切换浏览分区…" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "切换浏览分区" })).getByRole(
+      "button",
+      { name: "Backup" },
+    ),
+  );
   await screen.findByRole("tab", { name: "Backup", selected: true });
   expect(readDirectory).toHaveBeenCalledWith(
     expect.objectContaining({ partition_id: "backup" }),

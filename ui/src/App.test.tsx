@@ -57,7 +57,7 @@ test("requires distinct delete confirmation, allows cancellation and displays re
   fireEvent.mouseUp(row, { button: 0 });
   fireEvent.keyDown(screen.getByRole("listbox"), { key: "Delete" });
   expect(screen.getByRole("dialog", { name: "移入回收站" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
   expect(invoke).toHaveBeenCalledTimes(1);
   fireEvent.keyDown(screen.getByRole("listbox"), {
     key: "Delete",
@@ -65,7 +65,7 @@ test("requires distinct delete confirmation, allows cancellation and displays re
   });
   expect(screen.getByRole("dialog", { name: "永久删除" })).toBeTruthy();
   expect(screen.getByText(/不经过回收站/)).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
   fireEvent.keyDown(screen.getByRole("listbox"), { key: "F2" });
   fireEvent.change(screen.getByRole("textbox", { name: "新名称" }), {
     target: { value: "existing.txt" },

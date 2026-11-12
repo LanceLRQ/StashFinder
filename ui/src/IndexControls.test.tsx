@@ -6,18 +6,10 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeAll, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import IndexControls from "./IndexControls";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-beforeAll(() => {
-  HTMLDialogElement.prototype.showModal = function () {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function () {
-    this.open = false;
-  };
-});
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -43,7 +35,14 @@ test("journal creation requires an explicit choice and confirmation", async () =
   mockStatus(status);
   render(<IndexControls partitionId="p" name="Movies" eligible />);
   expect(await screen.findByText("尚未索引")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "索引设置 Movies" }));
+  const settings = screen.getByRole("button", { name: "索引设置 Movies" });
+  fireEvent.click(settings);
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(invoke).not.toHaveBeenCalledWith("index_request", {
+    action: { index_start: expect.anything() },
+  });
+  fireEvent.click(settings);
   expect(
     screen.getByRole("radio", { name: "使用已有 USN 日志" }),
   ).toHaveProperty("checked", true);

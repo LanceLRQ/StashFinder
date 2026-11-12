@@ -165,21 +165,16 @@
   outline: 1px solid #386da7;
   outline-offset: -1px;
 }
-.thumbnail-name,
-.thumbnail-location {
-  display: block;
+.thumbnail-label {
   max-width: 100%;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-.thumbnail-name {
   line-height: 15px;
 }
 .thumbnail-location {
   color: #647082;
   font-size: 11px;
-  line-height: 13px;
 }
 .thumbnail-cell input {
   min-width: 0;

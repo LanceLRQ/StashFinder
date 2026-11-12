@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useVisuals } from "./Visuals";
+import Modal from "./Modal";
 import { cacheBytes, type CacheProgress, type CacheStatus } from "./visual-api";
 
 export default function CacheSettings() {
@@ -126,26 +127,6 @@ export default function CacheSettings() {
         if (live.current && id === sequence.current) setBusy(false);
       });
   }
-  function dialogKey(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape" && !busy) {
-      event.preventDefault();
-      setConfirm(false);
-    }
-    if (event.key === "Tab") {
-      const buttons = [
-        ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-          "button:not(:disabled)",
-        ),
-      ];
-      if (event.shiftKey && document.activeElement === buttons[0]) {
-        event.preventDefault();
-        buttons.at(-1)?.focus();
-      } else if (!event.shiftKey && document.activeElement === buttons.at(-1)) {
-        event.preventDefault();
-        buttons[0]?.focus();
-      }
-    }
-  }
   return (
     <div className="cache-controls">
       {!status ? (
@@ -222,38 +203,27 @@ export default function CacheSettings() {
         </button>
       )}
       {confirm && (
-        <div className="operation-backdrop">
-          <div
-            className="operation-confirm"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="clear-cache-title"
-            onKeyDown={dialogKey}
-          >
-            <h2 id="clear-cache-title">清空图片缓存？</h2>
-            <p>保留文件索引和容量设置。</p>
-            {error && (
-              <p role="alert" className="desktop-error">
-                {error}
-              </p>
-            )}
-            <div>
-              <button
-                autoFocus
-                disabled={busy}
-                onClick={() => setConfirm(false)}
-              >
-                取消
-              </button>
-              <button
-                disabled={busy}
-                onClick={() => update("visual_cache_clear")}
-              >
-                确认清空
-              </button>
-            </div>
-          </div>
-        </div>
+        <Modal
+          role="alertdialog"
+          title="清空图片缓存？"
+          onClose={() => setConfirm(false)}
+          closeDisabled={busy}
+          actions={
+            <button
+              disabled={busy}
+              onClick={() => update("visual_cache_clear")}
+            >
+              确认清空
+            </button>
+          }
+        >
+          <p>保留文件索引和容量设置。</p>
+          {error && (
+            <p role="alert" className="desktop-error">
+              {error}
+            </p>
+          )}
+        </Modal>
       )}
     </div>
   );

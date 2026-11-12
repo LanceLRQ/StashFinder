@@ -7,20 +7,12 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeAll, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { createRef } from "react";
 import Assets, { type AssetControls, type AssetSnapshot } from "./Assets";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-beforeAll(() => {
-  HTMLDialogElement.prototype.showModal = function () {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function () {
-    this.open = false;
-  };
-});
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -88,8 +80,8 @@ test("registration shows eligible and registered cards without editable names", 
     within(actions!)
       .getAllByRole("button")
       .map((button) => button.textContent),
-  ).toEqual(["关闭登记", "登记所选分区"]);
-  fireEvent.click(within(dialog).getByRole("button", { name: "关闭登记" }));
+  ).toEqual(["登记所选分区"]);
+  fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
@@ -409,8 +401,12 @@ test("late initial response cannot overwrite a newer snapshot", async () => {
   expect(screen.queryByText(/旧设备/)).toBeNull();
 });
 
-test("partial registration keeps the failed selection and reports the failure", async () => {
+test("multiple selections close on submit, and failures remain selected for retry", async () => {
   const data = snapshot();
+  let releaseFirst!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
   vi.mocked(invoke).mockImplementation(async (command, args) => {
     if (command === "asset_snapshot") return structuredClone(data);
     if (command === "index_request")
@@ -429,6 +425,7 @@ test("partial registration keeps the failed selection and reports the failure", 
     const action = (args as { action: { register: { candidate_id: string } } })
       .action.register;
     if (action.candidate_id === "B") throw new Error("设备已断开");
+    await pending;
     data.version++;
     data.candidates[0].blocked = "已登记";
     data.candidates[0].registered = true;
@@ -455,12 +452,17 @@ test("partial registration keeps the failed selection and reports the failure", 
   await openRegistration();
   const boxes = await screen.findAllByRole("checkbox");
   boxes.forEach((box) => fireEvent.click(box));
+  expect(screen.getByText("已选 2 个分区")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "登记所选分区" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByText("正在处理设备信息…")).toBeTruthy();
+  await act(async () => releaseFirst());
   expect(await screen.findByRole("alert")).toHaveProperty(
     "textContent",
     expect.stringContaining("设备已断开"),
   );
   expect(screen.getByLabelText("已登记 1 个分区")).toBeTruthy();
+  await openRegistration();
   const after = screen.getAllByRole("checkbox");
   expect(after[0]).toHaveProperty("checked", false);
   expect(after[1]).toHaveProperty("checked", true);
@@ -476,8 +478,10 @@ test("weak identity requires explicit confirmation and cancel sends nothing", as
   await openRegistration();
   fireEvent.click((await screen.findAllByRole("checkbox"))[0]);
   fireEvent.click(screen.getByRole("button", { name: "登记所选分区" }));
-  expect(screen.getByRole("dialog", { name: "身份信息不足" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  const confirmation = screen.getByRole("dialog", { name: "身份信息不足" });
+  expect(screen.queryByRole("dialog", { name: "选择分区登记" })).toBeNull();
+  fireEvent.click(within(confirmation).getByRole("button", { name: "关闭" }));
+  expect(screen.getByRole("dialog", { name: "选择分区登记" })).toBeTruthy();
   expect(
     vi
       .mocked(invoke)

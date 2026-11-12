@@ -9,6 +9,7 @@ const paths = {
   development: "m7 5-5 5 5 5 m6-10 5 5-5 5",
   chevronRight: "m8 5 5 5-5 5",
   chevronDown: "m5 8 5 5 5-5",
+  close: "m5 5 10 10 M15 5 5 15",
 };
 
 export default function WorkspaceIcon({

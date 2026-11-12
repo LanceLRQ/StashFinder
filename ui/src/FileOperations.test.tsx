@@ -86,7 +86,7 @@ test("permanent deletion cannot run before confirmation", async () => {
   fireEvent.click(screen.getByText("永久删除样本"));
   await screen.findByRole("alertdialog");
   expect(invoke).not.toHaveBeenCalledWith("file_run", expect.anything());
-  fireEvent.click(screen.getByText("取消"));
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("file_cancel"));
   expect(invoke).not.toHaveBeenCalledWith("file_run", expect.anything());
 });
@@ -196,10 +196,10 @@ test("quiet native menus still expose the in-progress window-close confirmation"
     await screen.findByRole("alertdialog", { name: "文件操作仍在进行" }),
   ).toBeTruthy();
   expect(screen.queryByLabelText("文件操作状态")).toBeNull();
-  fireEvent.click(screen.getByText("等待完成"));
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("file_keep_open"));
 });
-test("deletion confirmation traps focus and Escape cancels without running", async () => {
+test("deletion confirmation focuses Close and Escape cancels without running", async () => {
   vi.mocked(invoke).mockImplementation(async (command) =>
     command === "file_prepare"
       ? {
@@ -218,11 +218,9 @@ test("deletion confirmation traps focus and Escape cancels without running", asy
   );
   fireEvent.click(screen.getByText("永久删除样本"));
   const dialog = await screen.findByRole("alertdialog");
-  const cancel = screen.getByText("取消");
+  const cancel = screen.getByRole("button", { name: "关闭" });
   expect(document.activeElement).toBe(cancel);
-  fireEvent.keyDown(cancel, { key: "Tab", shiftKey: true });
-  expect(document.activeElement).toBe(screen.getByText("确认永久删除"));
-  fireEvent.keyDown(dialog, { key: "Escape" });
+  fireEvent(dialog, new Event("cancel", { cancelable: true }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(invoke).not.toHaveBeenCalledWith("file_run", expect.anything());
 });
