@@ -662,7 +662,11 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                                 && c.next >= journal.first
                                 && c.next <= journal.next =>
                         {
-                            if c.next == journal.next && status.phase == "ready" {
+                            if c.next == journal.next
+                                && status.phase == "ready"
+                                && let Some(generation) = status.active_generation
+                                && !db.has_pending_metadata(generation)?
+                            {
                                 return Ok(None);
                             }
                             if status.phase == "ready"

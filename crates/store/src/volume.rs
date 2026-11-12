@@ -380,7 +380,7 @@ impl Volume {
             "活动代次已变化"
         );
         self.complete(generation)?;
-        self.publish(generation)
+        self.publish_mode(generation, "ready", true)
     }
 
     pub fn complete(&self, generation: i64) -> Result<()> {
@@ -395,14 +395,14 @@ impl Volume {
     }
 
     pub fn publish(&mut self, generation: i64) -> Result<()> {
-        self.publish_mode(generation, "ready")
+        self.publish_mode(generation, "ready", false)
     }
 
     pub fn publish_snapshot(&mut self, generation: i64) -> Result<()> {
-        self.publish_mode(generation, "snapshot")
+        self.publish_mode(generation, "snapshot", false)
     }
 
-    fn publish_mode(&mut self, generation: i64, phase: &str) -> Result<()> {
+    fn publish_mode(&mut self, generation: i64, phase: &str, incremental: bool) -> Result<()> {
         let tx = self
             .db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -411,12 +411,13 @@ impl Volume {
             [generation],
             |r| r.get(0),
         )?;
-        let pending: i64 = tx.query_row(
-            "SELECT count(*) FROM pending_metadata WHERE generation=?1",
-            [generation],
-            |r| r.get(0),
-        )?;
-        ensure!(complete && pending == 0, "索引尚未完成或仍有元数据待补齐");
+        let pending = !incremental
+            && tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pending_metadata WHERE generation=?1)",
+                [generation],
+                |r| r.get::<_, bool>(0),
+            )?;
+        ensure!(complete && !pending, "索引尚未完成或仍有元数据待补齐");
         tx.execute(
             "UPDATE index_state SET active_generation=?1 WHERE id=1",
             [generation],
@@ -427,6 +428,23 @@ impl Volume {
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn has_pending_metadata(&self, generation: i64) -> Result<bool> {
+        Ok(self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pending_metadata WHERE generation=?1)",
+            [generation],
+            |r| r.get(0),
+        )?)
+    }
+
+    pub fn pending_metadata(&self, generation: i64) -> Result<Vec<u64>> {
+        let mut stmt = self
+            .db
+            .prepare("SELECT object FROM pending_metadata WHERE generation=?1 ORDER BY object")?;
+        stmt.query_map([generation], |row| row.get::<_, [u8; 8]>(0))?
+            .map(|row| Ok(u64::from_le_bytes(row?)))
+            .collect()
     }
 
     pub fn has_path(&self, generation: i64, id: &[u8]) -> Result<bool> {

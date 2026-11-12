@@ -2,8 +2,10 @@ mod reader;
 mod record;
 
 pub use reader::{FastScanStats, ReadAt, read_mft_object, scan_mft};
-pub use record::prepare_control_record;
-pub use record::{Attribute, AttributeValue, DataRun, Record, decode_record, decode_runs};
+pub use record::{
+    Attribute, AttributeValue, ControlRecordTailMismatch, DataRun, Record, decode_record,
+    decode_runs, prepare_control_record,
+};
 
 use crate::volumes::read_field;
 use anyhow::{Context, Result, ensure};

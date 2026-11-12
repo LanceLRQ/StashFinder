@@ -449,6 +449,241 @@ fn incremental_survives_restart_and_does_not_rescan_or_replay_twice() {
     assert!(!index.needs_validation);
 }
 
+struct MetadataDelta {
+    target: u64,
+    reason: u32,
+    caught_up: bool,
+    unreadable: bool,
+}
+
+fn torn_control_record() -> anyhow::Result<()> {
+    let mut record = [0; 1024];
+    record[..4].copy_from_slice(b"FILE");
+    record[4..6].copy_from_slice(&48u16.to_le_bytes());
+    record[6..8].copy_from_slice(&3u16.to_le_bytes());
+    record[48..50].copy_from_slice(&0x00edu16.to_le_bytes());
+    record[50..52].copy_from_slice(&0x00f8u16.to_le_bytes());
+    record[510..512].copy_from_slice(&0x32f8u16.to_le_bytes());
+    stashfinder_windows::ntfs::mft::prepare_control_record(&mut record)
+}
+
+impl Source for MetadataDelta {
+    fn root_id(&self) -> u64 {
+        5
+    }
+
+    fn journal(&self) -> anyhow::Result<Option<Journal>> {
+        Ok(Some(Journal {
+            id: 1,
+            first: 0,
+            next: 200,
+        }))
+    }
+
+    fn create_journal(&self) -> anyhow::Result<Journal> {
+        unreachable!()
+    }
+
+    fn inventory(
+        &self,
+        _: &AtomicBool,
+        _: &mut dyn FnMut(&[UsnRecord]) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        unreachable!()
+    }
+
+    fn directory(
+        &self,
+        _: u64,
+        _: &AtomicBool,
+        _: &mut dyn FnMut(&[DirectoryEntry]) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        unreachable!()
+    }
+
+    fn object(&self, id: u64) -> anyhow::Result<Option<NativeObject>> {
+        if id == self.target {
+            if self.unreadable {
+                torn_control_record()?;
+            }
+            Ok(Some(NativeObject {
+                entry: entry(id, "中文.txt", false, 84),
+                links: vec![
+                    (20, "中文.txt".encode_utf16().collect()),
+                    (5, "alias.txt".encode_utf16().collect()),
+                ],
+            }))
+        } else {
+            assert_eq!(id, 22);
+            Ok(Some(NativeObject {
+                entry: entry(id, "neighbor.txt", false, 16),
+                links: vec![(5, "neighbor.txt".encode_utf16().collect())],
+            }))
+        }
+    }
+
+    fn changes(&self, journal: u64, start: i64) -> anyhow::Result<UsnPage> {
+        assert!(!self.caught_up);
+        assert_eq!((journal, start), (1, 100));
+        let mut records = vec![UsnRecord {
+            id: self.target,
+            parent: 20,
+            usn: 150,
+            reason: 2,
+            attributes: 32,
+            name: "中文.txt".encode_utf16().collect(),
+        }];
+        if self.reason != 0 {
+            records.push(UsnRecord {
+                id: self.target,
+                parent: 20,
+                usn: 160,
+                reason: self.reason,
+                attributes: 32,
+                name: "中文.txt".encode_utf16().collect(),
+            });
+        }
+        records.push(UsnRecord {
+            id: 22,
+            parent: 5,
+            usn: 180,
+            reason: 0x100,
+            attributes: 32,
+            name: "neighbor.txt".encode_utf16().collect(),
+        });
+        Ok(UsnPage { next: 200, records })
+    }
+}
+
+fn metadata_delta_index(file: &std::path::Path) -> Volume {
+    let mut db = Volume::create(file, "{}").unwrap();
+    build(
+        &FastFixture {
+            failure: None,
+            fast: Cell::new(0),
+            legacy: Cell::new(0),
+            journals: Cell::new(0),
+        },
+        &mut db,
+        IndexMode::Journal,
+        &AtomicBool::new(false),
+        &mut |_| {},
+    )
+    .unwrap();
+    db
+}
+
+#[test]
+fn incremental_commits_neighbors_and_retries_deferred_metadata_after_reopen() {
+    use stashfinder_service::index::{ObservedCursor, has_relevant_changes, synchronize};
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("volume.sqlite");
+    let mut db = metadata_delta_index(&file);
+    let generation = db.active_generation().unwrap().unwrap();
+    let cancelled = AtomicBool::new(false);
+    let mut source = MetadataDelta {
+        target: 21,
+        reason: 0,
+        caught_up: false,
+        unreadable: true,
+    };
+    let sizes = |db: &Volume| {
+        let index = SearchIndex::load(db).unwrap().unwrap();
+        assert!(!index.needs_validation);
+        index
+            .search(&Query::parse(".txt", false).unwrap(), &[], 10, &cancelled)
+            .unwrap()
+            .rows
+            .into_iter()
+            .map(|row| (row.name, row.size.unwrap()))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    assert!(synchronize(&source, &mut db, &cancelled).unwrap());
+    assert_eq!(db.cursor(generation).unwrap().unwrap().next, 200);
+    let before = sizes(&db);
+    assert_eq!(before["中文.txt"], "42");
+    assert_eq!(before["alias.txt"], "42");
+    assert_eq!(before["neighbor.txt"], "16");
+    drop(db);
+
+    let mut db = Volume::open(&file).unwrap();
+    source.caught_up = true;
+    let mut observed = ObservedCursor::default();
+    assert!(has_relevant_changes(&source, &db, &mut observed).unwrap());
+    assert!(!synchronize(&source, &mut db, &cancelled).unwrap());
+    assert_eq!(sizes(&db), before);
+    source.unreadable = false;
+    assert!(synchronize(&source, &mut db, &cancelled).unwrap());
+    assert_eq!(db.cursor(generation).unwrap().unwrap().next, 200);
+    let after = sizes(&db);
+    assert_eq!(after["中文.txt"], "84");
+    assert_eq!(after["alias.txt"], "84");
+    assert_eq!(after["neighbor.txt"], "16");
+    assert!(!has_relevant_changes(&source, &db, &mut observed).unwrap());
+}
+
+#[test]
+fn incremental_rolls_back_deferred_metadata_and_neighbors_if_cursor_write_fails() {
+    use stashfinder_service::index::synchronize;
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("volume.sqlite");
+    let mut db = metadata_delta_index(&file);
+    let generation = db.active_generation().unwrap().unwrap();
+    let connection = rusqlite::Connection::open(file).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TRIGGER reject_cursor BEFORE UPDATE OF next_usn ON generations
+             BEGIN SELECT RAISE(ABORT, 'fixture cursor failure'); END;",
+        )
+        .unwrap();
+    let error = synchronize(
+        &MetadataDelta {
+            target: 21,
+            reason: 0,
+            caught_up: false,
+            unreadable: true,
+        },
+        &mut db,
+        &AtomicBool::new(false),
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("fixture cursor failure"));
+    assert_eq!(db.cursor(generation).unwrap().unwrap().next, 100);
+    assert!(!db.has_pending_metadata(generation).unwrap());
+    assert!(!db.has_object(generation, &22u64.to_le_bytes()).unwrap());
+}
+
+#[test]
+fn incremental_does_not_defer_structural_reasons_or_a_different_file_id() {
+    use stashfinder_service::index::synchronize;
+    for (target, reason) in [
+        (21, 0x100),
+        (21, 0x200),
+        (21, 0x2000),
+        (21, 0x10000),
+        (21 + (1 << 48), 0),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("volume.sqlite");
+        let mut db = metadata_delta_index(&file);
+        let generation = db.active_generation().unwrap().unwrap();
+        let error = synchronize(
+            &MetadataDelta {
+                target,
+                reason,
+                caught_up: false,
+                unreadable: true,
+            },
+            &mut db,
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("MFT 控制记录扇区尾部不一致"));
+        assert_eq!(db.cursor(generation).unwrap().unwrap().next, 100);
+        assert!(!db.has_object(generation, &22u64.to_le_bytes()).unwrap());
+    }
+}
+
 #[test]
 fn incremental_rejects_gap_read_failure_and_cancel_without_advancing_cursor() {
     for (first, next, journal_id, unreadable, cancel) in [

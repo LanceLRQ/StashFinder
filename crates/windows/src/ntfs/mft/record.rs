@@ -189,6 +189,17 @@ pub(super) fn utf16(bytes: &[u8]) -> Vec<u16> {
         .collect()
 }
 
+#[derive(Debug)]
+pub struct ControlRecordTailMismatch;
+
+impl std::fmt::Display for ControlRecordTailMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MFT 控制记录扇区尾部不一致")
+    }
+}
+
+impl std::error::Error for ControlRecordTailMismatch {}
+
 /// Normalize kernel-restored control-code records for the strict on-disk decoder.
 pub fn prepare_control_record(bytes: &mut [u8]) -> Result<()> {
     let usa = usize::from(read_field::<u16>(bytes, 4)?);
@@ -206,7 +217,7 @@ pub fn prepare_control_record(bytes: &mut [u8]) -> Result<()> {
     let protected = (1..count).all(|i| bytes[i * 512 - 2..i * 512] == signature.to_le_bytes());
     let restored =
         (1..count).all(|i| bytes[i * 512 - 2..i * 512] == bytes[usa + i * 2..usa + i * 2 + 2]);
-    ensure!(protected || restored, "MFT 控制记录扇区尾部不一致");
+    ensure!(protected || restored, ControlRecordTailMismatch);
     for i in 1..count {
         bytes[i * 512 - 2..i * 512].copy_from_slice(&signature.to_le_bytes());
     }

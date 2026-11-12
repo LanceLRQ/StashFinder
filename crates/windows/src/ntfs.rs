@@ -16,6 +16,12 @@ use windows::{
 
 pub mod mft;
 
+pub const METADATA_ONLY_USN_REASONS: u32 = USN_REASON_DATA_OVERWRITE
+    | USN_REASON_DATA_EXTEND
+    | USN_REASON_DATA_TRUNCATION
+    | USN_REASON_BASIC_INFO_CHANGE
+    | USN_REASON_CLOSE;
+
 #[derive(Clone, Debug)]
 pub struct UsnRecord {
     pub id: u64,

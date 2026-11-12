@@ -3,8 +3,9 @@ pub use stashfinder_core::index::IndexMode;
 use stashfinder_store::initial::{InitialPathConflict, InitialPathsIncomplete};
 use stashfinder_store::volume::{Changes, Cursor, Entry, Object, Volume};
 use stashfinder_windows::ntfs::{
-    DirectoryEntry, Journal, NativeObject, UsnPage, UsnRecord, VolumeReader,
-    mft::{FastScanStats, FastScanUnavailable},
+    DirectoryEntry, Journal, METADATA_ONLY_USN_REASONS, NativeObject, UsnPage, UsnRecord,
+    VolumeReader,
+    mft::{ControlRecordTailMismatch, FastScanStats, FastScanUnavailable},
 };
 use std::{
     collections::{BTreeMap, HashSet, VecDeque},
@@ -61,6 +62,7 @@ pub trait Source {
 #[derive(Default)]
 pub struct ObservedCursor {
     boundary: Option<(i64, Vec<u8>, i64, i64)>,
+    metadata_retry_at: Option<Instant>,
 }
 
 pub fn has_relevant_changes(
@@ -146,6 +148,14 @@ pub fn has_relevant_changes(
     );
     source.verify()?;
     observed.boundary = Some((generation, cursor.journal, cursor.next, next));
+    if observed
+        .metadata_retry_at
+        .is_none_or(|at| at.elapsed() >= Duration::from_secs(30))
+        && db.has_pending_metadata(generation)?
+    {
+        observed.metadata_retry_at = Some(Instant::now());
+        return Ok(true);
+    }
     Ok(false)
 }
 
@@ -816,18 +826,13 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
         );
         source.verify()?;
         let pruned = exclude_runtime_paths(source, db, generation)?;
-        if cursor.next == boundary.next {
-            if db.index_status()?.phase != "ready" {
-                db.finish_incremental(generation)?;
-                return Ok(true);
-            }
-            return Ok(pruned);
-        }
+        let retry_pending = db.has_pending_metadata(generation)?;
+        let mut inspected = HashSet::new();
         let mut next = cursor.next;
         let mut changed = pruned;
         // A bounded turn yields to other partitions on a continuously busy volume.
         let mut batches = 0;
-        while batches < 64 {
+        while next < boundary.next && batches < 64 {
             ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
             let page = source.changes(journal_id, next)?;
             ensure!(
@@ -847,6 +852,7 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
             let mut objects = Vec::new();
             let mut entries = Vec::new();
             let mut removed = Vec::new();
+            let mut pending = Vec::new();
             let mut added = HashSet::new();
             let mut later_deletions = None;
             for (id, (reason, inspect)) in ids {
@@ -857,10 +863,22 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
                 if id & 0x0000ffffffffffff < 16 && id != source.root_id() {
                     continue;
                 }
-                match source
-                    .object(id)
-                    .with_context(|| format!("读取变更对象 {id:016x}"))?
-                {
+                if retry_pending {
+                    inspected.insert(id);
+                }
+                let current = match source.object(id) {
+                    Err(error)
+                        if error.is::<ControlRecordTailMismatch>()
+                            && reason != 0
+                            && reason & !METADATA_ONLY_USN_REASONS == 0
+                            && db.has_object(generation, &id.to_le_bytes())? =>
+                    {
+                        pending.push(id.to_le_bytes().to_vec());
+                        continue;
+                    }
+                    result => result.with_context(|| format!("读取变更对象 {id:016x}"))?,
+                };
+                match current {
                     Some(current) => {
                         if let Some(current) = visible_object(source, current)? {
                             collect_object(
@@ -903,6 +921,7 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
             if !objects.is_empty()
                 || !entries.is_empty()
                 || !removed.is_empty()
+                || !pending.is_empty()
                 || (changed && next >= boundary.next)
             {
                 batches += 1;
@@ -913,7 +932,7 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
                         objects: &objects,
                         entries: &entries,
                         removed: &removed,
-                        pending: &[],
+                        pending: &pending,
                         cursor: Some(&Cursor {
                             journal: journal_id.to_le_bytes().to_vec(),
                             next,
@@ -922,13 +941,51 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
                     },
                 )?;
             }
-            if next >= boundary.next {
-                if changed || db.index_status()?.phase != "ready" {
-                    db.finish_incremental(generation)?;
-                    return Ok(true);
+        }
+        if next < boundary.next {
+            return Ok(changed);
+        }
+        if retry_pending {
+            // Journal replay owns path changes and deletion. Retries only refresh existing metadata.
+            let mut objects = Vec::new();
+            for id in db.pending_metadata(generation)? {
+                if inspected.contains(&id) {
+                    continue;
                 }
-                return Ok(false);
+                ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
+                match source.object(id) {
+                    Ok(Some(current)) => objects.push(object(&current.entry)),
+                    Ok(None) => (),
+                    Err(error) if error.is::<ControlRecordTailMismatch>() => (),
+                    Err(error) => return Err(error).with_context(|| format!("补齐对象 {id:016x}")),
+                }
             }
+            if !objects.is_empty() {
+                let cursor = db.cursor(generation)?.context("索引没有 USN 游标")?;
+                let end = source.journal()?.context("USN 日志已失效")?;
+                ensure!(
+                    end.id == journal_id && cursor.next >= end.first && cursor.next <= end.next,
+                    "USN 日志发生断档"
+                );
+                source.verify()?;
+                ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
+                db.apply_incremental(
+                    generation,
+                    Changes {
+                        objects: &objects,
+                        entries: &[],
+                        removed: &[],
+                        pending: &[],
+                        cursor: Some(&cursor),
+                        replace_links: false,
+                    },
+                )?;
+                changed = true;
+            }
+        }
+        if changed || db.index_status()?.phase != "ready" {
+            db.finish_incremental(generation)?;
+            return Ok(true);
         }
         Ok(changed)
     })();
