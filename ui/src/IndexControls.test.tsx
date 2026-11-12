@@ -91,6 +91,38 @@ test("missing USN prompts for a choice and defaults to basic scanning", async ()
     }),
   );
 });
+test("an expired cursor keeps the old index until rebuild is explicitly confirmed", async () => {
+  mockStatus({
+    ...status,
+    phase: "needs_rebuild",
+    generation: 1,
+    active_generation: 1,
+  });
+  render(<IndexControls partitionId="p" name="Movies" eligible />);
+  await screen.findByText("需要重建索引");
+  const settings = screen.getByRole("button", { name: "索引设置 Movies" });
+  fireEvent.click(settings);
+  expect(screen.getByRole("dialog", { name: "重建索引 Movies" })).toBeTruthy();
+  expect(screen.getByText(/保留已有索引/)).toBeTruthy();
+  expect(
+    screen.getByRole("radio", { name: "使用已有 USN 日志" }),
+  ).toHaveProperty("checked", true);
+  fireEvent(
+    screen.getByRole("dialog"),
+    new Event("cancel", { cancelable: true }),
+  );
+  expect(invoke).not.toHaveBeenCalledWith("index_request", {
+    action: { index_start: expect.anything() },
+  });
+  fireEvent.click(settings);
+  fireEvent.click(screen.getByRole("button", { name: "确认重建" }));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("index_request", {
+      action: { index_start: { partition_id: "p", mode: "journal" } },
+    }),
+  );
+});
+
 test("running index can be cancelled", async () => {
   mockStatus({ ...status, phase: "scanning", task_id: "task-one" });
   render(<IndexControls partitionId="p" name="Movies" eligible />);

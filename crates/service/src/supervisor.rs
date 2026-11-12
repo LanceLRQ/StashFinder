@@ -320,7 +320,11 @@ impl Runner {
             })
         {
             if task.state == "needs_confirmation" {
-                status.journal_missing = true;
+                status.journal_missing = task.kind != "rebuild";
+                if task.kind == "rebuild" {
+                    status.phase = "needs_rebuild".into();
+                    status.error.clone_from(&task.error);
+                }
             } else {
                 status.task_id = Some(task.id.clone());
                 if task.state != "running" {
@@ -331,6 +335,15 @@ impl Runner {
         status
     }
     pub fn scan(&self, partition: &str, mode: IndexMode, snapshot: &Snapshot) -> Result<String> {
+        self.queue_index_task(partition, mode, snapshot, false)
+    }
+    fn queue_index_task(
+        &self,
+        partition: &str,
+        mode: IndexMode,
+        snapshot: &Snapshot,
+        incremental: bool,
+    ) -> Result<String> {
         ensure!(self.ready(), "正在恢复索引状态");
         let asset = snapshot
             .assets
@@ -353,16 +366,16 @@ impl Runner {
         let task = self.shared.with_tasks(|tasks| {
             tasks.set_paused(partition, false)?;
             tasks.set_scan_mode(partition, matches!(mode, IndexMode::ScanOnly))?;
-            tasks.enqueue(
-                partition,
-                if matches!(mode, IndexMode::ScanOnly) {
-                    "scan"
-                } else {
-                    "build"
-                },
-                mode,
-                false,
-            )
+            let kind = if incremental {
+                "sync"
+            } else if matches!(mode, IndexMode::ScanOnly) {
+                "scan"
+            } else if tasks.rebuild_confirmation_pending(partition)? {
+                "rebuild"
+            } else {
+                "build"
+            };
+            tasks.enqueue(partition, kind, mode, false)
         })?;
         Ok(task.id)
     }
@@ -404,13 +417,17 @@ impl Runner {
             ),
             "当前任务不能重试"
         );
+        ensure!(
+            task.kind != "rebuild" || task.state != "needs_confirmation",
+            "请确认重建索引"
+        );
         // A previous explicit grant never authorizes recreating a deleted journal.
         let mode = if matches!(task.mode, IndexMode::CreateJournal) {
             IndexMode::Journal
         } else {
             task.mode
         };
-        self.scan(&task.partition_id, mode, snapshot)
+        self.queue_index_task(&task.partition_id, mode, snapshot, task.kind == "sync")
     }
 }
 impl Drop for Runner {
@@ -566,7 +583,13 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                     continue;
                 }
                 if !shared
-                    .with_tasks(|t| Ok(t.enabled()? && !t.paused(id)?))
+                    .with_tasks(|t| {
+                        Ok(
+                            t.enabled()?
+                                && !t.paused(id)?
+                                && !t.rebuild_confirmation_pending(id)?,
+                        )
+                    })
                     .unwrap_or(false)
                 {
                     continue;
@@ -651,17 +674,13 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                         .map(|g| db.cursor(g))
                         .transpose()?
                         .flatten();
-                    let kind = match cursor {
-                        _ if status.active_generation.is_some()
-                            && status.generation != status.active_generation =>
-                        {
-                            "rebuild"
-                        }
-                        Some(c)
-                            if c.journal == journal.id.to_le_bytes()
-                                && c.next >= journal.first
-                                && c.next <= journal.next =>
-                        {
+                    let kind = match cursor.filter(|c| {
+                        c.journal == journal.id.to_le_bytes()
+                            && c.next >= journal.first
+                            && c.next <= journal.next
+                    }) {
+                        Some(_) if status.generation != status.active_generation => "rebuild",
+                        Some(c) => {
                             if c.next == journal.next
                                 && status.phase == "ready"
                                 && let Some(generation) = status.active_generation
@@ -682,13 +701,13 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                             }
                             "sync"
                         }
-                        _ if status.active_generation.is_some() => "rebuild",
+                        None if status.active_generation.is_some() => "sync",
                         _ => "build",
                     };
                     if kind == "rebuild"
                         && let Some(g) = status.active_generation
                     {
-                        db.mark_stale(g, "日志断档，正在重新校验")?;
+                        db.mark_stale(g, "上一次完整校验未完成，正在重新校验")?;
                     }
                     shared.with_tasks(|t| t.enqueue(id, kind, IndexMode::Journal, true).map(Some))
                 })();
@@ -825,11 +844,22 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                     index::synchronize(source.as_ref(), &mut db, &cancel).map(|_| ())
                 } else {
                     let source = factory(&asset)?;
-                    index::build(source.as_ref(), &mut db, task.mode, &cancel, &mut |phase| {
-                        let mut states = shared.states.lock().unwrap_or_else(|e| e.into_inner());
-                        let state = states.entry(task.partition_id.clone()).or_default();
-                        state.phase = phase.into();
-                        state.error = None;
+                    let boundary = if task.automatic
+                        && task.kind == "rebuild"
+                        && let Some(generation) = db.active_generation()?
+                    {
+                        index::incremental_boundary(source.as_ref(), &db, generation).map(|_| ())
+                    } else {
+                        Ok(())
+                    };
+                    boundary.and_then(|()| {
+                        index::build(source.as_ref(), &mut db, task.mode, &cancel, &mut |phase| {
+                            let mut states =
+                                shared.states.lock().unwrap_or_else(|e| e.into_inner());
+                            let state = states.entry(task.partition_id.clone()).or_default();
+                            state.phase = phase.into();
+                            state.error = None;
+                        })
                     })
                 };
                 if result
@@ -838,6 +868,14 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                     && let Some(g) = db.active_generation()?
                 {
                     db.mark_stale(g, "USN 日志不可用，等待选择扫描方式或单独授权")?;
+                }
+                if task.automatic
+                    && task.kind == "rebuild"
+                    && let Err(error) = &result
+                    && error.is::<index::JournalCursorInvalid>()
+                    && let Some(g) = db.active_generation()?
+                {
+                    db.mark_stale(g, &error.to_string())?;
                 }
                 shared.publish(&task.partition_id, &db)?;
                 result
@@ -867,7 +905,20 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                     }
                     Err(e) if e.is::<index::JournalMissing>() => {
                         failures.remove(&task.partition_id);
-                        t.set_state(&task.id, "needs_confirmation", Some("此分区没有 USN 日志"))
+                        let kind = if task.kind == "rebuild" {
+                            "build"
+                        } else {
+                            &task.kind
+                        };
+                        t.require_confirmation(&task.id, kind, &e.to_string())
+                    }
+                    Err(e)
+                        if e.is::<index::JournalCursorInvalid>()
+                            && (task.kind == "sync"
+                                || (task.automatic && task.kind == "rebuild")) =>
+                    {
+                        failures.remove(&task.partition_id);
+                        t.require_confirmation(&task.id, "rebuild", &e.to_string())
                     }
                     Err(e) => {
                         {

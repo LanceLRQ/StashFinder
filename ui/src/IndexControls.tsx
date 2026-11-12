@@ -14,6 +14,7 @@ export const indexLabels: Record<string, string> = {
   failed: "索引未完成",
   syncing: "同步文件变更",
   needs_validation: "索引需要校验",
+  needs_rebuild: "需要重建索引",
   waiting: "等待接入／恢复",
 };
 const running = new Set([
@@ -161,6 +162,7 @@ export default function IndexControls({
           eligible={eligible && !busy}
           ntfs={filesystem === "NTFS"}
           journalMissing={journalMissing}
+          rebuild={status?.phase === "needs_rebuild"}
           onClose={() => setOpen(false)}
           onStarted={() => {
             setOpen(false);
@@ -178,6 +180,7 @@ export function IndexModeDialog({
   eligible,
   ntfs,
   journalMissing,
+  rebuild = false,
   onClose,
   onStarted,
 }: {
@@ -186,6 +189,7 @@ export function IndexModeDialog({
   eligible: boolean;
   ntfs: boolean;
   journalMissing: boolean;
+  rebuild?: boolean;
   onClose: () => void;
   onStarted: () => void;
 }) {
@@ -197,6 +201,12 @@ export function IndexModeDialog({
   const [consent, setConsent] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const title = rebuild ? "重建索引" : journalMissing ? "选择索引方式" : "索引";
+  const description = rebuild
+    ? "增量游标已失效。重建完成前，保留已有索引。"
+    : journalMissing
+      ? "此分区没有 USN 日志。构建完成前，保留已有索引。"
+      : "重新读取这个分区。构建完成前，保留已有索引。";
   useEffect(() => {
     const element = dialog.current!;
     element.showModal();
@@ -222,18 +232,14 @@ export function IndexModeDialog({
       }}
     >
       <h2 id={`index-${partitionId}`}>
-        {journalMissing ? "选择索引方式" : "索引"} {name}
+        {title} {name}
       </h2>
       {error && (
         <p className="asset-error" role="alert">
           {error}
         </p>
       )}
-      <p>
-        {journalMissing
-          ? "此分区没有 USN 日志。构建完成前，保留已有索引。"
-          : "重新读取这个分区。构建完成前，保留已有索引。"}
-      </p>
+      <p>{description}</p>
       {ntfs && !journalMissing && (
         <label>
           <input
@@ -291,7 +297,7 @@ export function IndexModeDialog({
           }
           onClick={() => void submit()}
         >
-          开始索引
+          {rebuild ? "确认重建" : "开始索引"}
         </button>
       </div>
     </dialog>

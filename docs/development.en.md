@@ -112,7 +112,7 @@ Foreground development requires an explicit absolute data directory. SCM mode de
 ## Automatic-update acceptance
 
 - Settings → Indexing and synchronization enables automatic updates by default. Disabling requires confirmation and lets running tasks finish; manual indexing remains available. Failed saves retain the previous policy.
-- Reconnection validates identity and journal bounds before replay. Gaps trigger rebuilding while the old active generation remains searchable. A failed change-page read does not advance its cursor or prove deletion.
+- Reconnection validates identity and journal bounds before replay. Incremental retries resume from the saved cursor. An invalid cursor requires confirmation before rebuilding, and the old active generation remains searchable. A failed change-page read does not advance its cursor or prove deletion.
 - One worker serializes indexing. Empty journal checks do not create tasks or reload caches. Failures back off with at most three automatic attempts; reconnection or a manual retry can resume work. Keep the latest 200 completed, cancelled or superseded tasks, plus each partition's latest attention state.
 - Pausing stops later batches and preserves committed data. Incremental work resumes from its cursor; full builds restart. Service shutdown or disconnection may wait for the current system call to return.
 - Before running this command in an administrator terminal, explicitly authorize creating, changing and formatting the new test VHD and resetting its journal. Existing directories are rejected. The script unmounts its disk and removes the temporary service, retaining reports and test data.

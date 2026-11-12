@@ -97,6 +97,13 @@ impl Tasks {
         }
         Ok(())
     }
+    pub fn rebuild_confirmation_pending(&self, partition: &str) -> Result<bool> {
+        Ok(self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM tasks WHERE partition_id=?1 AND kind='rebuild' AND state='needs_confirmation')",
+            [partition],
+            |r| r.get(0),
+        )?)
+    }
     pub fn enqueue(
         &mut self,
         partition: &str,
@@ -131,6 +138,8 @@ impl Tasks {
         })?;
         rows.map(|row| {
             let (id, partition_id, kind, mode, automatic, state, created, updated, error) = row?;
+            let phase = (kind == "rebuild" && state == "needs_confirmation")
+                .then(|| "needs_rebuild".into());
             Ok(Task {
                 id,
                 partition_id,
@@ -141,7 +150,7 @@ impl Tasks {
                 created: created.try_into()?,
                 updated: updated.try_into()?,
                 error,
-                phase: None,
+                phase,
             })
         })
         .collect()
@@ -153,11 +162,23 @@ impl Tasks {
             .context("任务不存在或已过期")
     }
     pub fn set_state(&mut self, id: &str, state: &str, error: Option<&str>) -> Result<()> {
+        self.update_state(id, state, error, None)
+    }
+    pub fn require_confirmation(&mut self, id: &str, kind: &str, error: &str) -> Result<()> {
+        self.update_state(id, "needs_confirmation", Some(error), Some(kind))
+    }
+    fn update_state(
+        &mut self,
+        id: &str,
+        state: &str,
+        error: Option<&str>,
+        kind: Option<&str>,
+    ) -> Result<()> {
         let tx = self.db.transaction()?;
         ensure!(
             tx.execute(
-                "UPDATE tasks SET state=?2,updated=?3,error=?4,mode=CASE WHEN ?2='running' AND mode=?5 THEN ?6 ELSE mode END WHERE id=?1",
-                params![id, state, now() as i64, error, serde_json::to_string(&IndexMode::CreateJournal)?, serde_json::to_string(&IndexMode::Journal)?]
+                "UPDATE tasks SET state=?2,updated=?3,error=?4,mode=CASE WHEN ?2='running' AND mode=?5 THEN ?6 ELSE mode END,kind=COALESCE(?7,kind) WHERE id=?1",
+                params![id, state, now() as i64, error, serde_json::to_string(&IndexMode::CreateJournal)?, serde_json::to_string(&IndexMode::Journal)?, kind]
             )? == 1,
             "任务不存在"
         );

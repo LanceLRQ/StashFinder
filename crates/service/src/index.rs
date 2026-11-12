@@ -24,6 +24,17 @@ impl std::fmt::Display for JournalMissing {
 
 impl std::error::Error for JournalMissing {}
 
+#[derive(Debug)]
+pub(crate) struct JournalCursorInvalid;
+
+impl std::fmt::Display for JournalCursorInvalid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("USN 增量游标已失效，需要重建索引")
+    }
+}
+
+impl std::error::Error for JournalCursorInvalid {}
+
 pub trait Source {
     fn excluded_roots(&self) -> Vec<u64> {
         Vec::new()
@@ -762,10 +773,10 @@ fn verify_deletion(
         return Ok(());
     }
     if cached.is_none() {
-        let boundary = source.journal()?.context("USN 日志不可用")?;
+        let boundary = source.journal()?.ok_or(JournalMissing)?;
         ensure!(
             boundary.id == journal && start >= boundary.first && start <= boundary.next,
-            "USN 日志发生断档"
+            JournalCursorInvalid
         );
         let mut next = start;
         let mut deleted = HashSet::new();
@@ -787,10 +798,10 @@ fn verify_deletion(
             }
             next = page.next as i64;
         }
-        let end = source.journal()?.context("USN 日志不可用")?;
+        let end = source.journal()?.ok_or(JournalMissing)?;
         ensure!(
             end.id == journal && start >= end.first && next <= end.next,
-            "USN 日志发生断档"
+            JournalCursorInvalid
         );
         source.verify()?;
         *cached = Some(deleted);
@@ -802,28 +813,29 @@ fn verify_deletion(
     Ok(())
 }
 
+pub(crate) fn incremental_boundary(
+    source: &dyn Source,
+    db: &Volume,
+    generation: i64,
+) -> Result<(Cursor, Journal)> {
+    let boundary = source.journal()?.ok_or(JournalMissing)?;
+    let cursor = db.cursor(generation)?.ok_or(JournalCursorInvalid)?;
+    ensure!(
+        cursor.journal == boundary.id.to_le_bytes()
+            && cursor.next >= boundary.first
+            && cursor.next <= boundary.next,
+        JournalCursorInvalid
+    );
+    Ok((cursor, boundary))
+}
+
 /// Returns false when replay contains no index changes, including excluded-only events.
 pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool) -> Result<bool> {
-    let generation = db.active_generation()?.context("尚无活动索引")?;
+    let generation = db.active_generation()?.ok_or(JournalCursorInvalid)?;
     let result = (|| -> Result<bool> {
         ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
-        let cursor = db
-            .cursor(generation)?
-            .context("索引没有 USN 游标，需要重建")?;
-        let journal_id = u64::from_le_bytes(
-            cursor
-                .journal
-                .as_slice()
-                .try_into()
-                .context("USN 日志标识无效")?,
-        );
-        let boundary = source.journal()?.context("USN 日志不可用")?;
-        ensure!(
-            boundary.id == journal_id
-                && cursor.next >= boundary.first
-                && cursor.next <= boundary.next,
-            "USN 日志发生断档，需要重新建库"
-        );
+        let (cursor, boundary) = incremental_boundary(source, db, generation)?;
+        let journal_id = boundary.id;
         source.verify()?;
         let pruned = exclude_runtime_paths(source, db, generation)?;
         let retry_pending = db.has_pending_metadata(generation)?;
@@ -910,10 +922,10 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
                     }
                 }
             }
-            let end = source.journal()?.context("USN 日志已失效")?;
+            let end = source.journal()?.ok_or(JournalMissing)?;
             ensure!(
                 end.id == journal_id && next >= end.first && page.next <= end.next as u64,
-                "USN 日志发生断档"
+                JournalCursorInvalid
             );
             source.verify()?;
             ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
@@ -961,11 +973,11 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
                 }
             }
             if !objects.is_empty() {
-                let cursor = db.cursor(generation)?.context("索引没有 USN 游标")?;
-                let end = source.journal()?.context("USN 日志已失效")?;
+                let cursor = db.cursor(generation)?.ok_or(JournalCursorInvalid)?;
+                let end = source.journal()?.ok_or(JournalMissing)?;
                 ensure!(
                     end.id == journal_id && cursor.next >= end.first && cursor.next <= end.next,
-                    "USN 日志发生断档"
+                    JournalCursorInvalid
                 );
                 source.verify()?;
                 ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");

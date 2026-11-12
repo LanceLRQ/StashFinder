@@ -54,6 +54,12 @@ export default function Desktop() {
       a.registration.observation.identity.filesystem === "NTFS",
   }));
   const choicePartition = partitions.find((p) => p.id === indexChoice);
+  const rebuildChoice = tasks.data?.tasks.some(
+    (task) =>
+      task.partition_id === indexChoice &&
+      task.kind === "rebuild" &&
+      task.state === "needs_confirmation",
+  );
   const overviewTasks =
     tasks.data?.tasks.filter((task) =>
       partitions.some((partition) => partition.id === task.partition_id),
@@ -204,7 +210,8 @@ export default function Desktop() {
               name={choicePartition.name}
               eligible={!tasks.error && choicePartition.canChooseIndex}
               ntfs
-              journalMissing
+              journalMissing={!rebuildChoice}
+              rebuild={rebuildChoice}
               onClose={() => setIndexChoice("")}
               onStarted={() => {
                 setIndexChoice("");

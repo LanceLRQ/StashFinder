@@ -152,9 +152,13 @@ try {
     [IO.File]::WriteAllText($root + 'fixture\gap.txt', 'gap')
     if ((Search 'restart.txt' $assetId).Count -ne 1) { throw 'Journal reset destroyed old search.' }
     Send-Action @{partition_pause=@{partition_id=$assetId;paused=$false}}
+    Wait-For { $s=Send-Action @{index_state=@{partition_id=$assetId}}; $s.phase -eq 'needs_rebuild' } 'journal gap confirmation'
+    if ((Send-Action @{index_state=@{partition_id=$assetId}}).active_generation -ne $generation) { throw 'Journal gap replaced the active index before confirmation.' }
+    if ((Search 'restart.txt' $assetId).Count -ne 1) { throw 'Waiting for confirmation hid old search results.' }
+    Send-Action @{index_start=@{partition_id=$assetId;mode='journal'}}
     Wait-For { $s=Send-Action @{index_state=@{partition_id=$assetId}}; $s.phase -eq 'ready' -and $s.active_generation -gt $generation } 'journal gap rebuild'
     if ((Search 'gap.txt' $assetId).Count -ne 1) { throw 'Rebuilt index omitted new file.' }
-    $report.checks += 'Journal replacement triggers a new generation while old search remains available'
+    $report.checks += 'Journal replacement waits for confirmation before rebuilding and keeps old search available'
     Send-Action @{partition_pause=@{partition_id=$assetId;paused=$true}}
     $disk = Assert-TestDisk
     $partition = Get-Partition -DiskNumber $disk.Number | Where-Object {$_.Size -eq 384MB}

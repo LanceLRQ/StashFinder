@@ -188,9 +188,7 @@ export default function Tasks({
                       </span>
                       {(task.state === "needs_confirmation" || task.error) && (
                         <small className="task-error">
-                          {task.state === "needs_confirmation"
-                            ? "此分区没有 USN 日志"
-                            : task.error}
+                          {task.error || "此分区没有 USN 日志"}
                         </small>
                       )}
                     </td>
