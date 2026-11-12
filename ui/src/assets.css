@@ -199,6 +199,19 @@
   white-space: nowrap;
 }
 
+.disk-card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.disk-index-attention {
+  color: #9d4927;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .disk-card-meta {
   display: flex;
   align-items: baseline;
@@ -311,11 +324,70 @@
   margin: 0;
   font-size: 17px;
 }
-.asset-task-summary p {
-  margin: 0 0 8px;
+.asset-detail-title ~ .index-activity {
+  border-top: 1px solid #dce1e7;
+  padding-top: 12px;
 }
-.asset-task-summary button {
-  margin-top: 6px;
+
+.index-activity h3 {
+  margin: 10px 0 6px;
+  font-size: 13px;
+}
+
+.index-activity ul {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.index-activity-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.index-activity-row > button {
+  padding: 3px 6px;
+  flex-shrink: 0;
+}
+
+.index-activity-row .index-activity-label,
+.index-activity-history {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.index-activity-row .index-activity-label {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.index-activity-note,
+.index-activity-history {
+  margin: 4px 0;
+  color: #536176;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.index-activity details {
+  margin-top: 12px;
+}
+
+.index-activity summary {
+  cursor: pointer;
+  font-size: 13px;
 }
 
 .asset-dialog .candidate-card {

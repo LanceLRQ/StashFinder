@@ -199,15 +199,14 @@ test("disabling automatic updates requires confirmation and a failed save retain
         mode: "service",
         registered_partitions: 0,
       };
-    if (args?.action?.task_page)
+    if (args?.action?.task_overview)
       return {
-        kind: "tasks",
+        kind: "task_overview",
         data: {
-          version: 1,
-          row: null,
+          version: "1",
+          rows: [],
           next: null,
           automatic: enabled,
-          paused: [],
         },
       };
     if (args?.action?.auto_update) {

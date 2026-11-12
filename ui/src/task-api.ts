@@ -17,13 +17,24 @@ export type TaskSnapshot = {
   tasks: Task[];
   automatic: boolean;
   paused: string[];
+  indexes: PartitionIndexes;
 };
+type PartitionIndex = {
+  index_version: string | null;
+  indexed_at: number | null;
+};
+export type PartitionIndexes = Readonly<Record<string, PartitionIndex>>;
 type TaskPage = {
-  version: number;
-  row: Task | null;
+  version: string;
+  rows: (
+    | {
+        kind: "partition";
+        data: PartitionIndex & { partition_id: string; paused: boolean };
+      }
+    | { kind: "task"; data: Task }
+  )[];
   next: number | null;
   automatic: boolean;
-  paused: string[];
 };
 type TaskAction =
   | { task_cancel: { id: string } }
@@ -40,32 +51,47 @@ export async function taskCommand(action: TaskAction) {
 }
 export async function readTasks(): Promise<TaskSnapshot> {
   for (let attempt = 0; attempt < 3; attempt++) {
-    let version: number | null = null;
+    let version: string | null = null;
     let offset = 0;
     const tasks: Task[] = [];
+    const paused: string[] = [];
+    const indexes = new Map<string, PartitionIndex>();
     let restart = false;
     do {
       const reply = await invoke<
-        { kind: "tasks"; data: TaskPage } | { kind: "error"; data: string }
-      >("index_request", { action: { task_page: { version, offset } } }).catch(
-        (e: unknown) => {
-          if (String(e).includes("任务快照已更新"))
-            return { kind: "error" as const, data: String(e) };
-          throw e;
-        },
-      );
+        | { kind: "task_overview"; data: TaskPage }
+        | { kind: "error"; data: string }
+      >("index_request", {
+        action: { task_overview: { version, offset } },
+      }).catch((e: unknown) => {
+        if (String(e).includes("任务快照已更新"))
+          return { kind: "error" as const, data: String(e) };
+        throw e;
+      });
       if (reply.kind === "error" && reply.data.includes("任务快照已更新")) {
         restart = true;
         break;
       }
-      if (reply.kind !== "tasks")
+      if (reply.kind !== "task_overview")
         throw new Error(reply.kind === "error" ? reply.data : "任务响应无效");
       const page: TaskPage = reply.data;
       version = page.version;
-      if (page.row) tasks.push(page.row);
+      for (const row of page.rows) {
+        if (row.kind === "task") tasks.push(row.data);
+        else {
+          const { partition_id, paused: isPaused, ...index } = row.data;
+          indexes.set(partition_id, index);
+          if (isPaused) paused.push(partition_id);
+        }
+      }
       if (page.next === null)
-        return { tasks, automatic: page.automatic, paused: page.paused };
-      if (page.next <= offset || tasks.length > 4096)
+        return {
+          tasks,
+          automatic: page.automatic,
+          paused,
+          indexes: Object.fromEntries(indexes),
+        };
+      if (!page.rows.length || page.next !== offset + page.rows.length)
         throw new Error("任务分页无效");
       offset = page.next;
     } while (!restart);

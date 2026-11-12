@@ -98,13 +98,14 @@ impl Indexes {
                             )?;
                             let index =
                                 SearchIndex::load_cancelled(&db, &job.cancel)?.map(Arc::new);
-                            if let Some(index) = &index {
+                            Ok(index.map(|index| {
                                 caches
                                     .lock()
                                     .unwrap_or_else(|e| e.into_inner())
-                                    .insert(partition.clone(), index.clone());
-                            }
-                            Ok(index)
+                                    .entry(partition.clone())
+                                    .or_insert(index)
+                                    .clone()
+                            }))
                         })();
                         match index {
                             Ok(Some(index)) => {

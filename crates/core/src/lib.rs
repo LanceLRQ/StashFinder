@@ -62,6 +62,10 @@ pub enum Action {
         version: Option<u64>,
         offset: usize,
     },
+    TaskOverview {
+        version: Option<String>,
+        offset: usize,
+    },
     AutoUpdate {
         enabled: bool,
     },
@@ -124,6 +128,7 @@ pub enum Response {
     Directory(Box<browse::DirectoryPage>),
     SearchPage(Box<index::SearchPage>),
     Tasks(Box<tasks::TaskPage>),
+    TaskOverview(Box<tasks::TaskOverviewPage>),
     SelectionStarted(u64),
     SelectionCount(usize),
     SelectionPage(Box<file_operations::SelectionPage>),

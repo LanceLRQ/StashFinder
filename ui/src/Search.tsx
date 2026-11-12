@@ -18,6 +18,7 @@ import { inSpans, rectangleSpans, toggleSpans } from "./marquee";
 import FileContextMenu from "./FileContextMenu";
 import FileListItem from "./FileListItem";
 import type { Asset } from "./asset-api";
+import type { PartitionIndexes } from "./task-api";
 import { FileStatusBar, useFileOperations } from "./FileOperations";
 import {
   fileEditingKey,
@@ -33,8 +34,7 @@ import {
 import "./assets.css";
 import "./search.css";
 import "./search-advanced.css";
-type CompletedTask = { partition_id: string; id: string; updated: number };
-const noCompletedTasks: CompletedTask[] = [];
+const noIndexes: PartitionIndexes = {};
 const refreshDelay = 250;
 const pause = (ms: number) =>
   new Promise<void>((resolve) => window.setTimeout(resolve, ms));
@@ -61,7 +61,7 @@ export default function Search({
   onLocate,
   categories = defaultCategories,
   context,
-  completedTasks = noCompletedTasks,
+  indexes = noIndexes,
 }: {
   partitions: { id: string; name: string }[];
   assets?: Asset[];
@@ -74,7 +74,7 @@ export default function Search({
   onLocate?: (hit: SearchHit, folder?: boolean) => void;
   categories?: Category[];
   context?: SearchContext;
-  completedTasks?: CompletedTask[];
+  indexes?: PartitionIndexes;
 }) {
   function currentHit(hit: SearchHit): SearchHit {
     if (assets === undefined) return hit;
@@ -228,20 +228,23 @@ export default function Search({
           : null,
     },
   });
-  const observedTasks = useRef(
-    new Map(completedTasks.map((task) => [task.id, task.updated])),
-  );
+  const observedIndexes = useRef(indexes);
   useEffect(() => {
-    const relevant = completedTasks.some(
-      (task) =>
-        (!scopedPartition || task.partition_id === scopedPartition) &&
-        observedTasks.current.get(task.id) !== task.updated,
-    );
-    observedTasks.current = new Map(
-      completedTasks.map((task) => [task.id, task.updated]),
-    );
-    if (relevant) setRefreshWanted((n) => n + 1);
-  }, [completedTasks, scopedPartition]);
+    const previous = observedIndexes.current;
+    observedIndexes.current = indexes;
+    const partitions = scopedPartition
+      ? [scopedPartition]
+      : new Set([...Object.keys(previous), ...Object.keys(indexes)]);
+    for (const id of partitions) {
+      if (
+        (previous[id]?.index_version ?? null) !==
+        (indexes[id]?.index_version ?? null)
+      ) {
+        setRefreshWanted((n) => n + 1);
+        break;
+      }
+    }
+  }, [indexes, scopedPartition]);
 
   function invalidate(keepCurrent = false) {
     const token = ++sequence.current;

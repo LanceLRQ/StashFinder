@@ -98,6 +98,7 @@ async fn index_request(
         | stashfinder_core::Action::TaskCancel { .. }
         | stashfinder_core::Action::TaskRetry { .. }
         | stashfinder_core::Action::TaskPage { .. }
+        | stashfinder_core::Action::TaskOverview { .. }
         | stashfinder_core::Action::AutoUpdate { .. }
         | stashfinder_core::Action::PartitionPause { .. }
         | stashfinder_core::Action::IndexState { .. }

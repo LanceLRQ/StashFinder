@@ -1,4 +1,4 @@
-use stashfinder_core::{assets::*, index::IndexMode};
+use stashfinder_core::{MAX_FRAME, assets::*, index::IndexMode, tasks::TaskOverviewRow};
 use stashfinder_service::{index::Source, supervisor::Runner};
 use stashfinder_store::catalog::Catalog;
 use stashfinder_windows::ntfs::{DirectoryEntry, Journal, NativeObject, UsnPage, UsnRecord};
@@ -526,6 +526,22 @@ fn an_invalid_scan_session_is_reopened_without_an_offline_observation() {
         reads.load(Ordering::SeqCst) >= 1
             && worker.status(&registered.partition_id).phase == "snapshot"
     });
+    wait_until(|| worker.tasks().unwrap().is_empty());
+    let publication = || {
+        worker
+            .overview(None, 0)
+            .unwrap()
+            .rows
+            .into_iter()
+            .find_map(|row| match row {
+                TaskOverviewRow::Partition(row) if row.partition_id == registered.partition_id => {
+                    row.index_version
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    let first_version = publication();
     assert_eq!(opens.load(Ordering::SeqCst), 1);
     // Keep the snapshot online: the detach/reattach happened between device polls.
     epoch.store(1, Ordering::SeqCst);
@@ -533,7 +549,67 @@ fn an_invalid_scan_session_is_reopened_without_an_offline_observation() {
         reads.load(Ordering::SeqCst) >= 2
             && worker.status(&registered.partition_id).phase == "snapshot"
     });
+    wait_until(|| {
+        worker
+            .tasks()
+            .unwrap()
+            .iter()
+            .all(|task| task.state == "superseded")
+    });
+    assert_ne!(publication(), first_version);
     assert!(opens.load(Ordering::SeqCst) >= 2);
+}
+
+#[test]
+fn overview_batches_actionable_tasks_within_the_frame_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut tasks = stashfinder_store::tasks::Tasks::open(dir.path()).unwrap();
+    let failure = "读取失败\n".repeat(500);
+    let oversized = failure.repeat(3);
+    for id in 0..20 {
+        let row = tasks
+            .enqueue(
+                &format!("partition-{id}"),
+                "scan",
+                IndexMode::ScanOnly,
+                true,
+            )
+            .unwrap();
+        tasks
+            .set_state(
+                &row.id,
+                "failed",
+                Some(if id == 0 { &oversized } else { &failure }),
+            )
+            .unwrap();
+    }
+    tasks.set_paused("partition-0", true).unwrap();
+    drop(tasks);
+    let worker = Runner::start_with_source(dir.path().into(), |_| unreachable!());
+    let mut page = worker.overview(None, 0).unwrap();
+    let first = page.next.expect("more than one page");
+    let version = page.version.clone();
+    let mut count = 0;
+    loop {
+        assert!(serde_json::to_vec(&page).unwrap().len() < MAX_FRAME - 128);
+        for row in &page.rows {
+            if let TaskOverviewRow::Task(task) = row {
+                let error = task.error.as_deref().unwrap();
+                if task.partition_id == "partition-0" {
+                    assert!(oversized.starts_with(error.strip_suffix('…').unwrap()));
+                } else {
+                    assert_eq!(error, failure);
+                }
+            }
+        }
+        count += page.rows.len();
+        let Some(next) = page.next else { break };
+        assert_eq!(next, count);
+        page = worker.overview(Some(&version), next).unwrap();
+    }
+    assert_eq!(count, 21);
+    worker.set_enabled(false).unwrap();
+    assert!(worker.overview(Some(&version), first).is_err());
 }
 impl stashfinder_service::scan::Source for ScanDisk {
     fn verify(&self) -> anyhow::Result<()> {

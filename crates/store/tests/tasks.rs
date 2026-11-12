@@ -46,13 +46,87 @@ fn interrupted_tasks_are_explicit_and_history_is_bounded() {
     assert_eq!(tasks.get(&first.id).unwrap().state, "interrupted");
     for _ in 0..220 {
         let row = tasks
-            .enqueue("two", "sync", IndexMode::Journal, true)
+            .enqueue("two", "sync", IndexMode::Journal, false)
             .unwrap();
         tasks.set_state(&row.id, "completed", None).unwrap();
     }
     let rows = tasks.list().unwrap();
-    assert_eq!(rows.len(), 201);
+    assert_eq!(rows.len(), 31);
     assert!(rows.iter().any(|r| r.id == first.id));
+}
+
+#[test]
+fn routine_updates_drop_success_history_and_keep_distinct_execution_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut tasks = Tasks::open(dir.path()).unwrap();
+    let first = tasks
+        .enqueue("one", "sync", IndexMode::Journal, true)
+        .unwrap();
+    tasks.set_state(&first.id, "completed", None).unwrap();
+    assert!(tasks.list().unwrap().is_empty());
+
+    let second = tasks
+        .enqueue("one", "sync", IndexMode::Journal, true)
+        .unwrap();
+    assert_ne!(first.id, second.id);
+    assert!(tasks.cancel(&first.id).is_err());
+    assert_eq!(tasks.get(&second.id).unwrap().state, "queued");
+}
+
+#[test]
+fn a_cancelled_retry_keeps_the_previous_issue_until_success() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut tasks = Tasks::open(dir.path()).unwrap();
+    let failed = tasks
+        .enqueue("one", "sync", IndexMode::Journal, true)
+        .unwrap();
+    tasks
+        .set_state(&failed.id, "failed", Some("previous failure"))
+        .unwrap();
+    let retry = tasks
+        .enqueue("one", "build", IndexMode::Journal, false)
+        .unwrap();
+    tasks.cancel(&retry.id).unwrap();
+    assert_eq!(tasks.get(&failed.id).unwrap().state, "failed");
+
+    let retry = tasks
+        .enqueue("one", "build", IndexMode::Journal, false)
+        .unwrap();
+    tasks.set_state(&retry.id, "completed", None).unwrap();
+    assert_eq!(tasks.get(&failed.id).unwrap().state, "superseded");
+}
+
+#[test]
+fn opening_a_v2_task_database_retires_only_routine_successes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut tasks = Tasks::open(dir.path()).unwrap();
+    tasks.set_paused("one", true).unwrap();
+    tasks.set_scan_mode("one", true).unwrap();
+    let manual = tasks
+        .enqueue("two", "build", IndexMode::Journal, false)
+        .unwrap();
+    tasks.set_state(&manual.id, "completed", None).unwrap();
+    let old = tasks
+        .enqueue("one", "scan", IndexMode::ScanOnly, true)
+        .unwrap();
+    let active = tasks
+        .enqueue("two", "sync", IndexMode::Journal, true)
+        .unwrap();
+    drop(tasks);
+
+    let legacy = rusqlite::Connection::open(dir.path().join("tasks.sqlite")).unwrap();
+    legacy
+        .execute("UPDATE tasks SET state='completed' WHERE id=?1", [&old.id])
+        .unwrap();
+    legacy.pragma_update(None, "user_version", 2).unwrap();
+    drop(legacy);
+
+    let tasks = Tasks::open(dir.path()).unwrap();
+    assert!(tasks.get(&old.id).is_err());
+    assert_eq!(tasks.get(&manual.id).unwrap().state, "completed");
+    assert_eq!(tasks.get(&active.id).unwrap().state, "queued");
+    assert!(tasks.paused("one").unwrap());
+    assert!(tasks.scan_mode("one").unwrap());
 }
 
 #[test]

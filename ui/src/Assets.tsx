@@ -98,7 +98,9 @@ export default function Assets({
   onIndexStatus,
   ref,
   onStatus,
-  taskSummary,
+  indexActivity,
+  attentionPartitions,
+  managedIndexTasks,
 }: {
   onSearch?: (text: string) => void;
   onBrowse?: (partition: string) => void;
@@ -110,7 +112,12 @@ export default function Assets({
   ) => void;
   ref?: Ref<AssetControls>;
   onStatus?: (status: { error: string; working: boolean }) => void;
-  taskSummary?: ReactNode;
+  indexActivity?: (
+    partition: string | undefined,
+    select: (id: string) => void,
+  ) => ReactNode;
+  attentionPartitions?: ReadonlySet<string>;
+  managedIndexTasks?: ReadonlySet<string>;
 } = {}) {
   const [data, setData] = useState<AssetSnapshot | null>(null);
   const [message, setMessage] = useState("");
@@ -421,6 +428,9 @@ export default function Assets({
                   <div className="disk-grid">
                     {assets.map((asset) => {
                       const row = asset.registration;
+                      const needsAttention = attentionPartitions?.has(
+                        row.partition_id,
+                      );
                       const info = row.observation;
                       const space = info.capacity;
                       const mounts = asset.mounts.length
@@ -431,6 +441,9 @@ export default function Assets({
                           key={row.partition_id}
                           className="disk-card"
                           aria-label={row.name}
+                          aria-description={
+                            needsAttention ? "索引需要处理" : undefined
+                          }
                           aria-pressed={selectedPartition === row.partition_id}
                           onClick={() => setSelectedPartition(row.partition_id)}
                           onDoubleClick={() => onBrowse?.(row.partition_id)}
@@ -447,7 +460,14 @@ export default function Assets({
                         >
                           <WorkspaceIcon name="drive" />
                           <span className="disk-card-content">
-                            <strong title={row.name}>{row.name}</strong>
+                            <span className="disk-card-title">
+                              <strong title={row.name}>{row.name}</strong>
+                              {needsAttention && (
+                                <span className="disk-index-attention">
+                                  待处理
+                                </span>
+                              )}
+                            </span>
                             <span className="disk-card-meta">
                               {mounts[0]?.replace(/[\\/]$/, "") || "无盘符"} ·{" "}
                               {info.identity.filesystem || "未知"}
@@ -480,7 +500,7 @@ export default function Assets({
           )}
         </div>
         <aside className="asset-details" aria-label="分区详情">
-          {current && observation ? (
+          {current && observation && (
             <>
               <div className="asset-detail-title">
                 <h2>{current.registration.name}</h2>
@@ -527,6 +547,9 @@ export default function Assets({
                   filesystem={observation.identity.filesystem}
                   details={details}
                   browse={browse}
+                  managed={managedIndexTasks?.has(
+                    current.registration.partition_id,
+                  )}
                   eligible={
                     !disabled &&
                     !current.error &&
@@ -539,17 +562,21 @@ export default function Assets({
               {current.capacity_error && (
                 <p className="asset-error">{current.capacity_error}</p>
               )}
-              <div className="asset-remove">
-                <button
-                  disabled={disabled}
-                  onClick={() => setRemoving(current.registration)}
-                >
-                  移除登记…
-                </button>
-              </div>
             </>
-          ) : (
-            taskSummary
+          )}
+          {indexActivity?.(
+            current?.registration.partition_id,
+            setSelectedPartition,
+          )}
+          {current && (
+            <div className="asset-remove">
+              <button
+                disabled={disabled}
+                onClick={() => setRemoving(current.registration)}
+              >
+                移除登记…
+              </button>
+            </div>
           )}
         </aside>
       </div>

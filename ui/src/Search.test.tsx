@@ -191,7 +191,10 @@ test("missing indexes are visible even when no files match", async () => {
   expect(screen.getByText("没有匹配的文件")).toBeTruthy();
 });
 
-const task = { id: "reindex", partition_id: "p", updated: 1 };
+const publication = (revision: number) => ({
+  index_version: `1:${revision}`,
+  indexed_at: 1,
+});
 const tick = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
 function refreshFixture() {
@@ -247,13 +250,14 @@ function refreshFixture() {
   return fixture;
 }
 
-test("defers and combines relevant task updates until the visible search stops scrolling", async () => {
+test("defers and combines relevant index versions until the visible search stops scrolling", async () => {
   const { starts } = refreshFixture();
-  const other = { id: "other", partition_id: "q", updated: 1 };
-  const pruned = { id: "pruned", partition_id: "p", updated: 1 };
   const partitions = [{ id: "p", name: "Movies" }];
   const view = render(
-    <Search partitions={partitions} completedTasks={[task, other, pruned]} />,
+    <Search
+      partitions={partitions}
+      indexes={{ p: publication(1), q: publication(1) }}
+    />,
   );
   fireEvent.change(screen.getByRole("combobox", { name: "分区范围" }), {
     target: { value: "p" },
@@ -263,7 +267,7 @@ test("defers and combines relevant task updates until the visible search stops s
   view.rerender(
     <Search
       partitions={partitions}
-      completedTasks={[{ ...other, updated: 2 }, task]}
+      indexes={{ p: publication(1), q: publication(2) }}
     />,
   );
   await tick(400);
@@ -272,16 +276,13 @@ test("defers and combines relevant task updates until the visible search stops s
     <Search
       partitions={partitions}
       active={false}
-      completedTasks={[{ ...task, updated: 2 }]}
+      indexes={{ p: publication(2) }}
     />,
   );
   await tick(400);
   expect(starts).toHaveLength(1);
   view.rerender(
-    <Search
-      partitions={partitions}
-      completedTasks={[{ ...task, updated: 3 }]}
-    />,
+    <Search partitions={partitions} indexes={{ p: publication(3) }} />,
   );
   const list = screen.getByLabelText("搜索结果列表");
   for (const scrollTop of [31000, 32000, 33000]) {
@@ -298,7 +299,7 @@ test("keeps the old viewport through short pages and ignores late old pagination
   const fixture = refreshFixture();
   const partitions = [{ id: "p", name: "Movies" }];
   const view = render(
-    <Search partitions={partitions} completedTasks={[task]} />,
+    <Search partitions={partitions} indexes={{ p: publication(1) }} />,
   );
   await tick(150);
   const list = screen.getByLabelText("搜索结果列表");
@@ -308,10 +309,7 @@ test("keeps the old viewport through short pages and ignores late old pagination
   fireEvent.click(screen.getByText("query-1-492.txt").closest("tr")!);
   fixture.delay = (id, offset) => (id === 2 && offset > 0 ? 30 : 0);
   view.rerender(
-    <Search
-      partitions={partitions}
-      completedTasks={[{ ...task, updated: 2 }]}
-    />,
+    <Search partitions={partitions} indexes={{ p: publication(2) }} />,
   );
   await tick(250);
   expect(screen.getByText("1,600 条结果")).toBeTruthy();
@@ -335,10 +333,7 @@ test("keeps the old viewport through short pages and ignores late old pagination
   fixture.delay = (id, offset) => (id === 2 && offset > 0 ? 600 : 0);
   fireEvent.scroll(list, { target: { scrollTop: 34000 } });
   view.rerender(
-    <Search
-      partitions={partitions}
-      completedTasks={[{ ...task, updated: 3 }]}
-    />,
+    <Search partitions={partitions} indexes={{ p: publication(3) }} />,
   );
   fixture.total = 50;
   await tick(250);
@@ -353,7 +348,7 @@ test("keeps failed background results retryable and a new query supersedes the r
   const fixture = refreshFixture();
   const partitions = [{ id: "p", name: "Movies" }];
   const view = render(
-    <Search partitions={partitions} completedTasks={[task]} />,
+    <Search partitions={partitions} indexes={{ p: publication(1) }} />,
   );
   await tick(150);
   const list = screen.getByLabelText("搜索结果列表");
@@ -361,10 +356,7 @@ test("keeps failed background results retryable and a new query supersedes the r
   await tick(0);
   fixture.fail = true;
   view.rerender(
-    <Search
-      partitions={partitions}
-      completedTasks={[{ ...task, updated: 2 }]}
-    />,
+    <Search partitions={partitions} indexes={{ p: publication(2) }} />,
   );
   await tick(250);
   expect(screen.getByRole("alert").textContent).toContain("索引暂时不可用");

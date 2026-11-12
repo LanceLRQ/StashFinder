@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Asset } from "./asset-api";
+import type { PartitionIndexes } from "./task-api";
 import type { SearchHit } from "./index-api";
 import BrowsePane from "./BrowsePane";
 import { FileStatusBar } from "./FileOperations";
@@ -47,7 +48,6 @@ const searchTitle = (text: string) =>
   text.trim() ? `搜索：${text.trim()}` : "搜索";
 const pages = {
   overview: { id: -1, title: "概览", kind: "overview" },
-  tasks: { id: -2, title: "任务", kind: "tasks" },
   settings: { id: -3, title: "设置", kind: "settings" },
   development: { id: -4, title: "开发验证", kind: "development" },
 } as const;
@@ -66,16 +66,14 @@ export default function Workspace({
   includePath,
   request,
   browseRequest,
-  taskRequest = 0,
   categories,
-  completedTasks = [],
+  indexes,
   automatic,
   paused = [],
   visible = true,
   searchReady = true,
   startupReady,
   device,
-  taskRefresh,
   panels,
   notice,
 }: {
@@ -83,9 +81,8 @@ export default function Workspace({
   includePath: boolean;
   request: { text: string; revision: number };
   browseRequest?: { partition: string; revision: number };
-  taskRequest?: number;
   categories?: Category[];
-  completedTasks?: { partition_id: string; id: string; updated: number }[];
+  indexes?: PartitionIndexes;
   automatic?: boolean;
   paused?: string[];
   visible?: boolean;
@@ -99,7 +96,6 @@ export default function Workspace({
     working: boolean;
     error: string;
   };
-  taskRefresh?: () => void;
   panels?: Partial<Record<AuxiliaryPage, ReactNode>>;
   notice?: ReactNode;
 }) {
@@ -129,11 +125,9 @@ export default function Workspace({
       ? device && !device.busy
         ? device.refresh
         : undefined
-      : currentTab?.kind === "tasks"
-        ? taskRefresh
-        : currentTab?.kind === "browse" || currentTab?.kind === "search"
-          ? commands?.refresh
-          : undefined;
+      : currentTab?.kind === "browse" || currentTab?.kind === "search"
+        ? commands?.refresh
+        : undefined;
   const location = useCallback((id: number, page: DirectoryPage) => {
     locations.current.set(id, page);
   }, []);
@@ -202,15 +196,6 @@ export default function Workspace({
     );
     setActive(id);
   }, [browseRequest, assets, tabs]);
-  useEffect(() => {
-    if (!taskRequest) return;
-    setTabs((previous) =>
-      previous.some((tab) => tab.id === pages.tasks.id)
-        ? previous
-        : [...previous, pages.tasks],
-    );
-    setActive(pages.tasks.id);
-  }, [taskRequest]);
   useEffect(() => {
     if (!panels?.overview) return;
     const removed = tabs.filter(
@@ -476,9 +461,6 @@ export default function Workspace({
       label: "工具",
       accessKey: "t",
       items: [
-        ...(panels?.tasks
-          ? [{ label: "任务", run: () => openPage("tasks") }]
-          : []),
         ...(panels?.settings
           ? [{ label: "设置", run: () => openPage("settings") }]
           : []),
@@ -634,11 +616,9 @@ export default function Workspace({
                       <p>选择已登记分区以浏览文件</p>
                     ))
                   }
-                  indexVersion={completedTasks
-                    .filter((t) => t.partition_id === tab.partition)
-                    .map((t) => `${t.id}:${t.updated}`)
-                    .sort()
-                    .join("|")}
+                  indexVersion={
+                    indexes?.[tab.partition ?? ""]?.index_version ?? ""
+                  }
                   automatic={
                     automatic === true && !paused.includes(tab.partition ?? "")
                   }
@@ -696,7 +676,7 @@ export default function Workspace({
                 onCommands={setCommands}
                 onLocate={locate}
                 categories={categories}
-                completedTasks={completedTasks}
+                indexes={indexes}
                 context={tab.context}
               />
             ) : (
@@ -717,7 +697,7 @@ export default function Workspace({
               role="tabpanel"
               id={`file-tab-${tab.id}`}
               aria-label={tab.title}
-              className={`workspace-panel ${page === "tasks" ? "tasks-page" : ""}`}
+              className="workspace-panel"
               hidden={active !== tab.id}
             >
               {panels[page]}

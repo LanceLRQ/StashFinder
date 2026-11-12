@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, ensure};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use stashfinder_core::{assets::now, index::IndexMode, tasks::Task};
 use std::path::Path;
 
@@ -11,7 +11,7 @@ impl Tasks {
     pub fn open(root: &Path) -> Result<Self> {
         let path = root.join("tasks.sqlite");
         let fresh = !path.exists();
-        let db = Connection::open(path)?;
+        let mut db = Connection::open(path)?;
         crate::volume::configure(&db)?;
         if fresh {
             db.execute_batch("BEGIN;
@@ -30,8 +30,14 @@ impl Tasks {
         if db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? == 1 {
             db.execute_batch("BEGIN; CREATE TABLE scan_modes(partition_id TEXT PRIMARY KEY); PRAGMA user_version=2; COMMIT;")?;
         }
+        if db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? == 2 {
+            let tx = db.transaction()?;
+            Self::prune(&tx)?;
+            tx.pragma_update(None, "user_version", 3)?;
+            tx.commit()?;
+        }
         ensure!(
-            db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? == 2,
+            db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? == 3,
             "任务库版本不支持"
         );
         Ok(Self { db })
@@ -113,9 +119,6 @@ impl Tasks {
     ) -> Result<Task> {
         let tx = self.db.transaction()?;
         let existing: Option<String> = tx.query_row("SELECT id FROM tasks WHERE partition_id=?1 AND state IN ('queued','running','waiting')", [partition], |r| r.get(0)).optional()?;
-        if existing.is_none() {
-            tx.execute("UPDATE tasks SET state='superseded',updated=?2 WHERE partition_id=?1 AND state IN ('failed','interrupted','needs_confirmation')",params![partition,now() as i64])?;
-        }
         let id = existing.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         tx.execute("INSERT OR IGNORE INTO tasks(id,partition_id,kind,mode,automatic,state,created,updated) VALUES(?1,?2,?3,?4,?5,'queued',?6,?6)", params![id,partition,kind,serde_json::to_string(&mode)?,automatic,now() as i64])?;
         tx.commit()?;
@@ -182,7 +185,17 @@ impl Tasks {
             )? == 1,
             "任务不存在"
         );
-        tx.execute("DELETE FROM tasks WHERE seq IN (SELECT seq FROM tasks WHERE state IN ('completed','cancelled','superseded') ORDER BY seq DESC LIMIT -1 OFFSET 200)", [])?;
+        if state == "completed" {
+            tx.execute(
+                "UPDATE tasks SET state='superseded',updated=?2
+                 WHERE partition_id=(SELECT partition_id FROM tasks WHERE id=?1)
+                   AND state IN ('failed','interrupted','needs_confirmation')",
+                params![id, now() as i64],
+            )?;
+        }
+        if !matches!(state, "queued" | "running" | "waiting") {
+            Self::prune(&tx)?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -201,11 +214,33 @@ impl Tasks {
             "UPDATE tasks SET state='cancelled',updated=?2 WHERE id=?1",
             params![id, now() as i64],
         )?;
+        Self::prune(&tx)?;
         tx.commit()?;
         Ok(())
     }
     pub fn recover(&mut self) -> Result<()> {
-        self.db.execute("UPDATE tasks SET state='interrupted',error='服务中断，将从已提交边界恢复',updated=?1 WHERE state='running'", [now() as i64])?;
+        let tx = self.db.transaction()?;
+        tx.execute("UPDATE tasks SET state='interrupted',error='服务中断，将从已提交边界恢复',updated=?1 WHERE state='running'", [now() as i64])?;
+        Self::prune(&tx)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn prune(tx: &Transaction<'_>) -> Result<()> {
+        tx.execute_batch(
+            "DELETE FROM tasks WHERE automatic=1 AND kind IN ('sync','scan') AND state='completed';
+             UPDATE tasks SET state='superseded'
+               WHERE state IN ('failed','interrupted','needs_confirmation')
+                 AND seq NOT IN (
+                   SELECT max(seq) FROM tasks
+                   WHERE state IN ('failed','interrupted','needs_confirmation')
+                   GROUP BY partition_id
+                 );
+             DELETE FROM tasks WHERE seq IN (
+               SELECT seq FROM tasks WHERE state IN ('completed','cancelled','superseded')
+               ORDER BY updated DESC,seq DESC LIMIT -1 OFFSET 30
+             );",
+        )?;
         Ok(())
     }
 }

@@ -17,16 +17,14 @@ export const indexLabels: Record<string, string> = {
   needs_rebuild: "需要重建索引",
   waiting: "等待接入／恢复",
 };
-const running = new Set([
-  "loading",
-  "queued",
+const indexing = new Set([
+  "building",
   "enumerating",
   "scanning",
   "replaying",
-  "building",
   "syncing",
-  "waiting",
 ]);
+const running = new Set([...indexing, "loading", "queued", "waiting"]);
 export default function IndexControls({
   partitionId,
   name,
@@ -35,6 +33,7 @@ export default function IndexControls({
   onStatus,
   details,
   browse,
+  managed = false,
 }: {
   partitionId: string;
   name: string;
@@ -42,6 +41,7 @@ export default function IndexControls({
   filesystem?: string | null;
   details?: ReactNode;
   browse?: ReactNode;
+  managed?: boolean;
   onStatus?: (
     partitionId: string,
     status: IndexStatus | null,
@@ -102,7 +102,10 @@ export default function IndexControls({
         <div>
           <dt>索引</dt>
           <dd>
-            <span>
+            <span className="index-phase">
+              {!error && status && indexing.has(status.phase) && (
+                <span className="index-spinner" aria-hidden="true" />
+              )}
               {error
                 ? "索引状态不可用"
                 : status
@@ -137,7 +140,7 @@ export default function IndexControls({
       </dl>
       <div className="asset-detail-actions">
         {browse}
-        {busy && status?.phase !== "loading" ? (
+        {managed ? null : busy && status?.phase !== "loading" ? (
           <button
             disabled={sending || !status?.task_id}
             aria-label={`取消索引 ${name}`}

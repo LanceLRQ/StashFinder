@@ -221,7 +221,7 @@ test.each(["尚无目录索引", "目录索引尚未完成"])(
         assets={[asset]}
         includePath
         request={{ text: "", revision: 0 }}
-        completedTasks={[{ id: "build", partition_id: "p", updated: 1 }]}
+        indexes={{ p: { index_version: "1:1", indexed_at: 1 } }}
       />,
     );
     await screen.findByRole("row", { name: /notes.txt/ });
@@ -434,7 +434,7 @@ test("published index changes refresh the current directory without changing its
       assets={[asset]}
       includePath
       request={{ text: "", revision: 0 }}
-      completedTasks={[{ id: "completed", partition_id: "p", updated: 2 }]}
+      indexes={{ p: { index_version: "1:2", indexed_at: 1 } }}
     />,
   );
   await waitFor(() =>

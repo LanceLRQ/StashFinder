@@ -40,15 +40,14 @@ beforeEach(() => {
       };
     if (command === "service_status") throw new Error("服务未启动");
     if (command === "app_version") return "0.1.0";
-    if (args?.action?.task_page)
+    if (args?.action?.task_overview)
       return {
-        kind: "tasks",
+        kind: "task_overview",
         data: {
-          version: 1,
-          row: null,
+          version: "1",
+          rows: [],
           next: null,
           automatic: true,
-          paused: [],
         },
       };
     if (args?.action?.search_start) return { kind: "search_started", data: 1 };
@@ -122,7 +121,7 @@ test("refreshes the active search from the menu and F5 without intercepting IME"
   expect(screen.queryByText("视图")).toBeNull();
 }, 12000);
 
-test("routes overview and task refresh to their own actions without toolbar duplicates", async () => {
+test("refreshes the overview without overlapping a device refresh", async () => {
   const original = vi.mocked(invoke).getMockImplementation()!;
   let finishRefresh: (() => void) | undefined;
   vi.mocked(invoke).mockImplementation((command, args: any) => {
@@ -145,10 +144,6 @@ test("routes overview and task refresh to their own actions without toolbar dupl
         ([cmd, args]: any) =>
           cmd === "asset_command" && args.action === "refresh",
       ).length;
-  const taskRefreshes = () =>
-    vi
-      .mocked(invoke)
-      .mock.calls.filter(([, args]: any) => args?.action?.task_page).length;
   fireEvent.click(screen.getByRole("tab", { name: "概览" }));
   const overview = screen.getByRole("tabpanel", { name: "概览" });
   menu("查看", "刷新当前页");
@@ -173,15 +168,6 @@ test("routes overview and task refresh to their own actions without toolbar dupl
   expect(
     await within(overview).findByRole("button", { name: "登记分区…" }),
   ).toBeTruthy();
-  menu("工具", "任务");
-  const tasks = screen.getByRole("tabpanel", { name: "任务" });
-  const initial = taskRefreshes();
-  menu("查看", "刷新当前页");
-  expect(taskRefreshes()).toBe(initial + 1);
-  fireEvent.keyDown(tasks, { key: "F5" });
-  expect(taskRefreshes()).toBe(initial + 2);
-  expect(deviceRefreshes()).toBe(2);
-  expect(within(tasks).queryByRole("button", { name: "刷新" })).toBeNull();
 });
 
 test("starts in Home and keeps the query when switching back to search", async () => {
@@ -210,21 +196,82 @@ test("starts in Home and keeps the query when switching back to search", async (
   expect(screen.getAllByRole("main")).toHaveLength(1);
 });
 
-test("keeps task activity out of the overview and reuses the tasks tab", async () => {
+test("resolves indexing issues directly from the overview sidebar", async () => {
+  const original = vi.mocked(invoke).getMockImplementation()!;
+  const assets = ["Movies", "Backup"].map((name) => ({
+    registration: {
+      disk_id: name,
+      partition_id: name,
+      filesystem_id: name,
+      name,
+      state: "ready",
+      observation: { identity: { filesystem: "NTFS" }, mounts: [] },
+    },
+    connection: "online",
+    mounts: [],
+  }));
+  vi.mocked(invoke).mockImplementation(async (command, args: any) => {
+    if (command === "asset_snapshot")
+      return { version: 1, busy: false, error: null, assets, candidates: [] };
+    if (args?.action?.task_overview) {
+      const rows = [
+        {
+          id: "failed-task",
+          partition_id: "Movies",
+          state: "failed",
+          error: "读取失败",
+        },
+        {
+          id: "journal-task",
+          partition_id: "Backup",
+          state: "needs_confirmation",
+          error: "此分区没有 USN 日志",
+        },
+      ].map((task) => ({
+        kind: "task",
+        data: {
+          ...task,
+          kind: "build",
+          mode: "journal",
+          automatic: true,
+          created: 1,
+          updated: 1,
+        },
+      }));
+      return {
+        kind: "task_overview",
+        data: { version: "1", rows, next: null, automatic: true },
+      };
+    }
+    return original(command, args);
+  });
   render(<Desktop />);
-  await screen.findByRole("button", { name: "登记分区…" });
-  fireEvent.click(screen.getByRole("tab", { name: "概览" }));
-  expect(screen.queryByRole("heading", { name: "任务动态" })).toBeNull();
-  menu("工具", "任务");
-  expect(screen.getByRole("button", { name: /最近动态/ })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: /历史/ }));
-  fireEvent.click(screen.getByRole("tab", { name: "概览" }));
-  menu("工具", "任务");
-  expect(screen.getAllByRole("tab", { name: "任务" })).toHaveLength(1);
-  expect(screen.getByRole("button", { name: /历史/ })).toHaveProperty(
-    "ariaPressed",
+  const sidebar = within(
+    screen.getByRole("complementary", { name: "分区详情" }),
+  );
+  fireEvent.click(await sidebar.findByRole("button", { name: "重试 Movies" }));
+  expect(invoke).toHaveBeenCalledWith("index_request", {
+    action: { task_retry: { id: "failed-task" } },
+  });
+  const choose = sidebar.getByRole("button", { name: "选择索引方式 Backup" });
+  await waitFor(() => expect(choose).toHaveProperty("disabled", false));
+  fireEvent.click(choose);
+  const dialog = screen.getByRole("dialog", { name: "选择索引方式 Backup" });
+  expect(
+    within(dialog).getByRole("radio", { name: /基础扫描/ }),
+  ).toHaveProperty("checked", true);
+  fireEvent.click(within(dialog).getByRole("button", { name: "开始索引" }));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("index_request", {
+      action: { index_start: { partition_id: "Backup", mode: "scan_only" } },
+    }),
+  );
+  expect(screen.getByRole("tab", { name: "概览" })).toHaveProperty(
+    "ariaSelected",
     "true",
   );
+  fireEvent.click(screen.getByRole("button", { name: "工具" }));
+  expect(screen.queryByRole("menuitem", { name: "任务" })).toBeNull();
 });
 
 test("shows Home with legacy preferences and applies the search default", async () => {

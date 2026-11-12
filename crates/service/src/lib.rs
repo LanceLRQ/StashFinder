@@ -129,6 +129,14 @@ pub async fn serve_runtime(
                             .runner
                             .page(version, offset)?,
                     ))),
+                    Action::TaskOverview { version, offset } => {
+                        Ok(Response::TaskOverview(Box::new(
+                            indexes
+                                .context("索引服务未配置")?
+                                .runner
+                                .overview(version.as_deref(), offset)?,
+                        )))
+                    }
                     Action::AutoUpdate { enabled } => {
                         indexes
                             .context("索引服务未配置")?

@@ -5,9 +5,9 @@ import FileOperations from "./FileOperations";
 import Visuals from "./Visuals";
 import Settings from "./Settings";
 import type { Asset, AssetSnapshot } from "./asset-api";
-import Tasks from "./Tasks";
+import IndexActivity from "./IndexActivity";
 import { IndexModeDialog } from "./IndexControls";
-import { useTasks } from "./task-api";
+import { taskGroup, useTasks } from "./task-api";
 import {
   defaultPreferences,
   readPreferences,
@@ -36,23 +36,24 @@ export default function Desktop() {
     partition: string;
     revision: number;
   }>();
-  const [taskRequest, setTaskRequest] = useState(0);
   const tasks = useTasks(true);
-  const [taskRefreshBlocked, setTaskRefreshBlocked] = useState(false);
   const [indexChoice, setIndexChoice] = useState("");
   const assets = snapshot?.assets ?? noAssets;
-  const partitions = assets.map((a) => ({
-    id: a.registration.partition_id,
-    name: a.registration.name,
-    connection: a.connection,
-    canChooseIndex:
+  const partitions = assets.map((a) => {
+    const canRetry =
       !snapshot?.error &&
       !snapshot?.busy &&
       !a.error &&
       a.connection === "online" &&
-      a.registration.state === "ready" &&
-      a.registration.observation.identity.filesystem === "NTFS",
-  }));
+      a.registration.state === "ready";
+    return {
+      id: a.registration.partition_id,
+      name: a.registration.name,
+      canRetry,
+      canChooseIndex:
+        canRetry && a.registration.observation.identity.filesystem === "NTFS",
+    };
+  });
   const choicePartition = partitions.find((p) => p.id === indexChoice);
   const rebuildChoice = tasks.data?.tasks.some(
     (task) =>
@@ -60,16 +61,17 @@ export default function Desktop() {
       task.kind === "rebuild" &&
       task.state === "needs_confirmation",
   );
-  const overviewTasks =
-    tasks.data?.tasks.filter((task) =>
-      partitions.some((partition) => partition.id === task.partition_id),
-    ) ?? [];
-  const workingTasks = overviewTasks.filter((task) =>
-    ["queued", "running", "waiting"].includes(task.state),
-  ).length;
-  const attentionTasks = overviewTasks.filter((task) =>
-    ["failed", "interrupted", "needs_confirmation"].includes(task.state),
-  ).length;
+  const attentionPartitions = new Set<string>();
+  const managedIndexTasks = new Set<string>();
+  for (const task of tasks.data?.tasks ?? []) {
+    const group = taskGroup(task);
+    if (group === "attention") attentionPartitions.add(task.partition_id);
+    if (
+      !tasks.error &&
+      (group === "current" || task.state === "needs_confirmation")
+    )
+      managedIndexTasks.add(task.partition_id);
+  }
   useEffect(() => {
     let active = true;
     void readPreferences()
@@ -114,10 +116,7 @@ export default function Desktop() {
             request={searchRequest}
             searchReady={loaded}
             browseRequest={browseRequest}
-            taskRequest={taskRequest}
-            completedTasks={tasks.data?.tasks.filter(
-              (t) => t.state === "completed",
-            )}
+            indexes={tasks.data?.indexes}
             automatic={tasks.data?.automatic}
             paused={tasks.data?.paused}
             startupReady={
@@ -130,10 +129,12 @@ export default function Desktop() {
               ...deviceStatus,
               busy: !!snapshot?.busy || deviceStatus.working,
               register: () => deviceControls.current?.register(),
-              refresh: () => deviceControls.current?.refresh(),
+              refresh: () => {
+                deviceControls.current?.refresh();
+                tasks.refresh();
+              },
               retry: () => deviceControls.current?.retry(),
             }}
-            taskRefresh={taskRefreshBlocked ? undefined : tasks.refresh}
             notice={
               preferenceError && (
                 <p role="alert" className="desktop-error preference-error">
@@ -159,30 +160,19 @@ export default function Desktop() {
                   }
                   onSnapshot={setSnapshot}
                   onStatus={setDeviceStatus}
-                  taskSummary={
-                    workingTasks + attentionTasks > 0 && (
-                      <div className="asset-task-summary">
-                        <h2>索引任务</h2>
-                        {workingTasks > 0 && <p>{workingTasks} 项进行中</p>}
-                        {attentionTasks > 0 && <p>{attentionTasks} 项需处理</p>}
-                        <button
-                          onClick={() => setTaskRequest((value) => value + 1)}
-                        >
-                          查看任务
-                        </button>
-                      </div>
-                    )
-                  }
-                />
-              ),
-              tasks: (
-                <Tasks
-                  data={tasks.data}
-                  error={tasks.error}
-                  onRefresh={tasks.refresh}
-                  onRefreshBlocked={setTaskRefreshBlocked}
-                  onChooseIndex={setIndexChoice}
-                  partitions={partitions}
+                  attentionPartitions={attentionPartitions}
+                  managedIndexTasks={managedIndexTasks}
+                  indexActivity={(partition, onSelect) => (
+                    <IndexActivity
+                      data={tasks.data}
+                      error={tasks.error}
+                      partitions={partitions}
+                      partition={partition}
+                      onSelect={onSelect}
+                      onRefresh={tasks.refresh}
+                      onChooseIndex={setIndexChoice}
+                    />
+                  )}
                 />
               ),
               settings: (

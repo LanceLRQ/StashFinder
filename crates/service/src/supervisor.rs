@@ -4,14 +4,16 @@ use crate::{
 };
 use anyhow::{Context, Result, ensure};
 use stashfinder_core::{
+    MAX_FRAME,
     assets::{Asset, IdentityMatch, Snapshot},
     index::{IndexMode, IndexStatus},
-    tasks::Task,
+    tasks::{PartitionIndex, Task, TaskOverviewPage, TaskOverviewRow},
 };
 use stashfinder_store::{catalog::Catalog, search::SearchIndex, tasks::Tasks, volume::Volume};
 use stashfinder_windows::{ntfs::VolumeReader, volumes};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
+    hash::{DefaultHasher, Hash, Hasher},
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -202,7 +204,12 @@ impl Runner {
                 for task in tasks.list()? {
                     if !matches!(
                         task.state.as_str(),
-                        "running" | "queued" | "waiting" | "needs_confirmation"
+                        "running"
+                            | "queued"
+                            | "waiting"
+                            | "needs_confirmation"
+                            | "failed"
+                            | "interrupted"
                     ) {
                         continue;
                     }
@@ -292,6 +299,91 @@ impl Runner {
     }
     pub fn set_enabled(&self, value: bool) -> Result<()> {
         self.shared.with_tasks(|t| t.set_enabled(value))
+    }
+    pub fn overview(&self, version: Option<&str>, offset: usize) -> Result<TaskOverviewPage> {
+        self.shared.with_tasks(|tasks| {
+            let mut partitions = BTreeMap::new();
+            for (id, index) in self
+                .shared
+                .caches
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+            {
+                partitions.insert(
+                    id.clone(),
+                    PartitionIndex {
+                        partition_id: id.clone(),
+                        paused: false,
+                        index_version: Some(format!("{}:{}", index.generation, index.revision)),
+                        indexed_at: index.indexed_at,
+                    },
+                );
+            }
+            for id in tasks.paused_partitions()? {
+                partitions
+                    .entry(id.clone())
+                    .or_insert(PartitionIndex {
+                        partition_id: id,
+                        paused: false,
+                        index_version: None,
+                        indexed_at: None,
+                    })
+                    .paused = true;
+            }
+            let mut hash = DefaultHasher::new();
+            partitions.hash(&mut hash);
+            let current_version = format!("{:x}:{:x}", tasks.revision()?, hash.finish());
+            ensure!(
+                version.is_none_or(|v| v == current_version),
+                "任务快照已更新，请重试"
+            );
+            let mut entries = tasks.list()?;
+            {
+                let states = self.shared.states.lock().unwrap_or_else(|e| e.into_inner());
+                for task in &mut entries {
+                    if task.state == "running" {
+                        task.phase = states.get(&task.partition_id).map(|s| s.phase.clone());
+                    }
+                }
+            }
+            let total = partitions.len() + entries.len();
+            ensure!(offset == 0 || offset < total, "分页位置无效");
+            let mut rows = Vec::new();
+            let mut size = 0;
+            for mut row in partitions
+                .into_values()
+                .map(TaskOverviewRow::Partition)
+                .chain(entries.into_iter().map(TaskOverviewRow::Task))
+                .skip(offset)
+            {
+                let mut bytes = serde_json::to_vec(&row)?.len() + 1;
+                if bytes > MAX_FRAME - 512
+                    && let TaskOverviewRow::Task(task) = &mut row
+                    && let Some(error) = &mut task.error
+                {
+                    error.truncate(error.floor_char_boundary(2048));
+                    error.push('…');
+                    bytes = serde_json::to_vec(&row)?.len() + 1;
+                }
+                size += bytes;
+                if size > MAX_FRAME - 512 {
+                    break;
+                }
+                rows.push(row);
+            }
+            ensure!(
+                offset == total || !rows.is_empty(),
+                "任务信息超过单页传输上限"
+            );
+            let next = offset + rows.len();
+            Ok(TaskOverviewPage {
+                version: current_version,
+                rows,
+                next: (next < total).then_some(next),
+                automatic: tasks.enabled()?,
+            })
+        })
     }
     pub fn status(&self, id: &str) -> IndexStatus {
         let mut status = self
