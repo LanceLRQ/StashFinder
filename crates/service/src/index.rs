@@ -813,6 +813,12 @@ fn verify_deletion(
     Ok(())
 }
 
+pub(crate) fn cursor_matches_journal(cursor: &Cursor, journal: &Journal) -> bool {
+    cursor.journal == journal.id.to_le_bytes()
+        && cursor.next >= journal.first
+        && cursor.next <= journal.next
+}
+
 pub(crate) fn incremental_boundary(
     source: &dyn Source,
     db: &Volume,
@@ -821,9 +827,7 @@ pub(crate) fn incremental_boundary(
     let boundary = source.journal()?.ok_or(JournalMissing)?;
     let cursor = db.cursor(generation)?.ok_or(JournalCursorInvalid)?;
     ensure!(
-        cursor.journal == boundary.id.to_le_bytes()
-            && cursor.next >= boundary.first
-            && cursor.next <= boundary.next,
+        cursor_matches_journal(&cursor, &boundary),
         JournalCursorInvalid
     );
     Ok((cursor, boundary))

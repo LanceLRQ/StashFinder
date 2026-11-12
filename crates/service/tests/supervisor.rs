@@ -10,7 +10,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-struct Disk(Arc<AtomicUsize>, Arc<AtomicBool>, i64);
+struct Disk(
+    Arc<AtomicUsize>,
+    Arc<AtomicBool>,
+    std::ops::RangeInclusive<i64>,
+    Option<Arc<AtomicBool>>,
+);
 impl Source for Disk {
     fn root_id(&self) -> u64 {
         5
@@ -21,8 +26,8 @@ impl Source for Disk {
         }
         Ok(Some(Journal {
             id: 1,
-            first: 0,
-            next: self.2,
+            first: *self.2.start(),
+            next: *self.2.end(),
         }))
     }
     fn create_journal(&self) -> anyhow::Result<Journal> {
@@ -30,10 +35,18 @@ impl Source for Disk {
     }
     fn inventory(
         &self,
-        _: &AtomicBool,
+        cancelled: &AtomicBool,
         _: &mut dyn FnMut(&[UsnRecord]) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         self.0.fetch_add(1, Ordering::SeqCst);
+        while self
+            .3
+            .as_ref()
+            .is_some_and(|gate| !gate.load(Ordering::SeqCst))
+        {
+            anyhow::ensure!(!cancelled.load(Ordering::SeqCst), "cancelled");
+            std::thread::sleep(Duration::from_millis(10));
+        }
         Ok(())
     }
     fn directory(
@@ -72,7 +85,7 @@ impl Source for Disk {
         }))
     }
     fn changes(&self, journal: u64, start: i64) -> anyhow::Result<UsnPage> {
-        assert_eq!((journal, start, self.2), (1, 100, 200));
+        assert_eq!((journal, start, *self.2.end()), (1, 100, 200));
         Ok(UsnPage {
             next: 200,
             records: vec![UsnRecord {
@@ -182,7 +195,12 @@ fn automatic_worker_requires_registration_online_identity_and_enabled_policy() {
     let journal = Arc::new(AtomicBool::new(true));
     let journal_source = journal.clone();
     let worker = Runner::start_with_source(dir.path().into(), move |_| {
-        Ok(Box::new(Disk(source.clone(), journal_source.clone(), 100)))
+        Ok(Box::new(Disk(
+            source.clone(),
+            journal_source.clone(),
+            0..=100,
+            None,
+        )))
     });
     wait_until(|| worker.ready());
     worker.set_enabled(false).unwrap();
@@ -261,7 +279,7 @@ fn failed_incremental_fixture(
 ) -> (tempfile::TempDir, Snapshot, std::path::PathBuf, i64, String) {
     use stashfinder_store::{
         tasks::Tasks,
-        volume::{Changes, Cursor, Volume},
+        volume::{Changes, Cursor, Entry, Object, Volume},
     };
     let dir = tempfile::tempdir().unwrap();
     let mut catalog = Catalog::open(dir.path()).unwrap();
@@ -302,12 +320,35 @@ fn failed_incremental_fixture(
     let path = catalog.volume_path(&row.filesystem_id).unwrap();
     let mut volume = Volume::open(&path).unwrap();
     let generation = volume.begin_generation().unwrap();
+    let objects = [5u64, 19].map(|id| Object {
+        id: id.to_le_bytes().to_vec(),
+        source: "ntfs".into(),
+        kind: if id == 5 { "folder" } else { "file" }.into(),
+        size: (id == 19).then_some(3),
+        created: None,
+        modified: None,
+        attributes: if id == 5 { 16 } else { 32 },
+        identity: None,
+    });
+    let root_key = [vec![0], 5u64.to_le_bytes().to_vec()].concat();
+    let entries = [5u64, 19].map(|id| Entry {
+        id: if id == 5 {
+            root_key.clone()
+        } else {
+            id.to_le_bytes().to_vec()
+        },
+        object: id.to_le_bytes().to_vec(),
+        parent: (id == 19).then(|| root_key.clone()),
+        name: if id == 5 { "\\" } else { "old-only.txt" }
+            .encode_utf16()
+            .collect(),
+    });
     volume
         .apply_changes(
             generation,
             Changes {
-                objects: &[],
-                entries: &[],
+                objects: &objects,
+                entries: &entries,
                 removed: &[],
                 pending: &[],
                 cursor: Some(&Cursor {
@@ -341,7 +382,8 @@ fn retry_incremental_with_a_valid_cursor_keeps_the_active_generation() {
         Ok(Box::new(Disk(
             reads.clone(),
             Arc::new(AtomicBool::new(true)),
-            200,
+            0..=200,
+            None,
         )))
     });
     wait_until(|| worker.ready());
@@ -369,67 +411,188 @@ fn retry_incremental_with_a_valid_cursor_keeps_the_active_generation() {
 }
 
 #[test]
-fn retry_incremental_requires_explicit_rebuild_if_the_cursor_expired() {
-    for manual in [true, false] {
-        let (dir, snapshot, path, generation, failed) = failed_incremental_fixture(2);
-        let partition = &snapshot.assets[0].registration.partition_id;
+fn retry_incremental_requires_explicit_rebuild_if_automatic_updates_are_off() {
+    let (dir, snapshot, path, generation, failed) = failed_incremental_fixture(2);
+    let partition = &snapshot.assets[0].registration.partition_id;
+    let builds = Arc::new(AtomicUsize::new(0));
+    let reads = builds.clone();
+    let worker = Runner::start_with_source(dir.path().into(), move |_| {
+        Ok(Box::new(Disk(
+            reads.clone(),
+            Arc::new(AtomicBool::new(true)),
+            0..=100,
+            None,
+        )))
+    });
+    wait_until(|| worker.ready());
+    worker.retry(&failed, &snapshot).unwrap();
+    wait_until(|| {
+        worker
+            .tasks()
+            .unwrap()
+            .iter()
+            .any(|t| t.state == "needs_confirmation")
+    });
+    let prompt = worker
+        .tasks()
+        .unwrap()
+        .into_iter()
+        .find(|t| t.state == "needs_confirmation")
+        .unwrap();
+    assert_eq!(prompt.kind, "rebuild");
+    assert_eq!(prompt.phase.as_deref(), Some("needs_rebuild"));
+    assert!(prompt.error.unwrap().contains("需要重建索引"));
+    assert_eq!(worker.status(partition).phase, "needs_rebuild");
+    assert!(!worker.status(partition).journal_missing);
+    assert!(worker.retry(&prompt.id, &snapshot).is_err());
+    assert_eq!(builds.load(Ordering::SeqCst), 0);
+    assert_eq!(worker.status(partition).active_generation, Some(generation));
+    let volume = stashfinder_store::volume::Volume::open(&path).unwrap();
+    assert_eq!(
+        volume.cursor(generation).unwrap().unwrap().journal,
+        2u64.to_le_bytes()
+    );
+    let id = worker
+        .scan(partition, IndexMode::Journal, &snapshot)
+        .unwrap();
+    wait_until(|| {
+        worker
+            .tasks()
+            .unwrap()
+            .iter()
+            .any(|t| t.id == id && t.state == "completed")
+    });
+    assert_eq!(builds.load(Ordering::SeqCst), 1);
+    assert_ne!(worker.status(partition).active_generation, Some(generation));
+}
+
+#[test]
+fn expired_cursor_rebuilds_automatically_only_when_eligible_and_keeps_old_search() {
+    use stashfinder_core::search::Query;
+    use stashfinder_store::{search::SearchIndex, tasks::Tasks, volume::Volume};
+
+    for (existing_prompt, saved_journal, boundary) in [(false, 2, 0..=100), (true, 1, 101..=200)] {
+        let (dir, mut snapshot, path, generation, failed) =
+            failed_incremental_fixture(saved_journal);
+        let partition = snapshot.assets[0].registration.partition_id.clone();
+        if existing_prompt {
+            Tasks::open(dir.path())
+                .unwrap()
+                .require_confirmation(&failed, "rebuild", "旧版等待确认")
+                .unwrap();
+        }
         let builds = Arc::new(AtomicUsize::new(0));
         let reads = builds.clone();
+        let gate = Arc::new(AtomicBool::new(false));
+        let release = gate.clone();
         let worker = Runner::start_with_source(dir.path().into(), move |_| {
             Ok(Box::new(Disk(
                 reads.clone(),
                 Arc::new(AtomicBool::new(true)),
-                100,
+                boundary.clone(),
+                Some(release.clone()),
             )))
         });
+        let search = || {
+            let volume = Volume::open(&path).unwrap();
+            let index = SearchIndex::load(&volume).unwrap().unwrap();
+            let rows = index
+                .search(
+                    &Query::parse("old-only", false).unwrap(),
+                    &[],
+                    10,
+                    &AtomicBool::new(false),
+                )
+                .unwrap()
+                .rows;
+            (index.generation, rows.len())
+        };
         wait_until(|| worker.ready());
-        if manual {
-            worker.retry(&failed, &snapshot).unwrap();
-        } else {
+        worker.observe(snapshot.clone());
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(builds.load(Ordering::SeqCst), 0);
+        worker.set_enabled(true).unwrap();
+        for connection in ["offline", "uncertain"] {
+            snapshot.assets[0].connection = connection.into();
             worker.observe(snapshot.clone());
-            worker.set_enabled(true).unwrap();
+            std::thread::sleep(Duration::from_millis(2200));
+            assert_eq!(builds.load(Ordering::SeqCst), 0);
         }
-        wait_until(|| {
+        snapshot.assets[0].connection = "online".into();
+        worker.observe(snapshot);
+        wait_until(|| builds.load(Ordering::SeqCst) == 1);
+        assert_eq!(search(), (generation, 1));
+        assert!(
             worker
+                .tasks()
+                .unwrap()
+                .iter()
+                .any(|t| t.kind == "rebuild" && t.automatic && t.state == "running")
+        );
+        assert!(
+            !worker
                 .tasks()
                 .unwrap()
                 .iter()
                 .any(|t| t.state == "needs_confirmation")
-        });
-        let prompt = worker
-            .tasks()
-            .unwrap()
-            .into_iter()
-            .find(|t| t.state == "needs_confirmation")
-            .unwrap();
-        assert_eq!(prompt.kind, "rebuild");
-        assert_eq!(prompt.phase.as_deref(), Some("needs_rebuild"));
-        assert!(prompt.error.unwrap().contains("需要重建索引"));
-        assert_eq!(worker.status(partition).phase, "needs_rebuild");
-        assert!(!worker.status(partition).journal_missing);
-        assert!(worker.retry(&prompt.id, &snapshot).is_err());
-        worker.set_enabled(true).unwrap();
-        std::thread::sleep(Duration::from_millis(2200));
-        assert_eq!(builds.load(Ordering::SeqCst), 0);
-        assert_eq!(worker.status(partition).active_generation, Some(generation));
-        let volume = stashfinder_store::volume::Volume::open(&path).unwrap();
-        assert_eq!(
-            volume.cursor(generation).unwrap().unwrap().journal,
-            2u64.to_le_bytes()
         );
-        let id = worker
-            .scan(partition, IndexMode::Journal, &snapshot)
-            .unwrap();
+        gate.store(true, Ordering::SeqCst);
         wait_until(|| {
             worker
                 .tasks()
                 .unwrap()
                 .iter()
-                .any(|t| t.id == id && t.state == "completed")
+                .any(|t| t.kind == "rebuild" && t.automatic && t.state == "completed")
         });
-        assert_eq!(builds.load(Ordering::SeqCst), 1);
-        assert_ne!(worker.status(partition).active_generation, Some(generation));
+        let (rebuilt, old_matches) = search();
+        assert!(rebuilt > generation);
+        assert_eq!(old_matches, 0);
+        assert_eq!(worker.status(&partition).phase, "ready");
+        assert_eq!(
+            Volume::open(&path)
+                .unwrap()
+                .cursor(rebuilt)
+                .unwrap()
+                .unwrap()
+                .journal,
+            1u64.to_le_bytes()
+        );
+        assert!(
+            !worker
+                .tasks()
+                .unwrap()
+                .iter()
+                .any(|t| t.state == "needs_confirmation")
+        );
     }
+}
+
+#[test]
+fn an_interrupted_build_does_not_trigger_a_rebuild_with_a_valid_cursor() {
+    let (dir, snapshot, path, generation, _) = failed_incremental_fixture(1);
+    let mut volume = stashfinder_store::volume::Volume::open(&path).unwrap();
+    let candidate = volume.begin_generation().unwrap();
+    drop(volume);
+    let builds = Arc::new(AtomicUsize::new(0));
+    let reads = builds.clone();
+    let worker = Runner::start_with_source(dir.path().into(), move |_| {
+        Ok(Box::new(Disk(
+            reads.clone(),
+            Arc::new(AtomicBool::new(true)),
+            0..=100,
+            None,
+        )))
+    });
+    wait_until(|| worker.ready());
+    worker.observe(snapshot.clone());
+    worker.set_enabled(true).unwrap();
+    std::thread::sleep(Duration::from_millis(2300));
+    assert_eq!(builds.load(Ordering::SeqCst), 0);
+    let status = worker.status(&snapshot.assets[0].registration.partition_id);
+    assert_eq!(
+        (status.generation, status.active_generation),
+        (Some(candidate), Some(generation))
+    );
 }
 
 struct ScanDisk {

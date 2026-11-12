@@ -675,13 +675,7 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                     continue;
                 }
                 if !shared
-                    .with_tasks(|t| {
-                        Ok(
-                            t.enabled()?
-                                && !t.paused(id)?
-                                && !t.rebuild_confirmation_pending(id)?,
-                        )
-                    })
+                    .with_tasks(|t| Ok(t.enabled()? && !t.paused(id)?))
                     .unwrap_or(false)
                 {
                     continue;
@@ -743,10 +737,11 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                                 .insert(id.clone(), db.index_status()?);
                         }
                         return shared.with_tasks(|t| {
-                            if t.list()?
-                                .iter()
-                                .any(|r| r.partition_id == *id && r.state == "needs_confirmation")
-                            {
+                            if t.list()?.iter().any(|r| {
+                                r.partition_id == *id
+                                    && r.state == "needs_confirmation"
+                                    && r.kind != "rebuild"
+                            }) {
                                 return Ok(None);
                             }
                             let task = t.enqueue(id, "build", IndexMode::Journal, true)?;
@@ -766,21 +761,21 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                         .map(|g| db.cursor(g))
                         .transpose()?
                         .flatten();
-                    let kind = match cursor.filter(|c| {
-                        c.journal == journal.id.to_le_bytes()
-                            && c.next >= journal.first
-                            && c.next <= journal.next
-                    }) {
-                        Some(_) if status.generation != status.active_generation => "rebuild",
-                        Some(c) => {
+                    let pending = shared.with_tasks(|t| t.rebuild_confirmation_pending(id))?;
+                    let kind = match cursor {
+                        Some(c) if index::cursor_matches_journal(&c, &journal) => {
+                            // An unfinished successor does not invalidate the active cursor.
+                            let check_changes = !pending
+                                && (status.generation != status.active_generation
+                                    || status.phase == "ready");
                             if c.next == journal.next
-                                && status.phase == "ready"
+                                && check_changes
                                 && let Some(generation) = status.active_generation
                                 && !db.has_pending_metadata(generation)?
                             {
                                 return Ok(None);
                             }
-                            if status.phase == "ready"
+                            if check_changes
                                 && !index::has_relevant_changes(
                                     source.as_ref(),
                                     &db,
@@ -793,14 +788,11 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                             }
                             "sync"
                         }
+                        Some(_) => "rebuild",
+                        None if pending => return Ok(None),
                         None if status.active_generation.is_some() => "sync",
                         _ => "build",
                     };
-                    if kind == "rebuild"
-                        && let Some(g) = status.active_generation
-                    {
-                        db.mark_stale(g, "上一次完整校验未完成，正在重新校验")?;
-                    }
                     shared.with_tasks(|t| t.enqueue(id, kind, IndexMode::Journal, true).map(Some))
                 })();
                 match detected {
@@ -936,16 +928,35 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                     index::synchronize(source.as_ref(), &mut db, &cancel).map(|_| ())
                 } else {
                     let source = factory(&asset)?;
-                    let boundary = if task.automatic
-                        && task.kind == "rebuild"
-                        && let Some(generation) = db.active_generation()?
-                    {
-                        index::incremental_boundary(source.as_ref(), &db, generation).map(|_| ())
+                    let mode = if task.automatic && task.kind == "rebuild" {
+                        let generation =
+                            db.active_generation()?.ok_or(index::JournalCursorInvalid)?;
+                        let cursor = db.cursor(generation)?.ok_or(index::JournalCursorInvalid)?;
+                        match source.journal()? {
+                            Some(journal) if index::cursor_matches_journal(&cursor, &journal) => {
+                                shared.publish(&task.partition_id, &db)?;
+                                shared.with_tasks(|t| {
+                                    if t.get(&task.id)?.state == "running" {
+                                        t.set_state(&task.id, "superseded", None)?;
+                                    }
+                                    Ok(())
+                                })?;
+                                return Ok(());
+                            }
+                            Some(_) => {
+                                db.mark_stale(
+                                    generation,
+                                    &index::JournalCursorInvalid.to_string(),
+                                )?;
+                                Ok(IndexMode::Journal)
+                            }
+                            None => Err(index::JournalMissing.into()),
+                        }
                     } else {
-                        Ok(())
+                        Ok(task.mode)
                     };
-                    boundary.and_then(|()| {
-                        index::build(source.as_ref(), &mut db, task.mode, &cancel, &mut |phase| {
+                    mode.and_then(|mode| {
+                        index::build(source.as_ref(), &mut db, mode, &cancel, &mut |phase| {
                             let mut states =
                                 shared.states.lock().unwrap_or_else(|e| e.into_inner());
                             let state = states.entry(task.partition_id.clone()).or_default();

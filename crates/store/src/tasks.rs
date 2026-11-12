@@ -119,6 +119,12 @@ impl Tasks {
     ) -> Result<Task> {
         let tx = self.db.transaction()?;
         let existing: Option<String> = tx.query_row("SELECT id FROM tasks WHERE partition_id=?1 AND state IN ('queued','running','waiting')", [partition], |r| r.get(0)).optional()?;
+        if existing.is_none() && kind == "rebuild" && automatic {
+            tx.execute(
+                "UPDATE tasks SET state='superseded',updated=?2 WHERE partition_id=?1 AND kind='rebuild' AND state='needs_confirmation'",
+                params![partition, now() as i64],
+            )?;
+        }
         let id = existing.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         tx.execute("INSERT OR IGNORE INTO tasks(id,partition_id,kind,mode,automatic,state,created,updated) VALUES(?1,?2,?3,?4,?5,'queued',?6,?6)", params![id,partition,kind,serde_json::to_string(&mode)?,automatic,now() as i64])?;
         tx.commit()?;
