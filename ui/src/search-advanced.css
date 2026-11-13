@@ -19,6 +19,16 @@
 .modal.search-filter-dialog {
   --modal-width: 640px;
 }
+.search-help-examples > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid #dce1e7;
+}
+.search-help-examples dd {
+  margin: 0;
+}
 .search-filter-content {
   display: grid;
   gap: 12px;

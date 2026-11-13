@@ -20,6 +20,7 @@ import { FileStatusBar } from "./FileOperations";
 import Modal from "./Modal";
 import type { FileView } from "./file-view";
 import Search from "./Search";
+import SearchHelp from "./SearchHelp";
 import WindowChrome from "./WindowChrome";
 import WorkspaceIcon from "./WorkspaceIcon";
 import WorkspaceTabs from "./WorkspaceTabs";
@@ -166,6 +167,7 @@ export default function Workspace({
   const sequence = useRef(1);
   const root = useRef<HTMLDivElement>(null);
   const [partitionPickerOpen, setPartitionPickerOpen] = useState(false);
+  const [searchHelp, setSearchHelp] = useState(false);
   const locations = useRef(new Map<number, DirectoryPage>());
   const [histories, setHistories] = useState<
     Record<number, { entries: BrowseLocation[]; cursor: number }>
@@ -516,6 +518,7 @@ export default function Workspace({
       !onSettings,
     ),
     exit: workspaceCommand("exit", () => onExit?.(), !onExit),
+    help: workspaceCommand("help", () => setSearchHelp(true)),
     nextTab: workspaceCommand("nextTab", () => cycleTab(1)),
     previousTab: workspaceCommand("previousTab", () => cycleTab(-1)),
   };
@@ -700,6 +703,7 @@ export default function Workspace({
             label: "帮助",
             accessKey: "h",
             items: [
+              mainCommands.help,
               { label: "快捷键", run: () => onSettings("shortcuts") },
               { label: "关于与诊断", run: () => onSettings("about") },
             ],
@@ -765,6 +769,7 @@ export default function Workspace({
         </WorkspaceTabs>
       </WindowChrome>
       <AppMenu groups={groups} />
+      {searchHelp && <SearchHelp onClose={() => setSearchHelp(false)} />}
       {partitionPickerOpen && (
         <Modal
           title="切换浏览分区"

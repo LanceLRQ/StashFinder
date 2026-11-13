@@ -74,6 +74,20 @@ function menu(group: string, action: string) {
   fireEvent.click(screen.getByRole("menuitem", { name: action }));
 }
 
+test("F1 opens bundled syntax help without invoking the backend", () => {
+  render(<Desktop />);
+  const input = screen.getByRole("searchbox");
+  input.focus();
+  vi.mocked(invoke).mockClear();
+  fireEvent.keyDown(input, { key: "F1" });
+  const help = screen.getByRole("dialog", { name: "搜索语法" });
+  expect(within(help).getByText("path:projects")).toBeTruthy();
+  expect(within(help).getByText("dupe:name;size")).toBeTruthy();
+  expect(invoke).not.toHaveBeenCalled();
+  fireEvent.click(within(help).getByRole("button", { name: "关闭" }));
+  expect(document.activeElement).toBe(input);
+});
+
 test("hides routine status while keeping active search and failure feedback", async () => {
   const original = vi.mocked(invoke).getMockImplementation()!;
   let rejectPage: (reason: Error) => void = () => {};

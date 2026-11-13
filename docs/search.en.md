@@ -6,6 +6,8 @@ Search reads registered partitions' local indexes, including online and offline 
 
 ## Expressions
 
+Press F1 or choose Help → Search syntax to see query examples offline in the app.
+
 | Input | Meaning |
 |---|---|
 | `aaa bbb` | Both substrings, in any order, across path components by default |
