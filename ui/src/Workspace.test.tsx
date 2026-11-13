@@ -112,6 +112,24 @@ function choosePartition(name = "Movies") {
   fireEvent.click(within(tree).getByRole("button", { name }));
 }
 
+test("inverts the directory selection twice without changing the loaded rows", async () => {
+  setup();
+  choosePartition();
+  const note = await screen.findByRole("row", { name: /notes.txt/ });
+  const folder = screen.getByRole("row", { name: /Films/ });
+  fireEvent.click(note);
+  function invert() {
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "反选" }));
+  }
+  invert();
+  expect(note.getAttribute("aria-selected")).toBe("false");
+  expect(folder.getAttribute("aria-selected")).toBe("true");
+  invert();
+  expect(note.getAttribute("aria-selected")).toBe("true");
+  expect(folder.getAttribute("aria-selected")).toBe("false");
+});
+
 test("only shows tab scroll buttons when tabs overflow and keeps Home available", () => {
   render(
     <Workspace

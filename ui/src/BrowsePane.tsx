@@ -379,6 +379,15 @@ export default function BrowsePane({
           selectAll,
           busy || !!error || editing !== null || !page?.total,
         ),
+        {
+          label: "反选",
+          disabled:
+            busy ||
+            !!error ||
+            editing !== null ||
+            !(page?.total ?? page?.entries.length),
+          run: () => setAllSelected((all) => !all),
+        },
       ],
       sorting: sortCommands(
         directoryColumns,

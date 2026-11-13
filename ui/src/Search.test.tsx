@@ -203,6 +203,32 @@ const publication = (revision: number) => ({
 });
 const tick = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
+test("inverts a million-result selection without limiting it to the viewport", async () => {
+  const fixture = refreshFixture();
+  fixture.total = 1_000_000;
+  const onCommands = vi.fn();
+  render(<Search partitions={[]} onCommands={onCommands} />);
+  await tick(0);
+  fireEvent.click(screen.getByText("query-1-0.txt"));
+  const invert = () =>
+    act(() =>
+      onCommands.mock.lastCall?.[0].actions.selection
+        .find((item: { label: string }) => item.label === "反选")
+        .run(),
+    );
+  invert();
+  expect(screen.getByText("已选择 999,999 项")).toBeTruthy();
+  expect(screen.getByText("文件操作最多支持 10,000 项")).toBeTruthy();
+  invert();
+  expect(screen.getByText("已选择 1 项")).toBeTruthy();
+  expect(
+    screen
+      .getByText("query-1-0.txt")
+      .closest("tr")
+      ?.getAttribute("aria-selected"),
+  ).toBe("true");
+});
+
 test("coalesces rapid input and submits immediately on Enter", async () => {
   vi.useFakeTimers();
   mockPage(page);

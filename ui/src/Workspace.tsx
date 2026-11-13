@@ -496,8 +496,9 @@ export default function Workspace({
       accessKey: "e",
       items: [
         ...editCommands.slice(0, 5).map(editCommand),
-        actions?.selection?.[0] ??
+        ...(actions?.selection ?? [
           workspaceCommand("selectAll", () => {}, true),
+        ]),
         ...editCommands.slice(5).map(editCommand),
       ],
     },

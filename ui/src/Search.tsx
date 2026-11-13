@@ -642,6 +642,12 @@ export default function Search({
     onCommands && {
       selection: [
         workspaceCommand("selectAll", selectAll, facts.blocked || !total),
+        {
+          label: "反选",
+          disabled: facts.blocked || !total,
+          run: () =>
+            setSelection((current) => toggleSpans(current, [0, total])),
+        },
       ],
       sorting: sortCommands(
         searchColumns,
