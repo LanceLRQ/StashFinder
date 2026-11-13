@@ -6,6 +6,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { SettingsPage } from "./Settings";
+import {
+  eventShortcut,
+  workspaceCommand,
+  workspaceShortcuts,
+} from "./workspace-shortcuts";
 import type { Asset } from "./asset-api";
 import type { PartitionIndexes } from "./task-api";
 import type { SearchHit } from "./index-api";
@@ -20,6 +26,7 @@ import WorkspaceTabs from "./WorkspaceTabs";
 import "./workspace.css";
 import {
   defaultCategories,
+  filterPresetEntries,
   hasFileFilter,
   noPresets,
   selectFilter,
@@ -29,9 +36,10 @@ import {
   type SearchContext,
 } from "./search-options";
 import type { DirectoryPage } from "./browse-api";
-import AppMenu, { type MenuGroup } from "./AppMenu";
+import AppMenu, { type MenuCommand, type MenuGroup } from "./AppMenu";
 import {
   editCommands,
+  editableTarget,
   fileCommands,
   fileKey,
   type FileCommandContext,
@@ -60,7 +68,6 @@ const searchTitle = (text: string) =>
   text.trim() ? `搜索：${text.trim()}` : "搜索";
 const pages = {
   overview: { id: -1, title: "概览", kind: "overview" },
-  settings: { id: -3, title: "设置", kind: "settings" },
   development: { id: -4, title: "开发验证", kind: "development" },
 } as const;
 type AuxiliaryPage = keyof typeof pages;
@@ -93,6 +100,8 @@ export default function Workspace({
   device,
   panels,
   notice,
+  onSettings,
+  onExit,
 }: {
   assets: Asset[];
   includePath: boolean;
@@ -120,6 +129,8 @@ export default function Workspace({
   };
   panels?: Partial<Record<AuxiliaryPage, ReactNode>>;
   notice?: ReactNode;
+  onSettings?: (page: SettingsPage) => void;
+  onExit?: () => void;
 }) {
   const [tabs, setTabs] = useState<Tab[]>(() =>
     panels?.overview ? [pages.overview] : [newTab(1)],
@@ -335,84 +346,98 @@ export default function Workspace({
     ]);
     setActive(id);
   }
+  function focusSearch() {
+    const input = root.current?.querySelector<HTMLInputElement>(
+      'section:not([hidden]) input[type="search"]',
+    );
+    if (input) {
+      input.focus();
+      input.select();
+    } else {
+      searchFocus.current = true;
+      const file = [...tabs]
+        .reverse()
+        .find((tab) => tab.kind === "browse" || tab.kind === "search");
+      if (file) setActive(file.id);
+      else add();
+    }
+  }
+  function cycleTab(direction: number) {
+    const ids = tabs.map((tab) => tab.id);
+    setActive(ids[(ids.indexOf(active) + direction + ids.length) % ids.length]);
+  }
+  const mainCommands = {
+    browse: workspaceCommand("browse", add),
+    search: workspaceCommand("search", () => search("")),
+    close: workspaceCommand(
+      "close",
+      () => close(active),
+      active === pages.overview.id,
+    ),
+    focus: workspaceCommand("focus", focusSearch),
+    refresh: workspaceCommand(
+      "refresh",
+      () => refreshCurrent?.(),
+      !refreshCurrent,
+    ),
+    settings: workspaceCommand(
+      "settings",
+      () => onSettings?.("general"),
+      !onSettings,
+    ),
+    exit: workspaceCommand("exit", () => onExit?.(), !onExit),
+    nextTab: workspaceCommand("nextTab", () => cycleTab(1)),
+    previousTab: workspaceCommand("previousTab", () => cycleTab(-1)),
+  };
+  const actions = commands?.actions;
+  const shortcuts: MenuCommand[] = [
+    ...Object.values(mainCommands),
+    ...(commands?.views ?? []),
+    ...(actions?.selection ?? []),
+    ...(actions?.navigation ?? []),
+    ...(actions?.search ?? []),
+  ];
   useEffect(() => {
     function keyDown(e: KeyboardEvent) {
       if (
         !root.current ||
         root.current.closest("[hidden]") ||
+        e.metaKey ||
         e.isComposing ||
         e.keyCode === 229 ||
         e.key === "Process" ||
         e.defaultPrevented ||
         document.querySelector(
           'dialog[open], [role="dialog"], [role="alertdialog"]',
-        )
+        ) ||
+        (e.target instanceof Element && e.target.closest('[role="menu"]'))
       )
         return;
-      if (
-        e.key === "F5" &&
-        !e.altKey &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.shiftKey
-      ) {
-        e.preventDefault();
-        if (!e.repeat) refreshCurrent?.();
-        return;
-      }
-      if (e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "f") {
-        e.preventDefault();
-        if (e.shiftKey) {
-          if (!e.repeat) search("");
+
+      const shortcut = eventShortcut(e);
+      const command = shortcuts.find((item) => item.shortcut === shortcut);
+      if (command) {
+        const editing = editableTarget(e.target);
+        const searchInput =
+          e.target instanceof HTMLInputElement &&
+          e.target.type === "search" &&
+          currentTab?.kind === "search";
+        if (
+          editing &&
+          (shortcut === workspaceShortcuts.selectAll[1] ||
+            shortcut === workspaceShortcuts.up[1] ||
+            (actions?.search?.includes(command) && !searchInput))
+        )
           return;
-        }
-        const input = root.current.querySelector(
-          'section:not([hidden]) input[type="search"]',
-        ) as HTMLInputElement | null;
-        if (input) {
-          input.focus();
-          input.select();
-        } else {
-          searchFocus.current = true;
-          const file = [...tabs]
-            .reverse()
-            .find((tab) => tab.kind === "browse" || tab.kind === "search");
-          if (file) setActive(file.id);
-          else add();
-        }
-        return;
-      }
-      if (e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "w") {
         e.preventDefault();
-        close(active);
+        if (!e.repeat && !command.disabled) command.run();
         return;
       }
-      if (e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "t") {
-        e.preventDefault();
-        add();
-        return;
-      }
-      if (e.ctrlKey && !e.altKey && !e.metaKey && e.key === "Tab") {
-        e.preventDefault();
-        const ids = tabs.map((t) => t.id);
-        setActive(
-          ids[
-            (ids.indexOf(active) + (e.shiftKey ? ids.length - 1 : 1)) %
-              ids.length
-          ],
-        );
-        return;
-      }
-      if (
-        commands &&
-        !(e.target instanceof Element && e.target.closest('[role="menu"]'))
-      ) {
-        fileKey(e, commands.dispatch);
-      }
+      if (commands) fileKey(e, commands.dispatch);
     }
     document.addEventListener("keydown", keyDown);
     return () => document.removeEventListener("keydown", keyDown);
-  }, [active, tabs, assets, commands, refreshCurrent, search]);
+  });
   useEffect(() => {
     root.current
       ?.querySelector('[role="tab"][aria-selected="true"]')
@@ -426,23 +451,25 @@ export default function Workspace({
         ?.focus();
     }
   }, [active]);
+  const layouts = (commands?.views ?? []).filter((item) => item.radio);
+  const presets =
+    currentTab?.kind === "browse" && onBrowseFilter
+      ? filterPresetEntries(categories, filterPresets).map(({ id, name }) => ({
+          label: name,
+          radio: true,
+          checked: id === browseFilter,
+          disabled: savingFilters,
+          run: () => onBrowseFilter(id),
+        }))
+      : (actions?.presets ?? []);
   const groups: MenuGroup[] = [
     {
       label: "文件",
       accessKey: "f",
       items: [
-        { label: "新建浏览标签页", shortcut: "Ctrl+T", run: add },
-        {
-          label: "新建搜索标签页",
-          shortcut: "Ctrl+Shift+F",
-          run: () => search(""),
-        },
-        {
-          label: "关闭标签页",
-          shortcut: "Ctrl+W",
-          disabled: active === pages.overview.id,
-          run: () => close(active),
-        },
+        mainCommands.browse,
+        mainCommands.search,
+        mainCommands.close,
         ...(currentTab?.kind === "browse"
           ? [
               {
@@ -459,48 +486,48 @@ export default function Workspace({
                 run: device.register,
                 disabled: startupReady !== true || device.busy,
               },
-              { label: "刷新设备", run: device.refresh, disabled: device.busy },
             ]
           : []),
+        ...(onExit ? [mainCommands.exit] : []),
       ],
     },
     {
       label: "编辑",
       accessKey: "e",
-      items: editCommands.map((id) => ({
-        label: fileCommands[id][0],
-        shortcut: fileCommands[id][1],
-        disabled: !commands?.enabled(id),
-        run: () => commands?.dispatch(id),
-      })),
+      items: [
+        ...editCommands.slice(0, 5).map(editCommand),
+        actions?.selection?.[0] ??
+          workspaceCommand("selectAll", () => {}, true),
+        ...editCommands.slice(5).map(editCommand),
+      ],
     },
     {
       label: "查看",
       accessKey: "v",
       items: [
-        {
-          label: "刷新当前页",
-          shortcut: "F5",
-          disabled: !refreshCurrent,
-          run: () => refreshCurrent?.(),
-        },
-        ...(commands?.views ?? []),
-        ...(currentTab?.kind === "browse" && onBrowseFilter
-          ? [
-              { id: null, name: "无筛选" },
-              { id: "@folder", name: "文件夹" },
-              ...categories.map((c) => ({
-                id: `category:${c.name}`,
-                name: c.name,
-              })),
-              ...filterPresets,
-            ].map(({ id, name }) => ({
-              label: `${id?.startsWith("user:") ? "我的预设" : "筛选器"}：${name}`,
-              radio: true,
-              checked: id === browseFilter,
-              disabled: savingFilters,
-              run: () => onBrowseFilter(id),
-            }))
+        mainCommands.refresh,
+        ...(commands?.views.filter((item) => !item.radio) ?? []),
+        ...(layouts.length ? [{ label: "布局", items: layouts }] : []),
+        ...(actions?.sorting?.length
+          ? [{ label: "排序", items: actions.sorting }]
+          : []),
+        ...(actions?.navigation?.length
+          ? [{ label: "前往", items: actions.navigation }]
+          : []),
+      ],
+    },
+    {
+      label: "搜索",
+      accessKey: "s",
+      items: [
+        mainCommands.focus,
+        ...(actions?.search ?? []),
+        ...(presets.length
+          ? [{ label: "筛选预设", items: presets.filter((item) => item.radio) }]
+          : []),
+        ...presets.filter((item) => !item.radio),
+        ...(onSettings
+          ? [{ label: "管理筛选预设…", run: () => onSettings("presets") }]
           : []),
       ],
     },
@@ -508,15 +535,36 @@ export default function Workspace({
       label: "工具",
       accessKey: "t",
       items: [
-        ...(panels?.settings
-          ? [{ label: "设置", run: () => openPage("settings") }]
+        ...(onSettings ? [mainCommands.settings] : []),
+        ...(device
+          ? [{ label: "刷新设备", run: device.refresh, disabled: device.busy }]
           : []),
         ...(panels?.development
           ? [{ label: "开发验证", run: () => openPage("development") }]
           : []),
       ],
     },
+    ...(onSettings
+      ? [
+          {
+            label: "帮助",
+            accessKey: "h",
+            items: [
+              { label: "快捷键", run: () => onSettings("shortcuts") },
+              { label: "关于与诊断", run: () => onSettings("about") },
+            ],
+          },
+        ]
+      : []),
   ];
+  function editCommand(id: (typeof editCommands)[number]): MenuCommand {
+    return {
+      label: fileCommands[id][0],
+      shortcut: fileCommands[id][1],
+      disabled: !commands?.enabled(id),
+      run: () => commands?.dispatch(id),
+    };
+  }
   function tabButton(tab: Tab) {
     return (
       <div

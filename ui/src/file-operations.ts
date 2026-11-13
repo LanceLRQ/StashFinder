@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef } from "react";
+import type { MenuCommand } from "./AppMenu";
 
 export const maxFileSelection = 10_000;
 export const fileSelectionLimit = "文件操作最多支持 10,000 项";
@@ -135,16 +136,18 @@ export function commandEnabled(action: MenuAction, facts: CommandFacts) {
       return online && count > 0 && sameParent;
   }
 }
-type ViewOption = {
-  label: string;
-  checked: boolean;
-  radio?: boolean;
-  run: () => void;
+export type FileMenuActions = {
+  selection?: MenuCommand[];
+  sorting?: MenuCommand[];
+  navigation?: MenuCommand[];
+  search?: MenuCommand[];
+  presets?: MenuCommand[];
 };
 export type FileCommandContext = {
   enabled: (action: MenuAction) => boolean;
   dispatch: (action: MenuAction) => void;
-  views: ViewOption[];
+  views: MenuCommand[];
+  actions?: FileMenuActions;
   refresh?: () => void;
 };
 export function useFileCommands(
@@ -152,12 +155,13 @@ export function useFileCommands(
   run: (action: MenuAction) => void,
   active: boolean,
   onContext: ((context: FileCommandContext | null) => void) | undefined,
-  views: ViewOption[],
+  views: MenuCommand[],
   refresh?: () => void,
+  actions: FileMenuActions = {},
 ) {
-  const current = useRef({ facts, run, active, views, refresh });
+  const current = useRef({ facts, run, active, views, refresh, actions });
   useLayoutEffect(() => {
-    current.current = { facts, run, active, views, refresh };
+    current.current = { facts, run, active, views, refresh, actions };
   });
   const enabled = (action: MenuAction) =>
     current.current.active && commandEnabled(action, current.current.facts);
@@ -167,7 +171,7 @@ export function useFileCommands(
   const availability = editCommands
     .map((id) => Number(commandEnabled(id, facts)))
     .join("");
-  const checked = views.map((view) => Number(view.checked)).join("");
+  const menuState = JSON.stringify({ views, actions });
   const canRefresh = refresh !== undefined;
   useLayoutEffect(() => {
     if (!active || !onContext) return;
@@ -183,9 +187,22 @@ export function useFileCommands(
         ...view,
         run: () => current.current.views[index]?.run(),
       })),
+      actions: Object.fromEntries(
+        (Object.keys(actions) as (keyof FileMenuActions)[]).map((group) => [
+          group,
+          actions[group]?.map((item, index) => ({
+            ...item,
+            run: () => {
+              const command = current.current.actions[group]?.[index];
+              if (current.current.active && command && !command.disabled)
+                command.run();
+            },
+          })),
+        ]),
+      ),
     });
     return () => onContext(null);
-  }, [active, onContext, availability, checked, canRefresh]);
+  }, [active, onContext, availability, menuState, canRefresh]);
   return dispatch;
 }
 

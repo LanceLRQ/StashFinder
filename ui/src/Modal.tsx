@@ -32,12 +32,17 @@ export default function Modal({
   const ref = useRef<HTMLDialogElement>(null);
   useLayoutEffect(() => {
     const dialog = ref.current!;
+    const previous = document.activeElement;
     dialog.showModal();
     const focus =
       initialFocus?.current ??
       dialog.querySelector<HTMLButtonElement>(".modal-close");
     focus?.focus();
-    return () => dialog.close();
+    return () => {
+      dialog.close();
+      if (previous instanceof HTMLElement && previous.isConnected)
+        previous.focus();
+    };
   }, [initialFocus]);
 
   return createPortal(

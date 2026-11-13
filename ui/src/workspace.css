@@ -138,6 +138,21 @@
 .app-menu-group {
   position: relative;
 }
+.app-menu-branch {
+  position: relative;
+}
+.app-menu-popup.app-menu-submenu {
+  position: fixed;
+  z-index: 26;
+}
+.app-menu-arrow {
+  width: 6px;
+  height: 6px;
+  border-block-start: 1px solid currentColor;
+  border-inline-end: 1px solid currentColor;
+  transform: rotate(45deg);
+  margin-inline-end: 4px;
+}
 .app-menu-group > button {
   padding: 5px 11px;
   border: 0;

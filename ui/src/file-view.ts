@@ -1,3 +1,5 @@
+import { workspaceCommand } from "./workspace-shortcuts";
+
 export const fileDetailsLayout = { rowHeight: 34, overscan: 10 };
 
 export const thumbnailLayouts = {
@@ -8,21 +10,13 @@ export const thumbnailLayouts = {
 
 export type FileView = "details" | keyof typeof thumbnailLayouts;
 
-const labels = {
-  details: "详情",
-  small: "缩略图（小图标）",
-  medium: "缩略图（中图标）",
-  large: "缩略图（大图标）",
-} satisfies Record<FileView, string>;
-
 export function fileViewOptions(
   current: FileView,
   change: (view: FileView) => void,
 ) {
-  return (Object.keys(labels) as FileView[]).map((view) => ({
-    label: labels[view],
+  return (["large", "medium", "small", "details"] as const).map((view) => ({
+    ...workspaceCommand(view, () => change(view)),
     checked: current === view,
     radio: true,
-    run: () => change(view),
   }));
 }

@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import Assets, { type AssetControls } from "./Assets";
 import Workspace from "./Workspace";
 import FileOperations from "./FileOperations";
 import Visuals from "./Visuals";
-import Settings from "./Settings";
+import Settings, { type SettingsPage } from "./Settings";
 import type { Asset, AssetSnapshot } from "./asset-api";
 import IndexActivity from "./IndexActivity";
 import { IndexModeDialog } from "./IndexControls";
@@ -23,6 +24,9 @@ export default function Desktop() {
   const [preferences, setPreferences] = useState(defaultPreferences);
   const [loaded, setLoaded] = useState(false);
   const [preferenceError, setPreferenceError] = useState("");
+  const [preferenceUnavailable, setPreferenceUnavailable] = useState(false);
+  const [settings, setSettings] = useState<SettingsPage | null>(null);
+  const [exitError, setExitError] = useState("");
   const [saving, setSaving] = useState(false);
   const saveLock = useRef(false);
   const [snapshot, setSnapshot] = useState<AssetSnapshot | null>(null);
@@ -93,7 +97,10 @@ export default function Desktop() {
           if (active) setPreferences(value);
         },
         (error) => {
-          if (active) setPreferenceError(`设置读取失败：${String(error)}`);
+          if (active) {
+            setPreferenceUnavailable(true);
+            setPreferenceError(`设置读取失败：${String(error)}`);
+          }
         },
       )
       .then(() => {
@@ -128,6 +135,13 @@ export default function Desktop() {
       <FileOperations>
         <main className="desktop">
           <Workspace
+            onSettings={setSettings}
+            onExit={() => {
+              setExitError("");
+              void invoke("app_exit").catch((error) =>
+                setExitError(String(error)),
+              );
+            }}
             assets={assets}
             includePath={preferences.include_path}
             categories={preferences.categories}
@@ -163,9 +177,9 @@ export default function Desktop() {
               retry: () => deviceControls.current?.retry(),
             }}
             notice={
-              preferenceError && (
+              (exitError || (!settings && preferenceError)) && (
                 <p role="alert" className="desktop-error preference-error">
-                  {preferenceError}
+                  {exitError || preferenceError}
                 </p>
               )
             }
@@ -203,18 +217,6 @@ export default function Desktop() {
                   )}
                 />
               ),
-              settings: (
-                <Settings
-                  preferences={preferences}
-                  saving={saving || !loaded}
-                  onSave={async (next) => {
-                    await save(next);
-                  }}
-                  tasks={tasks.data}
-                  taskError={tasks.error}
-                  onTasksRefresh={tasks.refresh}
-                />
-              ),
               ...(Development && {
                 development: (
                   <Suspense fallback={<p>正在加载验证工具…</p>}>
@@ -224,6 +226,20 @@ export default function Desktop() {
               }),
             }}
           />
+          {settings && (
+            <Settings
+              initialPage={settings}
+              preferences={preferences}
+              saving={saving}
+              preferenceUnavailable={preferenceUnavailable || !loaded}
+              preferenceError={preferenceError}
+              onSave={(changes) => save({ ...preferences, ...changes })}
+              onClose={() => setSettings(null)}
+              tasks={tasks.data}
+              taskError={tasks.error}
+              onTasksRefresh={tasks.refresh}
+            />
+          )}
           {choicePartition && (
             <IndexModeDialog
               partitionId={indexChoice}

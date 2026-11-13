@@ -326,6 +326,7 @@ test("directory thumbnail modes preserve focus, selection and the tab's layout",
   const choose = (name: string) => {
     fireEvent.pointerDown(menu);
     fireEvent.click(menu);
+    fireEvent.click(screen.getByRole("menuitem", { name: "布局" }));
     fireEvent.click(screen.getByRole("menuitemradio", { name }));
   };
   choose("缩略图（小图标）");
@@ -342,12 +343,18 @@ test("directory thumbnail modes preserve focus, selection and the tab's layout",
   });
   await screen.findByRole("tab", { name: "搜索：notes" });
   fireEvent.click(menu);
+  fireEvent.click(screen.getByRole("menuitem", { name: "布局" }));
   expect(
     screen
       .getByRole("menuitemradio", { name: "详情" })
       .getAttribute("aria-checked"),
   ).toBe("true");
-  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  fireEvent.keyDown(screen.getByRole("menu", { name: "布局" }), {
+    key: "Escape",
+  });
+  fireEvent.keyDown(screen.getByRole("menu", { name: "查看" }), {
+    key: "Escape",
+  });
   fireEvent.click(screen.getByRole("tab", { name: "Movies" }));
   expect(
     screen

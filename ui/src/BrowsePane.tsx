@@ -15,6 +15,7 @@ import FileContextMenu from "./FileContextMenu";
 import { FileStatusBar, useFileOperations } from "./FileOperations";
 import {
   fileKey,
+  fileEditingKey,
   fileSelectionLimit,
   maxFileSelection,
   useFileCommands,
@@ -26,6 +27,12 @@ import {
 } from "./file-operations";
 import type { FileRow } from "./browse-api";
 import type { FileFilter } from "./search-options";
+import { directoryColumns, sortCommands } from "./file-columns";
+import {
+  eventShortcut,
+  workspaceCommand,
+  workspaceShortcuts,
+} from "./workspace-shortcuts";
 
 export default function BrowsePane({
   id,
@@ -330,6 +337,17 @@ export default function BrowsePane({
       !!online && !!page && !page.partial && !asset?.error && !busy && !error,
     blocked: editing !== null,
   };
+  function selectAll() {
+    setSelection([]);
+    setAllSelected(true);
+  }
+  const up =
+    page && page.ancestors.length > 1
+      ? page.ancestors[page.ancestors.length - 2]
+      : undefined;
+  function goUp() {
+    if (up) navigate(up.entry);
+  }
   const dispatch = useFileCommands(
     facts,
     menuAction,
@@ -338,7 +356,10 @@ export default function BrowsePane({
     [
       ...fileViewOptions(view, onView),
       { label: "目录树", checked: tree, run: () => setTree((v) => !v) },
-      { label: "预览窗格", checked: preview, run: () => setPreview((v) => !v) },
+      {
+        ...workspaceCommand("preview", () => setPreview((v) => !v)),
+        checked: preview,
+      },
       {
         label: "面包屑",
         checked: breadcrumb,
@@ -351,6 +372,25 @@ export default function BrowsePane({
           reload();
         }
       : undefined,
+    onCommands && {
+      selection: [
+        workspaceCommand(
+          "selectAll",
+          selectAll,
+          busy || !!error || editing !== null || !page?.total,
+        ),
+      ],
+      sorting: sortCommands(
+        directoryColumns,
+        sort?.field ?? "name",
+        sort?.descending ?? false,
+        (field, descending) =>
+          changeSort(field as DirectorySortField, descending),
+      ),
+      navigation: [
+        workspaceCommand("up", goUp, !up || busy || editing !== null),
+      ],
+    },
   );
   function fileKeys(e: React.KeyboardEvent) {
     return fileKey(e, dispatch, () => {
@@ -359,6 +399,9 @@ export default function BrowsePane({
     });
   }
   function sortBy(field: DirectorySortField) {
+    changeSort(field, (sort?.field ?? "name") === field && !sort?.descending);
+  }
+  function changeSort(field: DirectorySortField, descending: boolean) {
     request.current++;
     setBusy(true);
     setSelection([]);
@@ -367,7 +410,7 @@ export default function BrowsePane({
     setMenu(null);
     setSort({
       field,
-      descending: (sort?.field ?? "name") === field && !sort?.descending,
+      descending,
     });
   }
   async function more() {
@@ -448,13 +491,16 @@ export default function BrowsePane({
       className="browse-pane"
       onKeyDown={(e) => {
         if (
-          e.altKey &&
-          e.key === "ArrowUp" &&
-          page &&
-          page.ancestors.length > 1
+          !e.repeat &&
+          !e.metaKey &&
+          !fileEditingKey(e) &&
+          eventShortcut(e.nativeEvent) === workspaceShortcuts.up[1] &&
+          up &&
+          !busy &&
+          editing === null
         ) {
           e.preventDefault();
-          navigate(page.ancestors[page.ancestors.length - 2].entry);
+          goUp();
         }
       }}
     >
@@ -553,8 +599,7 @@ export default function BrowsePane({
                     setAllSelected(all);
                   }}
                   onSelectAll={() => {
-                    setSelection([]);
-                    setAllSelected(true);
+                    if (!busy && !error && editing === null) selectAll();
                   }}
                   onContext={(_row, x, y) => showMenu(x, y)}
                   onBlankContext={(x, y) => {

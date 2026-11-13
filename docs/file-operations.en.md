@@ -9,6 +9,7 @@ Directory and search lists share the same operations. The top Edit menu (Alt+E),
 | Operation | Access |
 |---|---|
 | Open a file / browse a folder | Double-click or Enter; offline folders browse the catalog only |
+| Select all | Ctrl+A in the list, or Edit → Select all |
 | Copy files | Ctrl+C, then paste in Explorer or another receiving app |
 | Drag files out | Drag a file row; always copy semantics |
 | Cut | Ctrl+X publishes a cut list; source files have not moved yet |

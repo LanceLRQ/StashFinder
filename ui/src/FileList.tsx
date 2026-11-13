@@ -10,6 +10,7 @@ import {
   type FileView,
 } from "./file-view";
 import { rectangleSpans } from "./marquee";
+import { eventShortcut, workspaceShortcuts } from "./workspace-shortcuts";
 
 export default function FileList({
   rows,
@@ -139,7 +140,11 @@ export default function FileList({
       }}
       onKeyDown={(e) => {
         if (fileEditingKey(e) || onFileKey?.(e)) return;
-        if (e.ctrlKey && e.key.toLowerCase() === "a") {
+        if (
+          !e.metaKey &&
+          !e.repeat &&
+          eventShortcut(e.nativeEvent) === workspaceShortcuts.selectAll[1]
+        ) {
           e.preventDefault();
           if (onSelectAll) onSelectAll();
           else onSelect(rows.map((r) => r.entry.join(",")));

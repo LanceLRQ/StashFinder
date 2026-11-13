@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { indexRequest, type SearchHit, type SearchPage } from "./index-api";
 import { connectionLabel } from "./browse-api";
-import { fileColumnText } from "./file-columns";
+import { fileColumnText, searchColumns, sortCommands } from "./file-columns";
+import {
+  eventShortcut,
+  workspaceCommand,
+  workspaceShortcuts,
+} from "./workspace-shortcuts";
 import {
   defaultCategories,
   emptyOptions,
   hasFileFilter,
   noFilter,
   noPresets,
+  selectFilter,
+  filterPresetEntries,
   type Category,
   type FilterPreset,
   type FilterSelection,
@@ -126,7 +133,9 @@ export default function Search({
   const [partition, setPartition] = useState("");
   const [options, setOptions] = useState<SearchOptions>(emptyOptions);
   const [filter, setFilter] = useState(initialFilter);
-  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState<"search" | "save" | false>(
+    false,
+  );
   const filterActive =
     hasFileFilter(filter.rule) ||
     namesOnly !== !includePath ||
@@ -598,6 +607,23 @@ export default function Search({
       editing !== null ||
       queryId.current === null,
   };
+  const selectAll = () => setSelection(total ? [0, total] : []);
+  const changeSort = (sort: string, descending: boolean) =>
+    setOptions((current) => ({ ...current, sort, descending }));
+  const presetEntries = useMemo(
+    () =>
+      filterPresetEntries(categories, presets).map((entry) => ({
+        ...entry,
+        selection: selectFilter(entry.id, categories, presets),
+      })),
+    [categories, presets],
+  );
+  const filterKey = JSON.stringify(filter.rule);
+  const selectedPreset = presetEntries.find(
+    ({ id, selection }) =>
+      JSON.stringify(selection.rule) === filterKey &&
+      (id === null || !filter.id || id === filter.id),
+  );
   const dispatch = useFileCommands(
     facts,
     menuAction,
@@ -605,11 +631,108 @@ export default function Search({
     onCommands,
     [
       ...fileViewOptions(view, setView),
-      { label: "预览窗格", checked: preview, run: () => setPreview((v) => !v) },
+      {
+        ...workspaceCommand("preview", () => setPreview((v) => !v)),
+        checked: preview,
+      },
     ],
     !busy && !refreshing && editing === null
       ? () => setRevision((n) => n + 1)
       : undefined,
+    onCommands && {
+      selection: [
+        workspaceCommand("selectAll", selectAll, facts.blocked || !total),
+      ],
+      sorting: sortCommands(
+        searchColumns,
+        options.sort,
+        options.descending,
+        changeSort,
+      ),
+      search: [
+        {
+          ...workspaceCommand(
+            "caseSensitive",
+            () =>
+              setOptions((o) => ({ ...o, case_sensitive: !o.case_sensitive })),
+            composing || editing !== null,
+          ),
+          checked: options.case_sensitive,
+        },
+        {
+          ...workspaceCommand(
+            "wholeWord",
+            () =>
+              setOptions((o) => ({
+                ...o,
+                mode: o.mode === "whole_word" ? "contains" : "whole_word",
+              })),
+            composing || editing !== null,
+          ),
+          checked: options.mode === "whole_word",
+        },
+        {
+          ...workspaceCommand(
+            "path",
+            () => setNamesOnly((only) => !only),
+            composing || editing !== null,
+          ),
+          checked: !namesOnly,
+        },
+        {
+          ...workspaceCommand(
+            "regex",
+            () =>
+              setOptions((o) => ({
+                ...o,
+                mode: o.mode === "regex" ? "contains" : "regex",
+              })),
+            composing || editing !== null,
+          ),
+          checked: options.mode === "regex",
+        },
+        {
+          label: "仅在线",
+          checked: options.online_only,
+          run: () => setOptions((o) => ({ ...o, online_only: !o.online_only })),
+        },
+        {
+          label: "包含历史记录",
+          checked: options.include_history,
+          run: () =>
+            setOptions((o) => ({ ...o, include_history: !o.include_history })),
+        },
+        { label: "高级搜索…", run: () => setFilterOpen("search") },
+      ],
+      presets: [
+        ...presetEntries.map(({ id, name, selection }) => ({
+          label: name,
+          checked: selectedPreset?.id === id,
+          radio: true,
+          run: () => setFilter(selection),
+        })),
+        ...(!selectedPreset
+          ? [
+              {
+                label: "自定义",
+                checked: true,
+                radio: true,
+                disabled: true,
+                run: () => {},
+              },
+            ]
+          : []),
+        ...(onSavePresets
+          ? [
+              {
+                label: "将当前筛选另存为预设…",
+                disabled: !hasFileFilter(filter.rule) || savingFilters,
+                run: () => setFilterOpen("save"),
+              },
+            ]
+          : []),
+      ],
+    },
   );
   return (
     <div className="assets-app search-app">
@@ -660,12 +783,13 @@ export default function Search({
           type="button"
           aria-label="筛选器"
           aria-haspopup="dialog"
-          onClick={() => setFilterOpen(true)}
+          onClick={() => setFilterOpen("search")}
         >
           {filterActive ? "筛选器 · 已启用" : "筛选器"}
         </button>
         {active && filterOpen && (
           <SearchFilters
+            mode={filterOpen}
             initialOptions={options}
             categories={categories}
             initialFilter={filter}
@@ -728,11 +852,7 @@ export default function Search({
           sort={options.sort}
           descending={options.descending}
           onSort={(sort) =>
-            setOptions({
-              ...options,
-              sort,
-              descending: options.sort === sort ? !options.descending : false,
-            })
+            changeSort(sort, options.sort === sort && !options.descending)
           }
           total={total}
           revision={resultVersion}
@@ -764,9 +884,15 @@ export default function Search({
               })
             )
               return;
-            if (e.ctrlKey && e.key.toLowerCase() === "a") {
+            if (
+              !e.metaKey &&
+              !e.repeat &&
+              eventShortcut(e.nativeEvent) ===
+                workspaceShortcuts.selectAll[1] &&
+              !facts.blocked
+            ) {
               e.preventDefault();
-              setSelection(total ? [0, total] : []);
+              selectAll();
             }
             if (e.key === "Escape") setMenu(null);
             if (grid && (e.key === "Home" || e.key === "End") && total) {

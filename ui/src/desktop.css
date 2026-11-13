@@ -196,6 +196,19 @@ input[type="radio"] {
   margin: 0;
   padding: 8px 20px;
 }
+.modal.settings-dialog {
+  --modal-width: 760px;
+  height: min(580px, calc(100% - 32px));
+}
+.settings-dialog > .modal-body {
+  display: flex;
+  flex: 1;
+  padding: 0;
+  overflow: hidden;
+}
+.settings-dialog .settings-reset {
+  margin-inline-end: auto;
+}
 .settings-page {
   flex: 1;
   display: flex;
@@ -206,6 +219,7 @@ input[type="radio"] {
   padding: 24px 16px;
   border-right: 1px solid #dce1e7;
   flex-shrink: 0;
+  overflow: auto;
 }
 .settings-nav button {
   border: 0;
@@ -224,6 +238,31 @@ input[type="radio"] {
   min-width: 0;
   overflow: auto;
   padding: 22px 32px;
+}
+.settings-dialog .setting-row:first-child {
+  padding-top: 0;
+}
+.shortcut-reference h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.shortcut-reference p,
+.shortcut-reference dl {
+  margin: 0 0 20px;
+}
+.shortcut-reference dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+}
+.shortcut-reference dd {
+  margin: 0;
+}
+@media (forced-colors: active) {
+  .settings-nav [aria-current="page"] {
+    border: 1px solid Highlight;
+  }
 }
 .setting-row {
   display: flex;

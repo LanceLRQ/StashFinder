@@ -4,6 +4,7 @@ import {
   type DirectorySortField,
   type FileRow,
 } from "./browse-api";
+import type { MenuCommand } from "./AppMenu";
 
 export type FileColumnId =
   | DirectorySortField
@@ -70,6 +71,30 @@ export const searchColumns: readonly FileColumn[] = [
   { id: "status", label: "状态", width: 150 },
   { id: "group", label: "重复组", width: 75, sortable: true },
 ];
+
+export function sortCommands(
+  columns: readonly FileColumn[],
+  field: string,
+  descending: boolean,
+  change: (field: FileColumnId, descending: boolean) => void,
+): MenuCommand[] {
+  return [
+    ...columns
+      .filter((column) => column.sortable)
+      .map(({ id, label }) => ({
+        label,
+        checked: id === field,
+        radio: true,
+        run: () => change(id, descending),
+      })),
+    ...[false, true].map((next) => ({
+      label: next ? "降序" : "升序",
+      checked: next === descending,
+      radio: true,
+      run: () => change(field as FileColumnId, next),
+    })),
+  ];
+}
 
 const attributeFlags = [
   [1, "R"],

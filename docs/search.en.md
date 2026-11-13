@@ -33,9 +33,11 @@ PCRE2 uses UTF/UCP with per-match limits of 100,000 match steps, depth 128, and 
 
 ## Types and scope
 
-Selected types combine with OR, then AND with other conditions. Settings → Files and search can add, edit and remove extension categories. Leading dots and case are normalized; names must be unique, and extensions cannot contain paths or wildcards. Categories are stored in the current user's configuration without changing system associations.
+Selected types combine with OR, then AND with other conditions. Settings → File categories can add, edit and remove extension categories. Leading dots and case are normalized; names must be unique, and extensions cannot contain paths or wildcards. Categories are stored in the current user's configuration without changing system associations.
 
-The search toolbar's Filter dialog contains built-in file types and personal presets. Save file or folder kind, extensions, size and creation or modification dates as a preset. In the file browser, select a preset from the View menu to filter the current folder's list while keeping the directory tree available. The app remembers that choice and uses it as the default for new searches; each search tab can override or clear it. Closing the dialog discards unapplied search conditions.
+Search → Filter presets and the search toolbar's Filter dialog contain built-in file types and personal presets. Save file or folder kind, extensions, size and creation or modification dates as a preset, or maintain them from Search → Manage filter presets. Applying a preset in a browse tab filters the right-hand list and keeps the directory tree available. The app remembers that browse choice and uses it as the default for new searches. Each search tab can override or clear it. Closing Advanced search discards unapplied search conditions.
+
+In the active search tab, Ctrl+I toggles case sensitivity, Ctrl+B whole-word matching, Ctrl+U path matching, and Ctrl+R regular expressions. Whole-word matching and regular expressions share one match mode.
 
 A search started from browsing can target its original partition or folder and descendants. Individual partitions, online-only and historical-record filters are also available. Folder scope uses indexed directory IDs; missing directories produce an error instead of a same-name fallback.
 

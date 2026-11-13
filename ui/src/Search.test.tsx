@@ -281,6 +281,52 @@ test("waits for the first page without a client-side polling delay", async () =>
   expect(screen.getByText("movie.txt")).toBeTruthy();
 });
 
+test("search menu matching controls use one mode and apply only to the current query", async () => {
+  vi.useFakeTimers();
+  mockPage(page);
+  const onCommands = vi.fn();
+  render(
+    <Search partitions={[]} initialText="movie" onCommands={onCommands} />,
+  );
+  await tick(0);
+  const actions = () => onCommands.mock.lastCall?.[0].actions.search;
+  act(() =>
+    actions()
+      .find((action: { shortcut?: string }) => action.shortcut === "Ctrl+B")
+      .run(),
+  );
+  await tick(0);
+  expect(invoke).toHaveBeenCalledWith("index_request", {
+    action: {
+      search_start: expect.objectContaining({
+        options: expect.objectContaining({ mode: "whole_word" }),
+      }),
+    },
+  });
+  vi.mocked(invoke).mockClear();
+  act(() =>
+    actions()
+      .find((action: { shortcut?: string }) => action.shortcut === "Ctrl+R")
+      .run(),
+  );
+  await tick(0);
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([, args]: any) => args?.action?.search_start),
+  ).toHaveLength(1);
+  expect(
+    actions().find(
+      (action: { shortcut?: string }) => action.shortcut === "Ctrl+B",
+    ).checked,
+  ).toBe(false);
+  expect(
+    actions().find(
+      (action: { shortcut?: string }) => action.shortcut === "Ctrl+R",
+    ).checked,
+  ).toBe(true);
+});
+
 test("waits for the IME to commit before searching", async () => {
   vi.useFakeTimers();
   mockPage(page);

@@ -84,23 +84,22 @@ test("remembers the browse preset and copies it only into new search tabs", asyn
   });
   let desktop = render(<Desktop />);
   menu("文件", "新建浏览标签页");
-  fireEvent.click(screen.getByRole("button", { name: "查看" }));
-  fireEvent.click(
-    await screen.findByRole("menuitemradio", { name: "筛选器：图片" }),
-  );
+  menu("搜索", "筛选预设");
+  fireEvent.click(await screen.findByRole("menuitemradio", { name: "图片" }));
   await waitFor(() => expect(saved.browse_filter).toBe("category:图片"));
   desktop.unmount();
   desktop = render(<Desktop />);
   menu("文件", "新建浏览标签页");
-  fireEvent.click(screen.getByRole("button", { name: "查看" }));
+  menu("搜索", "筛选预设");
   await waitFor(() =>
     expect(
       screen.getByRole("menuitemradio", {
-        name: "筛选器：图片",
+        name: "图片",
         checked: true,
       }),
     ).toBeTruthy(),
   );
+  fireEvent.keyDown(document.activeElement!, { key: "Escape" });
   fireEvent.keyDown(document.activeElement!, { key: "Escape" });
   menu("文件", "新建搜索标签页");
   const starts = () =>
@@ -445,10 +444,93 @@ test("keeps settings reachable when the service and preference storage fail", as
   vi.mocked(invoke).mockRejectedValue("无法读取");
   render(<Desktop />);
   expect(screen.getByRole("tab", { name: "概览" })).toBeTruthy();
-  menu("工具", "设置");
-  expect(await screen.findByRole("button", { name: "搜索" })).toBeTruthy();
+  menu("工具", "设置…");
+  const dialog = await screen.findByRole("dialog", { name: "设置" });
+  expect(within(dialog).getByRole("button", { name: "常用" })).toBeTruthy();
+  expect(within(dialog).getByLabelText("默认包含路径")).toHaveProperty(
+    "disabled",
+    true,
+  );
   expect(screen.getAllByRole("alert").length).toBeGreaterThan(0);
   expect(screen.queryByLabelText("启动页面")).toBeNull();
+});
+
+test("Ctrl+P restores search focus without restarting its query", async () => {
+  render(<Desktop />);
+  menu("文件", "新建搜索标签页");
+  const input = await screen.findByRole("searchbox", {
+    name: "搜索文件或路径",
+  });
+  await screen.findByText("没有匹配的文件");
+  const starts = () =>
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([, args]: any) => args?.action?.search_start).length;
+  const before = starts();
+  input.focus();
+  fireEvent.keyDown(input, { key: "p", ctrlKey: true });
+  const settings = screen.getByRole("dialog", { name: "设置" });
+  expect(document.activeElement).toBe(
+    within(settings).getByRole("button", { name: "常用" }),
+  );
+  fireEvent.keyDown(settings, { key: "f", ctrlKey: true, shiftKey: true });
+  fireEvent(settings, new Event("cancel", { bubbles: true, cancelable: true }));
+  expect(document.activeElement).toBe(input);
+  expect(starts()).toBe(before);
+  expect(screen.getAllByRole("tab")).toHaveLength(2);
+});
+
+test("manages personal presets in settings and applies them to new searches", async () => {
+  const original = vi.mocked(invoke).getMockImplementation()!;
+  let saved: any = await original("preferences_get");
+  vi.mocked(invoke).mockImplementation(async (command, args: any) => {
+    if (command === "preferences_get") return saved;
+    if (command === "preferences_set") return (saved = args.preferences);
+    return original(command, args);
+  });
+  render(<Desktop />);
+  menu("搜索", "管理筛选预设…");
+  const settings = screen.getByRole("dialog", { name: "设置" });
+  const controls = within(settings);
+  const name = controls.getByLabelText("预设名称");
+  await waitFor(() =>
+    expect(controls.getByRole("button", { name: "常用" })).toBeTruthy(),
+  );
+  fireEvent.change(name, { target: { value: "大图片" } });
+  fireEvent.click(controls.getByRole("checkbox", { name: "图片" }));
+  await waitFor(() =>
+    expect(controls.getByRole("button", { name: "另存为预设" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  fireEvent.click(controls.getByRole("button", { name: "另存为预设" }));
+  expect(saved.filter_presets).toBeUndefined();
+  fireEvent.click(controls.getByRole("button", { name: "常用" }));
+  const filter = controls.getByRole("combobox", {
+    name: "浏览与新搜索默认筛选",
+  });
+  const entry = controls.getByRole("option", {
+    name: "个人：大图片",
+  }) as HTMLOptionElement;
+  fireEvent.change(filter, { target: { value: entry.value } });
+  fireEvent.click(controls.getByRole("button", { name: "确定" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull(),
+  );
+  expect(saved.browse_filter).toBe(entry.value);
+  menu("文件", "新建搜索标签页");
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("index_request", {
+      action: {
+        search_start: expect.objectContaining({
+          options: expect.objectContaining({
+            extensions: expect.arrayContaining(["jpg"]),
+          }),
+        }),
+      },
+    }),
+  );
 });
 
 test("submitting the same overview query again refreshes results", async () => {

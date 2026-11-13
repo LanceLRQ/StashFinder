@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
@@ -18,7 +19,7 @@ afterEach(() => {
 
 function openSettings() {
   fireEvent.click(screen.getByRole("button", { name: "工具" }));
-  fireEvent.click(screen.getByRole("menuitem", { name: "设置" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "设置…" }));
 }
 
 test.each(["portable", "windows_service"])(
@@ -99,7 +100,14 @@ test("saves preferences, restores them on restart, and retains saved values on f
   const include = screen.getByLabelText("默认包含路径");
   await waitFor(() => expect(include).toHaveProperty("disabled", false));
   fireEvent.click(include);
+  expect(saved.include_path).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull();
+  openSettings();
+  fireEvent.click(screen.getByLabelText("默认包含路径"));
+  fireEvent.click(screen.getByRole("button", { name: "确定" }));
   await waitFor(() => expect(include).toHaveProperty("checked", false));
+  await waitFor(() => expect(saved.include_path).toBe(false));
   view.unmount();
   render(<Desktop />);
   expect(
@@ -114,11 +122,16 @@ test("saves preferences, restores them on restart, and retains saved values on f
   );
   fail = true;
   fireEvent.click(screen.getByLabelText("默认包含路径"));
+  fireEvent.click(screen.getByRole("button", { name: "确定" }));
   await screen.findByText(/磁盘写入失败/);
-  expect(screen.getByLabelText("默认包含路径")).toHaveProperty(
-    "checked",
-    false,
+  expect(screen.getByLabelText("默认包含路径")).toHaveProperty("checked", true);
+  expect(saved.include_path).toBe(false);
+  fail = false;
+  fireEvent.click(screen.getByRole("button", { name: "确定" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull(),
   );
+  expect(saved.include_path).toBe(true);
 });
 
 test("shows actual version and service diagnostics, and can retry after a connection failure", async () => {
@@ -215,9 +228,14 @@ test("disabling automatic updates requires confirmation and a failed save retain
   });
   await waitFor(() => expect(toggle).toHaveProperty("disabled", false));
   fireEvent.click(toggle);
-  expect(screen.getByRole("dialog")).toBeTruthy();
+  expect(screen.getByRole("dialog", { name: "关闭自动更新？" })).toBeTruthy();
   expect(enabled).toBe(true);
-  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "关闭自动更新？" })).getByRole(
+      "button",
+      { name: "关闭" },
+    ),
+  );
   expect(enabled).toBe(true);
   fireEvent.click(toggle);
   fail = true;

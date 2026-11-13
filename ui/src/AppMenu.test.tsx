@@ -4,6 +4,40 @@ import AppMenu from "./AppMenu";
 
 afterEach(cleanup);
 
+test("enters and leaves a submenu one level at a time", () => {
+  const run = vi.fn();
+  render(
+    <AppMenu
+      groups={[
+        {
+          label: "查看",
+          accessKey: "v",
+          items: [
+            {
+              label: "布局",
+              items: [{ label: "详情", run, checked: true, radio: true }],
+            },
+          ],
+        },
+      ]}
+    />,
+  );
+  const view = screen.getByRole("button", { name: "查看" });
+  view.focus();
+  fireEvent.keyDown(view, { key: "ArrowDown" });
+  const layout = screen.getByRole("menuitem", { name: "布局" });
+  fireEvent.keyDown(layout, { key: "ArrowRight" });
+  const details = screen.getByRole("menuitemradio", { name: "详情" });
+  expect(document.activeElement).toBe(details);
+  fireEvent.keyDown(details, { key: "Escape" });
+  expect(screen.queryByRole("menu", { name: "布局" })).toBeNull();
+  expect(document.activeElement).toBe(layout);
+  fireEvent.keyDown(layout, { key: "Enter" });
+  fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(document.activeElement).toBe(view);
+});
+
 test("opens Edit with Alt+E, navigates enabled commands and restores focus", () => {
   const run = vi.fn();
   const unavailable = vi.fn();

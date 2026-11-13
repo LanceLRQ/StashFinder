@@ -61,6 +61,17 @@ export type FilterSelection = {
   id?: string;
 };
 export const noPresets: FilterPreset[] = [];
+export function filterPresetEntries(
+  categories: Category[],
+  presets: FilterPreset[],
+) {
+  return [
+    { id: null, name: "无筛选" },
+    { id: "@folder", name: "文件夹" },
+    ...categories.map(({ name }) => ({ id: `category:${name}`, name })),
+    ...presets.map(({ id, name }) => ({ id, name: `个人：${name}` })),
+  ];
+}
 export const emptyFileFilter: FileFilter = {
   extensions: [],
   include_folders: false,
