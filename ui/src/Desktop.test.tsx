@@ -10,6 +10,8 @@ import {
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import Desktop from "./Desktop";
+import { emptyOptions } from "./search-options";
+import type { Preferences } from "./settings-api";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => {
@@ -130,6 +132,68 @@ test("saves the live search on Ctrl+D, preserves a failed draft, and reopens it 
   expect(
     screen.getByRole("searchbox", { name: "搜索文件或路径" }),
   ).toHaveProperty("value", "new-report");
+});
+
+test("renames and removes bookmarks only after confirming management changes", async () => {
+  const original = vi.mocked(invoke).getMockImplementation()!;
+  let saved: any = {
+    ...((await original("preferences_get")) as Preferences),
+    search_bookmarks: [
+      {
+        id: "a",
+        name: "旧名称",
+        query: {
+          text: "same",
+          names_only: false,
+          scope: null,
+          options: emptyOptions,
+        },
+      },
+      {
+        id: "b",
+        name: "待移除",
+        query: {
+          text: "same",
+          names_only: true,
+          scope: null,
+          options: emptyOptions,
+        },
+      },
+    ],
+  };
+  vi.mocked(invoke).mockImplementation(async (command, args: any) => {
+    if (command === "preferences_get") return saved;
+    if (command === "preferences_set") return (saved = args.preferences);
+    return original(command, args);
+  });
+  render(<Desktop />);
+  await screen.findByLabelText("已登记 0 个分区");
+  function edit() {
+    menu("书签", "管理书签…");
+    const dialog = within(screen.getByRole("dialog", { name: "管理搜索书签" }));
+    fireEvent.change(dialog.getByLabelText("书签名称：旧名称"), {
+      target: { value: "新名称" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: "移除 待移除" }));
+    return dialog;
+  }
+  fireEvent.click(edit().getByRole("button", { name: "取消" }));
+  expect(saved.search_bookmarks.map((b: any) => b.name)).toEqual([
+    "旧名称",
+    "待移除",
+  ]);
+  fireEvent.click(edit().getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(saved.search_bookmarks).toEqual([
+    expect.objectContaining({
+      id: "a",
+      name: "新名称",
+      query: expect.objectContaining({ text: "same" }),
+    }),
+  ]);
+  fireEvent.click(screen.getByRole("button", { name: "书签" }));
+  expect(screen.getByRole("menuitem", { name: "新名称" })).toBeTruthy();
+  expect(screen.queryByRole("menuitem", { name: "待移除" })).toBeNull();
 });
 
 test("F1 opens bundled syntax help without invoking the backend", () => {

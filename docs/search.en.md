@@ -43,6 +43,8 @@ In the active search tab, Ctrl+I toggles case sensitivity, Ctrl+B whole-word mat
 
 Press Ctrl+D or choose Bookmarks → Add current search to save its text, scope, matching options, file filters and sort order. Opening a bookmark creates a search tab. Bookmarks scoped to a partition or folder can search the index while the partition is offline. If the saved filesystem or folder is unavailable, choose a new scope.
 
+Use Bookmarks → Manage bookmarks to rename or remove bookmarks. Save applies all changes, and Cancel keeps the original bookmarks.
+
 A search started from browsing can target its original partition or folder and descendants. Individual partitions, online-only and historical-record filters are also available. Folder scope uses indexed directory IDs; missing directories produce an error instead of a same-name fallback.
 
 ## Duplicate candidates

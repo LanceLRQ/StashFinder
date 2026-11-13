@@ -22,6 +22,7 @@ import type { FileView } from "./file-view";
 import Search from "./Search";
 import SearchHelp from "./SearchHelp";
 import BookmarkNameDialog from "./BookmarkNameDialog";
+import ManageBookmarks from "./ManageBookmarks";
 import WindowChrome from "./WindowChrome";
 import WorkspaceIcon from "./WorkspaceIcon";
 import WorkspaceTabs from "./WorkspaceTabs";
@@ -177,6 +178,7 @@ export default function Workspace({
   const root = useRef<HTMLDivElement>(null);
   const [partitionPickerOpen, setPartitionPickerOpen] = useState(false);
   const [searchHelp, setSearchHelp] = useState(false);
+  const [manageBookmarks, setManageBookmarks] = useState(false);
   const [bookmarkDraft, setBookmarkDraft] = useState<BookmarkedSearch | null>(
     null,
   );
@@ -716,6 +718,7 @@ export default function Workspace({
               ...(actions?.bookmark ?? [
                 workspaceCommand("bookmark", () => {}, true),
               ]),
+              { label: "管理书签…", run: () => setManageBookmarks(true) },
               ...bookmarks.map(({ id, name, query }) => ({
                 id,
                 label: name,
@@ -811,6 +814,13 @@ export default function Workspace({
       </WindowChrome>
       <AppMenu groups={groups} />
       {searchHelp && <SearchHelp onClose={() => setSearchHelp(false)} />}
+      {manageBookmarks && onSaveBookmarks && (
+        <ManageBookmarks
+          bookmarks={bookmarks}
+          onSave={onSaveBookmarks}
+          onClose={() => setManageBookmarks(false)}
+        />
+      )}
       {bookmarkDraft && onSaveBookmarks && (
         <BookmarkNameDialog
           title="添加搜索书签"

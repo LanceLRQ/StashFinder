@@ -135,6 +135,21 @@
   border-bottom: 1px solid #dce1e7;
   padding: 0 5px;
 }
+.modal.manage-bookmarks-dialog {
+  --modal-width: 520px;
+}
+.bookmark-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.bookmark-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
 .app-menu-group {
   position: relative;
 }
