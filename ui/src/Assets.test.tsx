@@ -69,8 +69,11 @@ test("registration shows eligible and registered cards without editable names", 
   expect(screen.queryByRole("checkbox")).toBeNull();
   await openRegistration();
   const dialog = await screen.findByRole("dialog", { name: "选择分区登记" });
-  const boxes = within(dialog).getAllByRole("checkbox");
+  const boxes = within(dialog).getAllByRole("checkbox", { name: /^[AB]:/ });
   expect(boxes).toHaveLength(2);
+  expect(
+    within(dialog).getByRole("checkbox", { name: "登记后自动建立索引" }),
+  ).toHaveProperty("checked", true);
   expect(boxes[1]).toHaveProperty("disabled", true);
   expect(within(dialog).queryByRole("textbox")).toBeNull();
   expect(within(dialog).queryByText(/Z:/)).toBeNull();
@@ -281,7 +284,7 @@ test("starts unselected and registers only the selected partition", async () => 
   );
   render(<Assets />);
   await openRegistration();
-  const checkboxes = await screen.findAllByRole("checkbox");
+  const checkboxes = screen.getAllByRole("checkbox", { name: /^[AB]:/ });
   expect(checkboxes.every((c) => !(c as HTMLInputElement).checked)).toBe(true);
   fireEvent.click(checkboxes[0]);
   fireEvent.click(screen.getByRole("button", { name: "登记所选分区" }));
@@ -293,6 +296,7 @@ test("starts unselected and registers only the selected partition", async () => 
           candidate_id: "A",
           name: "Movies",
           allow_weak: false,
+          auto_index: true,
         },
       },
     }),
@@ -303,6 +307,52 @@ test("starts unselected and registers only the selected partition", async () => 
       .mock.calls.filter(([command]) => command === "asset_command"),
   ).toHaveLength(1);
 });
+
+test.each([false, true])(
+  "refreshes a stale registration snapshot safely (changed: %s)",
+  async (changed) => {
+    const data = snapshot();
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "asset_snapshot") return structuredClone(data);
+      if (data.version !== 1) return;
+      data.version = 2;
+      if (changed)
+        data.candidates[0].observation.identity.serial!.value = "replacement";
+      throw "设备快照已更新，请刷新";
+    });
+    const { container } = render(<Assets />);
+    await openRegistration();
+    fireEvent.click(screen.getByRole("checkbox", { name: /^A:/ }));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "登记后自动建立索引" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "登记所选分区" }));
+    await waitFor(() =>
+      expect(screen.queryByText("正在处理设备信息…")).toBeNull(),
+    );
+    const calls = vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "asset_command");
+    expect(calls).toHaveLength(changed ? 1 : 2);
+    expect(calls.at(-1)?.[1]).toEqual({
+      action: {
+        register: {
+          version: changed ? 1 : 2,
+          candidate_id: "A",
+          name: "A:",
+          allow_weak: false,
+          auto_index: false,
+        },
+      },
+    });
+    const footer = within(container.querySelector("footer")!);
+    if (changed)
+      expect(footer.getByRole("alert").textContent).toContain(
+        "设备身份已变化，请重新选择",
+      );
+    else expect(footer.queryByRole("alert")).toBeNull();
+  },
+);
 
 test("shows offline capacity as a snapshot and renames only the software record", async () => {
   const data = snapshot();
@@ -450,7 +500,7 @@ test("multiple selections close on submit, and failures remain selected for retr
   });
   render(<Assets />);
   await openRegistration();
-  const boxes = await screen.findAllByRole("checkbox");
+  const boxes = screen.getAllByRole("checkbox", { name: /^[AB]:/ });
   boxes.forEach((box) => fireEvent.click(box));
   expect(screen.getByText("已选 2 个分区")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "登记所选分区" }));
@@ -463,7 +513,7 @@ test("multiple selections close on submit, and failures remain selected for retr
   );
   expect(screen.getByLabelText("已登记 1 个分区")).toBeTruthy();
   await openRegistration();
-  const after = screen.getAllByRole("checkbox");
+  const after = screen.getAllByRole("checkbox", { name: /^[AB]:/ });
   expect(after[0]).toHaveProperty("checked", false);
   expect(after[1]).toHaveProperty("checked", true);
 });

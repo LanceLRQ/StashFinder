@@ -62,10 +62,23 @@ export default function Desktop() {
       task.state === "needs_confirmation",
   );
   const attentionPartitions = new Set<string>();
+  const indexActivityLabels = new Map<string, string>();
   const managedIndexTasks = new Set<string>();
   for (const task of tasks.data?.tasks ?? []) {
     const group = taskGroup(task);
     if (group === "attention") attentionPartitions.add(task.partition_id);
+    if (!tasks.error && group === "current") {
+      indexActivityLabels.set(
+        task.partition_id,
+        task.state === "running"
+          ? task.kind === "sync"
+            ? "同步中"
+            : "索引中"
+          : task.state === "queued"
+            ? "等待索引"
+            : "等待接入／恢复",
+      );
+    }
     if (
       !tasks.error &&
       (group === "current" || task.state === "needs_confirmation")
@@ -175,6 +188,7 @@ export default function Desktop() {
                   onSnapshot={setSnapshot}
                   onStatus={setDeviceStatus}
                   attentionPartitions={attentionPartitions}
+                  indexActivityLabels={indexActivityLabels}
                   managedIndexTasks={managedIndexTasks}
                   indexActivity={(partition, onSelect) => (
                     <IndexActivity

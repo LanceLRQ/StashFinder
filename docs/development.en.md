@@ -33,7 +33,7 @@ Start the development GUI and backend together from the repository root as a sta
 pnpm dev
 ```
 
-The launcher waits for the foreground backend handshake before starting Tauri. Development data lives in `.local/dev-assets`. A compatible backend already listening on the verification pipe is reused. On exit, the launcher stops only the process it started. To debug the components separately, run `cargo run -p stashfinder-service -- --foreground --data-dir "$PWD\.local\dev-assets"` and `pnpm --dir ui run tauri dev` in separate terminals.
+The launcher clears orphaned development backends from this checkout, then allows up to about 60 seconds for a new backend to respond before starting Tauri. Development data lives in `.local/dev-assets`. A compatible backend already listening on the verification pipe is reused. On exit, the launcher stops only the process it started. Run `pnpm dev:cleanup` to clear orphaned development backends on its own. To debug the components separately, run `cargo run -p stashfinder-service -- --foreground --data-dir "$PWD\.local\dev-assets"` and `pnpm --dir ui run tauri dev` in separate terminals.
 
 The app opens on the Overview tab, pinned at the far left. Double-click a partition card to browse its directories. Open Settings from the top menu. Multiple search tabs run independently in the same desktop window. The Overview sidebar shows items needing attention, active indexing phases and paused partitions. Use the sidebar to act on an item or expand recent operations. Selecting a partition limits the sidebar to its details and actions. Cancellation targets a task ID and pauses its partition until updates are explicitly resumed. An ordinary foreground process may lack access to physical disk layouts. The UI reports this explicitly. Use the LocalSystem verification service below for complete device validation. Settings → About and diagnostics reports the actual app version, backend mode and connection state. The local pipe allows the configured account, SYSTEM and administrators and rejects remote clients. IPC accepts neither database paths nor arbitrary commands.
 
@@ -48,7 +48,7 @@ Exit StashFinder and rerun the installer to switch modes. Setup remembers the la
 ## Desktop and preferences acceptance
 
 - Enter a query in Overview and press Enter to open a search tab. Open two search tabs with different filters, sort orders and scroll positions, and switch between them to verify that each keeps its state. Complete results are loaded in bounded viewport pages. The empty result message appears in the center of the results area.
-- Register partitions opens a dialog. Closing it preserves the overview connection filter. A service disconnect keeps the displayed asset snapshot with an error, rather than marking every device offline.
+- Register partitions opens a dialog. Closing it preserves the overview connection filter. Device messages during registration appear in the overview status bar. A service disconnect keeps the displayed asset snapshot and reports the error.
 - Settings supports default path matching. Path matching applies when a search tab next opens, without overriding an existing query's selection. Restart to verify persistence.
 - Preferences live in `preferences.json` under Tauri's `app_config_dir` (usually `%APPDATA%\io.github.lancelrq.stashfinder\preferences.json` on Windows), separately from service indexes. Saving replaces the file through a temporary file in the same directory; failures preserve the old configuration and show an error. System startup entries are not changed.
 - Corrupt or unsupported configuration versions produce an explicit error. Back up and move the configuration file, then restart to restore defaults. Do not change the index databases to reset the UI.
@@ -99,7 +99,7 @@ The `registered_failures` case in `file_operations_real` is ignored by default a
 
 ## Partition registration acceptance
 
-- Open Register partitions from Overview; nothing is initially selected. Select and name the partitions to manage; unselected partitions are neither registered nor scanned.
+- Open Register partitions from Overview and select the partitions to manage. Build the index after registration is checked by default and queues the initial build. Clear it to start later from the partition's Index settings. For NTFS without a USN journal, choose an indexing mode first. Creating a journal requires separate consent.
 - Registered partitions are grouped by physical disk, with current mounts, filesystem, capacity and collection time. Naming changes software records only, not volume labels.
 - The backend checks devices approximately every 5 seconds and online NTFS changes approximately every 2 seconds; device latency and running tasks affect response time. Offline capacity is historical and unavailable values remain unknown.
 - Conflicting or insufficient identity evidence and database errors have explicit states. Uncertain devices are not automatically associated. Formatting preserves old records as historical; the new filesystem needs explicit registration. Manual removal of historical records is not available yet.
@@ -107,7 +107,7 @@ The `registered_failures` case in `file_operations_real` is ignored by default a
 
 Foreground development requires an explicit absolute data directory. SCM mode defaults to `%ProgramData%\StashFinder`, which must be provisioned beforehand as a direct child of ProgramData. Disable root ACL inheritance, grant only SYSTEM and Administrators inheritable full control, and disallow reparse points. The GUI reads through the service, not directly from databases. The verification script below provisions isolated protected storage. Production installation and migration are not implemented.
 
-`catalog.sqlite` stores registrations; `volumes/<filesystem-id>.sqlite` stores independent filesystem data; `tasks.sqlite` stores tasks, automatic-update policy and paused partitions. SQLite uses WAL/FULL: copying only a live main database is not a backup. The recovery API creates a separate candidate catalog only, not a complete backup/restore tool. Protocol version 8 has a 16 KiB frame limit and paginated assets, tasks, directory entries and search results; use UI and service binaries from the same build. Existing partition databases migrate transactionally only after ownership validation; mismatched databases are not migrated.
+`catalog.sqlite` stores registrations; `volumes/<filesystem-id>.sqlite` stores independent filesystem data; `tasks.sqlite` stores tasks, automatic-update policy and paused partitions. SQLite uses WAL/FULL: copying only a live main database is not a backup. The recovery API creates a separate candidate catalog only, not a complete backup/restore tool. Protocol version 9 has a 16 KiB frame limit and paginated assets, tasks, directory entries and search results; use UI and service binaries from the same build. Existing partition databases migrate transactionally only after ownership validation; mismatched databases are not migrated.
 
 ## Automatic-update acceptance
 
@@ -252,7 +252,7 @@ Partition schema version 5 adds an object-to-path index while preserving records
 
 ## Full search acceptance
 
-See [search help](search.en.md). Verify category persistence across restart, cross-partition joint duplicate keys, zero and unknown sizes, regex errors, global column sorting, distant scrolling and cross-page selection, and cancellation. Protocol version 8 keeps batch pages within 16 KiB. See the [query baseline](query-performance.en.md) for million/ten-million-row reproduction and limits.
+See [search help](search.en.md). Verify category persistence across restart, cross-partition joint duplicate keys, zero and unknown sizes, regex errors, global column sorting, distant scrolling and cross-page selection, and cancellation. Protocol version 9 keeps batch pages within 16 KiB. See the [query baseline](query-performance.en.md) for million/ten-million-row reproduction and limits.
 
 ## Icons, thumbnails, and cache
 

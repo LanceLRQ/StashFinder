@@ -301,7 +301,7 @@ test("starts in Home and keeps the query when switching back to search", async (
   expect(screen.getAllByRole("main")).toHaveLength(1);
 });
 
-test("resolves indexing issues directly from the overview sidebar", async () => {
+test("shows a running build ahead of an older failure and resolves other indexing issues", async () => {
   const original = vi.mocked(invoke).getMockImplementation()!;
   const assets = ["Movies", "Backup"].map((name) => ({
     registration: {
@@ -315,11 +315,22 @@ test("resolves indexing issues directly from the overview sidebar", async () => 
     connection: "online",
     mounts: [],
   }));
+  let running = true;
   vi.mocked(invoke).mockImplementation(async (command, args: any) => {
     if (command === "asset_snapshot")
       return { version: 1, busy: false, error: null, assets, candidates: [] };
     if (args?.action?.task_overview) {
       const rows = [
+        ...(running
+          ? [
+              {
+                id: "running-task",
+                partition_id: "Movies",
+                state: "running",
+                error: null,
+              },
+            ]
+          : []),
         {
           id: "failed-task",
           partition_id: "Movies",
@@ -354,6 +365,14 @@ test("resolves indexing issues directly from the overview sidebar", async () => 
   const sidebar = within(
     screen.getByRole("complementary", { name: "分区详情" }),
   );
+  const card = within(await screen.findByRole("button", { name: "Movies" }));
+  await card.findByText("索引中");
+  expect(card.queryByText("待处理")).toBeNull();
+  expect(sidebar.queryByRole("button", { name: "重试 Movies" })).toBeNull();
+  running = false;
+  await waitFor(() => expect(card.getByText("待处理")).toBeTruthy(), {
+    timeout: 3500,
+  });
   fireEvent.click(await sidebar.findByRole("button", { name: "重试 Movies" }));
   expect(invoke).toHaveBeenCalledWith("index_request", {
     action: { task_retry: { id: "failed-task" } },

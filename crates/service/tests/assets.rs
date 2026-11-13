@@ -46,6 +46,49 @@ fn settled(assets: &Assets) -> Snapshot {
 }
 
 #[test]
+fn registration_can_queue_the_first_index_or_leave_it_for_manual_start() {
+    for (auto_index, filesystem) in [(true, "NTFS"), (true, "exFAT"), (false, "NTFS")] {
+        let root = tempfile::tempdir().unwrap();
+        let mut found = observation();
+        found.identity.filesystem = Some(filesystem.into());
+        let tasks = stashfinder_store::tasks::Tasks::open(root.path()).unwrap();
+        tasks.set_enabled(!auto_index).unwrap();
+        let assets = Assets::start(root.path().into(), move || Ok(vec![found.clone()]));
+        let before = settled(&assets);
+        assets
+            .submit(Action::Register {
+                version: before.version,
+                candidate_id: "volume-a".into(),
+                name: "A".into(),
+                allow_weak: false,
+                auto_index: Some(auto_index),
+            })
+            .unwrap();
+        let after = settled(&assets);
+        assert!(after.error.is_none(), "{:?}", after.error);
+        let id = &after.assets[0].registration.partition_id;
+        assert_eq!(after.assets[0].registration.state, "ready");
+        assert_eq!(tasks.paused(id).unwrap(), !auto_index);
+        let queued = tasks.list().unwrap();
+        if auto_index {
+            assert_eq!(queued.len(), 1);
+            assert_eq!(
+                (&queued[0].partition_id, queued[0].state.as_str()),
+                (id, "queued")
+            );
+            use stashfinder_core::index::IndexMode;
+            if filesystem == "NTFS" {
+                assert!(matches!(queued[0].mode, IndexMode::Journal));
+            } else {
+                assert!(matches!(queued[0].mode, IndexMode::ScanOnly));
+            }
+        } else {
+            assert!(queued.is_empty());
+        }
+    }
+}
+
+#[test]
 fn background_refresh_keeps_the_snapshot_interactive_and_queues_a_write() {
     let root = tempfile::tempdir().unwrap();
     let (entered, refreshing) = std::sync::mpsc::channel();
@@ -72,6 +115,7 @@ fn background_refresh_keeps_the_snapshot_interactive_and_queues_a_write() {
             candidate_id: "volume-a".into(),
             name: "Queued".into(),
             allow_weak: false,
+            auto_index: None,
         })
         .unwrap();
     assert!(assets.snapshot().busy);
@@ -97,6 +141,7 @@ fn index_writer_does_not_make_device_refresh_fail() {
             candidate_id: "volume-a".into(),
             name: "A".into(),
             allow_weak: false,
+            auto_index: None,
         })
         .unwrap();
     let registered = settled(&assets);
@@ -163,6 +208,7 @@ fn replaced_filesystem_is_historical_and_new_instance_requires_registration() {
             candidate_id: "volume-a".into(),
             name: "Old".into(),
             allow_weak: false,
+            auto_index: None,
         })
         .unwrap();
     let old = settled(&assets).assets[0].registration.clone();
@@ -183,6 +229,7 @@ fn replaced_filesystem_is_historical_and_new_instance_requires_registration() {
             candidate_id: "volume-a".into(),
             name: "New".into(),
             allow_weak: false,
+            auto_index: None,
         })
         .unwrap();
     let s = settled(&assets);
@@ -215,6 +262,7 @@ fn registers_only_selected_partition_and_rejects_changed_candidate() {
             candidate_id: "volume-a".into(),
             name: "A".into(),
             allow_weak: false,
+            auto_index: None,
         })
         .unwrap();
     let s = settled(&assets);
@@ -228,6 +276,7 @@ fn registers_only_selected_partition_and_rejects_changed_candidate() {
             candidate_id: "volume-a".into(),
             name: "A".into(),
             allow_weak: false,
+            auto_index: None,
         })
         .unwrap();
     let s = settled(&assets);
@@ -273,6 +322,7 @@ fn duplicate_identity_is_blocked_without_registration() {
             candidate_id: "volume-a".into(),
             name: "A".into(),
             allow_weak: false,
+            auto_index: None,
         })
         .unwrap();
     assert!(settled(&assets).assets.is_empty());
@@ -295,6 +345,7 @@ fn failed_discovery_keeps_registration_but_does_not_claim_offline_or_accept_stal
             candidate_id: "volume-a".into(),
             name: "A".into(),
             allow_weak: false,
+            auto_index: None,
         })
         .unwrap();
     let registered = settled(&assets);
@@ -306,7 +357,8 @@ fn failed_discovery_keeps_registration_but_does_not_claim_offline_or_accept_stal
                 version: initial.version,
                 candidate_id: "volume-a".into(),
                 name: "A".into(),
-                allow_weak: false
+                allow_weak: false,
+                auto_index: None,
             })
             .is_err()
     );
@@ -337,6 +389,7 @@ fn capacity_failure_keeps_last_sample_without_marking_partition_inaccessible() {
             candidate_id: "volume-a".into(),
             name: "A".into(),
             allow_weak: false,
+            auto_index: None,
         })
         .unwrap();
     settled(&assets);

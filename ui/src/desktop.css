@@ -152,9 +152,6 @@ input[type="radio"] {
   padding: 8px 22px;
   border-top: 1px solid #dce1e7;
 }
-.desktop .assets-app > .asset-error {
-  margin: 0;
-}
 .disk-list:has(> .asset-empty) {
   display: flex;
   flex: 1;

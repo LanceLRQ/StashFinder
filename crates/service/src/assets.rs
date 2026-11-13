@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail, ensure};
-use stashfinder_core::{Action, Page, SNAPSHOT_EXPIRED, assets::*};
-use stashfinder_store::catalog::Catalog;
+use stashfinder_core::{Action, Page, SNAPSHOT_EXPIRED, assets::*, index::IndexMode};
+use stashfinder_store::{catalog::Catalog, tasks::Tasks};
 use std::{
     path::PathBuf,
     sync::{
@@ -71,6 +71,7 @@ impl Assets {
                             candidate_id,
                             name,
                             allow_weak,
+                            auto_index,
                             ..
                         } => {
                             let selected = before
@@ -107,6 +108,21 @@ impl Assets {
                                 "分区已登记或需要确认归属，请刷新"
                             );
                             let row = db.prepare(current, name)?;
+                            if let Some(auto_index) = auto_index {
+                                // Record the first-index choice before publishing the ready registration.
+                                let mut tasks = Tasks::open(&root)?;
+                                if *auto_index {
+                                    let (kind, mode) =
+                                        if current.identity.filesystem.as_deref() == Some("NTFS") {
+                                            ("build", IndexMode::Journal)
+                                        } else {
+                                            ("scan", IndexMode::ScanOnly)
+                                        };
+                                    tasks.enqueue(&row.partition_id, kind, mode, false)?;
+                                } else {
+                                    tasks.set_paused(&row.partition_id, true)?;
+                                }
+                            }
                             db.finish(&row.partition_id)?;
                             observations = fresh;
                             discovered = true;

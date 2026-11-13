@@ -10,6 +10,7 @@ export const indexLabels: Record<string, string> = {
   enumerating: "读取 NTFS 记录",
   scanning: "读取文件元数据",
   replaying: "补齐扫描期间变更",
+  publishing: "校验并发布索引",
   ready: "索引已建立",
   snapshot: "扫描快照",
   failed: "索引未完成",
@@ -23,6 +24,7 @@ const indexing = new Set([
   "enumerating",
   "scanning",
   "replaying",
+  "publishing",
   "syncing",
 ]);
 const running = new Set([...indexing, "loading", "queued", "waiting"]);

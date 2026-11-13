@@ -84,6 +84,11 @@
   color: #647082;
   white-space: nowrap;
 }
+.registration-dialog .registration-auto-index {
+  display: inline-flex;
+  align-items: center;
+  margin-right: auto;
+}
 .registration-dialog .registration-submit:not(:disabled) {
   border-color: #386da7;
   background: #edf5ff;
@@ -179,10 +184,16 @@
   min-width: 0;
 }
 
-.disk-index-attention {
-  color: #9d4927;
+.disk-index-attention,
+.disk-index-active {
   font-size: 12px;
   white-space: nowrap;
+}
+.disk-index-attention {
+  color: #9d4927;
+}
+.disk-index-active {
+  color: #2c5d8f;
 }
 
 .disk-card-meta {

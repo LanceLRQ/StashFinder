@@ -641,7 +641,7 @@ fn build_strategy_checked(
         );
         report.replay_time = replay_started.elapsed();
         ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
-        progress("building");
+        progress("publishing");
         let validate_started = Instant::now();
         db.prune_inventory(generation)?;
         validate()?;

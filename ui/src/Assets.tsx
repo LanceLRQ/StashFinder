@@ -16,6 +16,7 @@ import "./assets.css";
 
 import type {
   Observation,
+  Candidate,
   Registration,
   Asset,
   AssetSnapshot,
@@ -70,6 +71,7 @@ export default function Assets({
   onStatus,
   indexActivity,
   attentionPartitions,
+  indexActivityLabels,
   managedIndexTasks,
 }: {
   onSearch?: (text: string) => void;
@@ -87,17 +89,21 @@ export default function Assets({
     select: (id: string) => void,
   ) => ReactNode;
   attentionPartitions?: ReadonlySet<string>;
+  indexActivityLabels?: ReadonlyMap<string, string>;
   managedIndexTasks?: ReadonlySet<string>;
 } = {}) {
   const [data, setData] = useState<AssetSnapshot | null>(null);
   const [message, setMessage] = useState("");
   const [working, setWorking] = useState(false);
-  const [selected, setSelected] = useState<Record<string, string>>({});
+  const [selected, setSelected] = useState<
+    Record<string, { candidate: Candidate; name: string }>
+  >({});
   const [rename, setRename] = useState<Registration | null>(null);
   const [removing, setRemoving] = useState<Registration | null>(null);
   const [name, setName] = useState("");
   const [weakConfirm, setWeakConfirm] = useState(false);
   const [registerOpen, setRegisterOpen] = useState(false);
+  const [autoIndex, setAutoIndex] = useState(true);
   const [grouped, setGrouped] = useState(false);
   const [selectedPartition, setSelectedPartition] = useState("");
   const [query, setQuery] = useState("");
@@ -185,19 +191,50 @@ export default function Assets({
     let current = data;
     const errors: string[] = [];
     const completed: string[] = [];
+    function sameCandidate(candidate: Candidate, next: AssetSnapshot) {
+      const found = next.candidates.find(
+        (row) =>
+          row.observation.candidate_id === candidate.observation.candidate_id,
+      );
+      return (
+        found &&
+        !found.blocked &&
+        !found.registered &&
+        found.weak === candidate.weak &&
+        JSON.stringify(found.observation.identity) ===
+          JSON.stringify(candidate.observation.identity)
+      );
+    }
     for (const candidate of selectedCandidates) {
       const candidate_id = candidate.observation.candidate_id;
-      const name = selected[candidate_id];
-      const success = await invoke("asset_command", {
-        action: {
-          register: {
-            version: current.version,
-            candidate_id,
-            name,
-            allow_weak: candidate.weak && allowWeak,
+      const { candidate: chosen, name } = selected[candidate_id];
+      const submit = async () => {
+        if (!sameCandidate(chosen, current)) {
+          completed.push(candidate_id);
+          throw new Error("设备身份已变化，请重新选择");
+        }
+        return invoke("asset_command", {
+          action: {
+            register: {
+              version: current.version,
+              candidate_id,
+              name,
+              allow_weak: candidate.weak && allowWeak,
+              auto_index: autoIndex,
+            },
           },
-        },
-      })
+        });
+      };
+      const success = await submit()
+        .catch(async (error) => {
+          if (String(error) !== "设备快照已更新，请刷新") throw error;
+          current = await waitForOperation();
+          if (chosen.weak) {
+            completed.push(candidate_id);
+            throw new Error("设备身份信息不足，请重新选择");
+          }
+          return submit();
+        })
         .then(waitForOperation)
         .then(
           (next) => {
@@ -235,6 +272,7 @@ export default function Assets({
   function openRegistration() {
     if (!data || data.busy || lock.current) return;
     registrationTrigger.current = document.activeElement as HTMLElement;
+    setAutoIndex(true);
     setRegisterOpen(true);
   }
   function closeRegistration() {
@@ -269,6 +307,8 @@ export default function Assets({
   );
   const observation = current?.registration.observation;
   const capacity = observation?.capacity;
+  const capacityDeferred =
+    current?.capacity_error === "索引写入中，容量保留上次快照";
   const sections = grouped
     ? Array.from(groups, ([key, assets]) => ({
         key,
@@ -371,11 +411,6 @@ export default function Assets({
           </button>
         )}
       </div>
-      {error && !registerOpen && !rename && !removing && (
-        <p className="asset-error" role="alert">
-          {error}
-        </p>
-      )}
       <div className="overview-body">
         <div
           className="disk-list"
@@ -401,9 +436,12 @@ export default function Assets({
                   <div className="disk-grid">
                     {assets.map((asset) => {
                       const row = asset.registration;
-                      const needsAttention = attentionPartitions?.has(
+                      const indexActivityLabel = indexActivityLabels?.get(
                         row.partition_id,
                       );
+                      const needsAttention =
+                        !indexActivityLabel &&
+                        attentionPartitions?.has(row.partition_id);
                       const info = row.observation;
                       const space = info.capacity;
                       const mounts = asset.mounts.length
@@ -415,7 +453,8 @@ export default function Assets({
                           className="disk-card"
                           aria-label={row.name}
                           aria-description={
-                            needsAttention ? "索引需要处理" : undefined
+                            indexActivityLabel ||
+                            (needsAttention ? "索引需要处理" : undefined)
                           }
                           aria-pressed={selectedPartition === row.partition_id}
                           onClick={() => setSelectedPartition(row.partition_id)}
@@ -435,10 +474,16 @@ export default function Assets({
                           <span className="disk-card-content">
                             <span className="disk-card-title">
                               <strong title={row.name}>{row.name}</strong>
-                              {needsAttention && (
-                                <span className="disk-index-attention">
-                                  待处理
+                              {indexActivityLabel ? (
+                                <span className="disk-index-active">
+                                  {indexActivityLabel}
                                 </span>
+                              ) : (
+                                needsAttention && (
+                                  <span className="disk-index-attention">
+                                    待处理
+                                  </span>
+                                )
                               )}
                             </span>
                             <span className="disk-card-meta">
@@ -532,7 +577,7 @@ export default function Assets({
                 />
               )}
               {current.error && <p className="asset-error">{current.error}</p>}
-              {current.capacity_error && (
+              {current.capacity_error && !capacityDeferred && (
                 <p className="asset-error">{current.capacity_error}</p>
               )}
             </>
@@ -560,6 +605,15 @@ export default function Assets({
           onClose={closeRegistration}
           actions={
             <>
+              <label className="registration-auto-index">
+                <input
+                  type="checkbox"
+                  checked={autoIndex}
+                  disabled={disabled}
+                  onChange={(event) => setAutoIndex(event.target.checked)}
+                />
+                登记后自动建立索引
+              </label>
               <span className="registration-count" aria-live="polite">
                 {selectedCandidates.length > 0 &&
                   `已选 ${selectedCandidates.length} 个分区`}
@@ -600,7 +654,8 @@ export default function Assets({
                         const checked = event.target.checked;
                         setSelected((previous) => {
                           const next = { ...previous };
-                          if (checked) next[id] = initialName(item);
+                          if (checked)
+                            next[id] = { candidate, name: initialName(item) };
                           else delete next[id];
                           return next;
                         });
@@ -651,7 +706,18 @@ export default function Assets({
               : "—"}
           </span>
         </div>
-        <span role="status">{working ? "正在处理设备信息…" : ""}</span>
+        {error && !registerOpen && !rename && !removing && (
+          <span className="asset-error" role="alert" title={error}>
+            {error}
+          </span>
+        )}
+        <span role="status">
+          {working
+            ? "正在处理设备信息…"
+            : capacityDeferred
+              ? current?.capacity_error
+              : ""}
+        </span>
       </FileStatusBar>
       {removing && (
         <Modal

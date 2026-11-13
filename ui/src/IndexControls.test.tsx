@@ -135,6 +135,14 @@ test("running index can be cancelled", async () => {
   );
 });
 
+test("continues to show activity while verifying and publishing the index", async () => {
+  mockStatus({ ...status, phase: "publishing", task_id: "task-one" });
+  render(<IndexControls partitionId="p" name="Movies" eligible />);
+  const phase = await screen.findByText("校验并发布索引");
+  expect(phase.querySelector(".index-spinner")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "取消索引 Movies" })).toBeTruthy();
+});
+
 test("a failed status read is not presented as still loading", async () => {
   vi.mocked(invoke).mockRejectedValue("服务已断开");
   render(<IndexControls partitionId="p" name="Movies" eligible={false} />);

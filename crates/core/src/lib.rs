@@ -9,7 +9,7 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 pub const MAX_FRAME: usize = 16 * 1024;
 pub const SNAPSHOT_EXPIRED: &str = "设备快照已更新，请刷新";
 
@@ -35,6 +35,8 @@ pub enum Action {
         candidate_id: String,
         name: String,
         allow_weak: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auto_index: Option<bool>,
     },
     Retry {
         version: u64,
