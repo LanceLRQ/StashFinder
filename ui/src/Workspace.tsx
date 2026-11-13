@@ -529,6 +529,7 @@ export default function Workspace({
     ...(actions?.selection ?? []),
     ...(actions?.navigation ?? []),
     ...(actions?.search ?? []),
+    ...(actions?.export ?? []),
   ];
   useEffect(() => {
     function keyDown(e: KeyboardEvent) {
@@ -620,6 +621,9 @@ export default function Workspace({
                 disabled: startupReady !== true || device.busy,
               },
             ]
+          : []),
+        ...(currentTab?.kind === "search"
+          ? (actions?.export ?? [workspaceCommand("export", () => {}, true)])
           : []),
         ...(onExit ? [mainCommands.exit] : []),
       ],

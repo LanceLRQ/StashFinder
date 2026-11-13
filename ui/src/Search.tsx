@@ -23,6 +23,7 @@ import {
 } from "./search-options";
 import FileDetails from "./FileDetails";
 import SearchFilters from "./SearchFilters";
+import SearchExport, { type ExportSnapshot } from "./SearchExport";
 import VirtualResults, { searchDetailsLayout } from "./VirtualResults";
 import { virtualWindow, type ViewportLayout } from "./DetailsViewport";
 import { fileViewOptions, thumbnailLayouts, type FileView } from "./file-view";
@@ -164,6 +165,9 @@ export default function Search({
   const [unavailable, setUnavailable] = useState<string[]>([]);
   const [revision, setRevision] = useState(0);
   const [preview, setPreview] = useState(initialPreview);
+  const [exportSnapshot, setExportSnapshot] = useState<ExportSnapshot | null>(
+    null,
+  );
   const [view, setView] = useState<FileView>(initialView);
   const grid = view === "details" ? undefined : thumbnailLayouts[view];
   const [selection, setSelection] = useState<number[]>([]);
@@ -436,6 +440,7 @@ export default function Search({
     if (
       !active ||
       busy ||
+      exportSnapshot !== null ||
       refreshing ||
       editing !== null ||
       refreshWanted === handledRefresh.current
@@ -458,7 +463,16 @@ export default function Search({
     }
     timer = window.setTimeout(startWhenStill, refreshDelay);
     return () => window.clearTimeout(timer);
-  }, [active, busy, refreshing, editing, refreshWanted, queryKey, revision]);
+  }, [
+    active,
+    busy,
+    exportSnapshot,
+    refreshing,
+    editing,
+    refreshWanted,
+    queryKey,
+    revision,
+  ]);
 
   useEffect(() => {
     const id = queryId.current;
@@ -652,6 +666,20 @@ export default function Search({
       ? () => setRevision((n) => n + 1)
       : undefined,
     onCommands && {
+      export: [
+        workspaceCommand(
+          "export",
+          () => {
+            const id = queryId.current;
+            if (id === null) return;
+            const spans: [number, number][] = [];
+            for (let i = 0; i < selection.length; i += 2)
+              spans.push([selection[i], selection[i + 1]]);
+            setExportSnapshot({ id, total, spans, count });
+          },
+          facts.blocked || !!error || !total,
+        ),
+      ],
       selection: [
         workspaceCommand("selectAll", selectAll, facts.blocked || !total),
         {
@@ -754,6 +782,12 @@ export default function Search({
   );
   return (
     <div className="assets-app search-app">
+      {exportSnapshot && (
+        <SearchExport
+          snapshot={exportSnapshot}
+          onClose={() => setExportSnapshot(null)}
+        />
+      )}
       {onBack && <button onClick={onBack}>硬盘管理</button>}
       <div className="search-toolbar">
         <input

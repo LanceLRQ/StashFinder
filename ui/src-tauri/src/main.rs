@@ -8,6 +8,7 @@ use std::{collections::HashSet, path::PathBuf, sync::Mutex};
 use tauri::{AppHandle, Manager, State};
 mod preferences;
 mod runtime;
+mod search_export;
 mod visual_cache;
 mod visuals;
 
@@ -367,11 +368,16 @@ fn run() -> Result<(), anyhow::Error> {
         .setup(|app| runtime::setup(app.handle()).map_err(Into::into))
         .manage(Samples::default())
         .manage(SearchSnapshots::default())
+        .manage(search_export::SearchExport::default())
         .manage(file_operations::Operations::default())
         .manage(visuals::Visuals::default())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if file_operations::prevent_close(&window.state::<file_operations::Operations>()) {
+                if window.state::<search_export::SearchExport>().cancel()
+                    || file_operations::prevent_close(
+                        &window.state::<file_operations::Operations>(),
+                    )
+                {
                     api.prevent_close();
                 } else if runtime::active() {
                     api.prevent_close();
@@ -388,6 +394,8 @@ fn run() -> Result<(), anyhow::Error> {
             asset_snapshot,
             asset_command,
             index_request,
+            search_export::export_search_csv,
+            search_export::cancel_search_export,
             file_operations::file_prepare,
             file_operations::file_run,
             file_operations::file_status,

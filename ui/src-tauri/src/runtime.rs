@@ -281,6 +281,9 @@ pub fn setup(app: &tauri::AppHandle) -> Result<()> {
 
 #[tauri::command]
 pub fn app_exit(app: tauri::AppHandle) {
+    if app.state::<crate::search_export::SearchExport>().cancel() {
+        return;
+    }
     if crate::file_operations::prevent_close(&app.state::<crate::file_operations::Operations>()) {
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.show();

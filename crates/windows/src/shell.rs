@@ -49,6 +49,43 @@ impl Drop for Apartment {
     }
 }
 
+pub fn choose_csv_destination(owner: usize) -> Result<Option<PathBuf>> {
+    use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+    use windows::Win32::{
+        Foundation::{ERROR_CANCELLED, HWND},
+        System::Com::CoTaskMemFree,
+        UI::Shell::{
+            Common::COMDLG_FILTERSPEC, FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, FileSaveDialog,
+            IFileSaveDialog, SIGDN_FILESYSPATH,
+        },
+    };
+    let _apartment = Apartment::new()?;
+    // SAFETY: The dialog and its result are used within this COM apartment. The owner is the
+    // application's live main window. The returned path is copied before freeing COM memory.
+    unsafe {
+        let dialog: IFileSaveDialog =
+            CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER)?;
+        dialog.SetTitle(w!("导出搜索结果"))?;
+        dialog.SetFileTypes(&[COMDLG_FILTERSPEC {
+            pszName: w!("CSV 文件 (*.csv)"),
+            pszSpec: w!("*.csv"),
+        }])?;
+        dialog.SetFileName(w!("StashFinder.csv"))?;
+        dialog.SetDefaultExtension(w!("csv"))?;
+        dialog.SetOptions(dialog.GetOptions()? | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT)?;
+        if let Err(error) = dialog.Show(Some(HWND(owner as _))) {
+            if error.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
+                return Ok(None);
+            }
+            return Err(error.into());
+        }
+        let raw = dialog.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let path = PathBuf::from(OsString::from_wide(raw.as_wide()));
+        CoTaskMemFree(Some(raw.0.cast()));
+        Ok(Some(path))
+    }
+}
+
 // Physical files use absolute paths rather than parent-relative Shell PIDLs.
 #[implement(IDataObject)]
 struct FileData {

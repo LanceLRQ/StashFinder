@@ -9,6 +9,7 @@ export const workspaceShortcuts = {
   settings: ["设置…", "Ctrl+P"],
   exit: ["退出", "Ctrl+Q"],
   help: ["搜索语法", "F1"],
+  export: ["导出搜索结果…", "Ctrl+S"],
   nextTab: ["下一个标签页", "Ctrl+Tab"],
   previousTab: ["上一个标签页", "Ctrl+Shift+Tab"],
   preview: ["预览窗格", "Alt+P"],
@@ -71,7 +72,7 @@ const shortcutGroups = [
     "视图与目录",
     ["preview", "up", "back", "forward", "details", "small", "medium", "large"],
   ],
-  ["当前搜索", ["caseSensitive", "wholeWord", "path", "regex"]],
+  ["当前搜索", ["caseSensitive", "wholeWord", "path", "regex", "export"]],
 ] as const;
 
 export const shortcutReference = [
