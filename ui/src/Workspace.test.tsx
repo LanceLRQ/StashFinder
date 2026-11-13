@@ -130,6 +130,40 @@ test("inverts the directory selection twice without changing the loaded rows", a
   expect(folder.getAttribute("aria-selected")).toBe("false");
 });
 
+test("window pin reflects native state and reports errors", async () => {
+  let top = false;
+  const native = {
+    read: vi.fn(async () => top),
+    write: vi.fn(async (enabled: boolean) => {
+      top = enabled;
+    }),
+  };
+  render(
+    <Workspace
+      assets={[]}
+      includePath
+      request={{ text: "", revision: 0 }}
+      windowPin={native}
+    />,
+  );
+  const view = screen.getByRole("button", { name: "查看" });
+  const pin = () => screen.getByRole("menuitemcheckbox", { name: "窗口置顶" });
+  fireEvent.click(view);
+  expect(pin().getAttribute("aria-checked")).toBe("false");
+  fireEvent.click(pin());
+  await waitFor(() => expect(native.write).toHaveBeenCalledWith(true));
+  fireEvent.click(view);
+  expect(pin().getAttribute("aria-checked")).toBe("true");
+  native.write.mockRejectedValueOnce(Error("窗口拒绝"));
+  fireEvent.click(pin());
+  expect(await screen.findByRole("alert")).toHaveProperty(
+    "textContent",
+    "无法切换窗口置顶：窗口拒绝",
+  );
+  fireEvent.click(view);
+  expect(pin().getAttribute("aria-checked")).toBe("true");
+});
+
 test("navigates offline directory history without moving past a missing target", async () => {
   setup();
   choosePartition();

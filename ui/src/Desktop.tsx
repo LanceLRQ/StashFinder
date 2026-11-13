@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import Assets, { type AssetControls } from "./Assets";
 import Workspace from "./Workspace";
 import FileOperations from "./FileOperations";
@@ -19,6 +20,10 @@ import "./desktop.css";
 
 const Development = import.meta.env.DEV ? lazy(() => import("./App")) : null;
 const noAssets: Asset[] = [];
+const windowPin = {
+  read: () => getCurrentWindow().isAlwaysOnTop(),
+  write: (enabled: boolean) => getCurrentWindow().setAlwaysOnTop(enabled),
+};
 
 export default function Desktop() {
   const [preferences, setPreferences] = useState(defaultPreferences);
@@ -135,6 +140,7 @@ export default function Desktop() {
       <FileOperations showStatus={preferences.show_status_bar ?? true}>
         <main className="desktop">
           <Workspace
+            windowPin={"__TAURI_INTERNALS__" in window ? windowPin : undefined}
             onSettings={setSettings}
             onExit={() => {
               setExitError("");

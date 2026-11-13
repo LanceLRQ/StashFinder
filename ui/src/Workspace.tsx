@@ -99,6 +99,7 @@ export default function Workspace({
   searchIncludeHistory = false,
   showStatus = true,
   onShowStatus,
+  windowPin,
   request,
   browseRequest,
   categories = defaultCategories,
@@ -127,6 +128,10 @@ export default function Workspace({
   searchIncludeHistory?: boolean;
   showStatus?: boolean;
   onShowStatus?: (show: boolean) => void;
+  windowPin?: {
+    read: () => Promise<boolean>;
+    write: (enabled: boolean) => Promise<void>;
+  };
   request: { text: string; revision: number };
   browseRequest?: { partition: string; revision: number };
   categories?: Category[];
@@ -167,6 +172,22 @@ export default function Workspace({
   >({});
   const searchFocus = useRef(false);
   const [commands, setCommands] = useState<FileCommandContext | null>(null);
+  const [pinned, setPinned] = useState(false);
+  const [pinPending, setPinPending] = useState(false);
+  const [pinError, setPinError] = useState("");
+  async function togglePin() {
+    if (!windowPin || pinPending) return;
+    setPinPending(true);
+    setPinError("");
+    try {
+      await windowPin.write(!(await windowPin.read()));
+      setPinned(await windowPin.read());
+    } catch (error) {
+      setPinError(`无法切换窗口置顶：${String(error).replace(/^Error: /, "")}`);
+    } finally {
+      setPinPending(false);
+    }
+  }
   const currentTab = tabs.find((tab) => tab.id === active);
   const browseSelection = useMemo(
     () => selectFilter(browseFilter, categories, filterPresets),
@@ -633,6 +654,16 @@ export default function Workspace({
               },
             ]
           : []),
+        ...(windowPin
+          ? [
+              {
+                label: "窗口置顶",
+                checked: pinned,
+                disabled: pinPending,
+                run: () => void togglePin(),
+              },
+            ]
+          : []),
       ],
     },
     {
@@ -756,6 +787,11 @@ export default function Workspace({
         </Modal>
       )}
       {notice}
+      {pinError && (
+        <p role="alert" className="desktop-error browse-message">
+          {pinError}
+        </p>
+      )}
       {device?.error && active !== pages.overview.id && (
         <p className="browse-message desktop-error" role="alert">
           {assets.length ? "设备状态可能已过期：" : "无法读取设备："}
