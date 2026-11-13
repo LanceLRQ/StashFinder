@@ -20,6 +20,7 @@ import {
   type FilterSelection,
   type SearchContext,
   type SearchOptions,
+  type BookmarkedSearch,
 } from "./search-options";
 import FileDetails from "./FileDetails";
 import SearchFilters from "./SearchFilters";
@@ -82,6 +83,8 @@ export default function Search({
   onLocate,
   categories = defaultCategories,
   initialFilter = noFilter,
+  bookmark,
+  onBookmark,
   presets = noPresets,
   onSavePresets,
   savingFilters = false,
@@ -103,6 +106,8 @@ export default function Search({
   onLocate?: (hit: SearchHit, folder?: boolean) => void;
   categories?: Category[];
   initialFilter?: FilterSelection;
+  bookmark?: BookmarkedSearch;
+  onBookmark?: (query: BookmarkedSearch) => void;
   presets?: FilterPreset[];
   onSavePresets?: (presets: FilterPreset[]) => Promise<boolean>;
   savingFilters?: boolean;
@@ -138,14 +143,28 @@ export default function Search({
   );
   const suppressClick = useRef(false);
   const [text, setText] = useState(initialText);
-  const [namesOnly, setNamesOnly] = useState(!includePath);
-  const [partition, setPartition] = useState("");
+  const [namesOnly, setNamesOnly] = useState(
+    bookmark?.names_only ?? !includePath,
+  );
+  const [partition, setPartition] = useState(
+    bookmark?.scope ? "@bookmark" : "",
+  );
   const [options, setOptions] = useState<SearchOptions>(() => ({
     ...emptyOptions,
     online_only: onlineOnly,
     include_history: includeHistory,
+    ...bookmark?.options,
   }));
-  const [filter, setFilter] = useState(initialFilter);
+  const [filter, setFilter] = useState<FilterSelection>(() => {
+    if (!bookmark) return initialFilter;
+    const { extensions, include_folders, kind, size, created, modified } =
+      bookmark.options;
+    return {
+      rule: { extensions, include_folders, kind, size, created, modified },
+      types: include_folders || kind === "folder" ? ["@folder"] : [],
+      custom: extensions.join(","),
+    };
+  });
   const [filterOpen, setFilterOpen] = useState<"search" | "save" | false>(
     false,
   );
@@ -234,25 +253,40 @@ export default function Search({
   const partitionKey = JSON.stringify([...partitionIds].sort());
   const validContext =
     context && partitionIds.includes(context.partition) ? context : undefined;
-  const scope = partition.startsWith("@")
-    ? validContext
-      ? partition
-      : ""
-    : partitionIds.includes(partition)
-      ? partition
-      : "";
-  const scopedPartition = scope.startsWith("@")
-    ? validContext?.partition
-    : scope;
-  const queryKey = JSON.stringify({
+  const savedScope = partition === "@bookmark" ? bookmark?.scope : null;
+  const scopedAsset = assets?.find(
+    (item) => item.registration.partition_id === savedScope?.partition_id,
+  );
+  const invalidScope =
+    !!savedScope &&
+    scopedAsset?.registration.filesystem_id !== savedScope.filesystem_id;
+  const scope = savedScope
+    ? partition
+    : partition.startsWith("@")
+      ? validContext
+        ? partition
+        : ""
+      : partitionIds.includes(partition)
+        ? partition
+        : "";
+  const scopedPartition =
+    savedScope?.partition_id ??
+    (scope.startsWith("@") ? validContext?.partition : scope);
+  const query = {
     text,
     names_only: namesOnly,
     partitions: scopedPartition ? [scopedPartition] : [],
+    ...(savedScope ? { filesystem_id: savedScope.filesystem_id } : {}),
     options: {
       ...options,
       ...filter.rule,
-      scope:
-        validContext && scope === "@folder"
+      scope: savedScope?.entry
+        ? {
+            partition_id: savedScope.partition_id,
+            entry: savedScope.entry,
+            recursive: true,
+          }
+        : validContext && scope === "@folder"
           ? {
               partition_id: validContext.partition,
               entry: validContext.entry,
@@ -260,7 +294,8 @@ export default function Search({
             }
           : null,
     },
-  });
+  };
+  const queryKey = JSON.stringify(query);
   const observedIndexes = useRef(indexes);
   useEffect(() => {
     const previous = observedIndexes.current;
@@ -390,7 +425,11 @@ export default function Search({
     if (token !== sequence.current) return;
     const ids = invalidate(background);
     void release(ids).catch(() => {});
-    const message = String(e).replace(/^Error: /, "");
+    const reason = String(e).replace(/^Error: /, "");
+    const message =
+      savedScope && reason.includes("搜索目录已不存在")
+        ? "书签的目录已不存在，请重新选择分区范围。"
+        : reason;
     if (background) setRefreshError(message);
     else {
       setTotal(0);
@@ -419,6 +458,13 @@ export default function Search({
     setUnavailable([]);
     setGroups(0);
     setMissing(0);
+    if (invalidScope) {
+      setTotal(0);
+      setCache(new Map());
+      setError("书签的搜索范围已失效，请重新选择分区范围。");
+      setBusy(false);
+      return;
+    }
     const timer = window.setTimeout(submit, typed ? inputDelay : 0);
     function submit() {
       window.clearTimeout(timer);
@@ -434,12 +480,13 @@ export default function Search({
       replacedId.current = ids[0] ?? replacedId.current;
       void release(ids).catch(() => {});
     };
-  }, [queryKey, revision, partitionKey, composing]);
+  }, [queryKey, revision, partitionKey, composing, invalidScope]);
 
   useEffect(() => {
     if (
       !active ||
       busy ||
+      invalidScope ||
       exportSnapshot !== null ||
       refreshing ||
       editing !== null ||
@@ -466,6 +513,7 @@ export default function Search({
   }, [
     active,
     busy,
+    invalidScope,
     exportSnapshot,
     refreshing,
     editing,
@@ -666,6 +714,40 @@ export default function Search({
       ? () => setRevision((n) => n + 1)
       : undefined,
     onCommands && {
+      ...(onBookmark && {
+        bookmark: [
+          workspaceCommand(
+            "bookmark",
+            () => {
+              const asset = assets?.find(
+                (item) => item.registration.partition_id === scopedPartition,
+              );
+              if (scopedPartition && !asset) return;
+              const { scope, ...conditions } = query.options;
+              onBookmark({
+                text,
+                names_only: namesOnly,
+                options: conditions,
+                scope: asset
+                  ? {
+                      partition_id: asset.registration.partition_id,
+                      filesystem_id: asset.registration.filesystem_id,
+                      entry: scope?.entry ?? null,
+                    }
+                  : null,
+              });
+            },
+            invalidScope ||
+              (!!partition && !scope) ||
+              (!!scopedPartition &&
+                !assets?.some(
+                  (item) => item.registration.partition_id === scopedPartition,
+                )) ||
+              composing ||
+              editing !== null,
+          ),
+        ],
+      }),
       export: [
         workspaceCommand(
           "export",
@@ -819,6 +901,13 @@ export default function Search({
           onChange={(e) => setPartition(e.target.value)}
         >
           <option value="">全部已登记分区</option>
+          {savedScope && (
+            <option value="@bookmark" disabled={invalidScope}>
+              {invalidScope
+                ? "书签范围已失效"
+                : `书签范围：${scopedAsset?.registration.name}${savedScope.entry ? "（目录及子目录）" : ""}`}
+            </option>
+          )}
           {validContext && (
             <>
               <option value="@partition">原浏览分区</option>

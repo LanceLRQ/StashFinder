@@ -355,8 +355,8 @@ export default function Settings({
             <div className="shortcut-reference">
               <h3>程序菜单</h3>
               <p>
-                Alt+F 文件 · Alt+E 编辑 · Alt+V 查看 · Alt+S 搜索 · Alt+T 工具 ·
-                Alt+H 帮助
+                Alt+F 文件 · Alt+E 编辑 · Alt+V 查看 · Alt+S 搜索 · Alt+B 书签 ·
+                Alt+T 工具 · Alt+H 帮助
               </p>
               {shortcutReference.map(({ label, keys }) => (
                 <section key={label}>

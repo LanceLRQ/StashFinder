@@ -31,6 +31,7 @@ struct SearchJob {
     options: QueryOptions,
     assets: Vec<Asset>,
     cancel: Arc<AtomicBool>,
+    filesystem_id: Option<String>,
 }
 #[derive(Default)]
 struct SearchState {
@@ -83,6 +84,12 @@ impl Indexes {
                     for asset in job.assets {
                         ensure!(!job.cancel.load(Ordering::Relaxed), "搜索已取消");
                         let partition = &asset.registration.partition_id;
+                        if let Some(filesystem) = &job.filesystem_id {
+                            ensure!(
+                                catalog.get(partition)?.filesystem_id == *filesystem,
+                                "书签的搜索范围已失效，请重新选择分区范围"
+                            );
+                        }
                         startup.wait(partition, &job.cancel)?;
                         let index = (|| -> Result<Option<Arc<SearchIndex>>> {
                             if asset.error.is_some() {
@@ -301,6 +308,14 @@ impl Indexes {
         let mut assets = snapshot.assets.clone();
         let query = Query::compile(&request.text, request.names_only, &request.options)?;
         ensure!(request.partitions.len() <= 4096, "分区筛选过多");
+        if let Some(filesystem) = &request.filesystem_id {
+            ensure!(
+                matches!(request.partitions.as_slice(), [partition] if
+                    assets.iter().any(|a| a.registration.partition_id == *partition &&
+                        a.registration.filesystem_id == *filesystem)),
+                "书签的搜索范围已失效，请重新选择分区范围"
+            );
+        }
         ensure!(
             request
                 .partitions
@@ -352,6 +367,7 @@ impl Indexes {
             id,
             query,
             options: *request.options,
+            filesystem_id: request.filesystem_id,
             assets,
             cancel,
         });
@@ -524,6 +540,7 @@ mod tests {
                     names_only: false,
                     partitions: vec![],
                     replaces: Some(100),
+                    filesystem_id: None,
                     options: Default::default(),
                 },
                 &Snapshot::default(),

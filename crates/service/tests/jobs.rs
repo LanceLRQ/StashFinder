@@ -110,17 +110,22 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
             jobs.scan(&registered.partition_id, IndexMode::Journal, &snapshot)
                 .is_err()
         );
+        let scoped = |filesystem_id| SearchRequest {
+            replaces: None,
+            filesystem_id: Some(filesystem_id),
+            text: "offline".into(),
+            names_only: false,
+            partitions: vec![registered.partition_id.clone()],
+            options: Default::default(),
+        };
+        assert!(
+            jobs.search(scoped("replaced".into()), &snapshot)
+                .unwrap_err()
+                .to_string()
+                .contains("搜索范围已失效")
+        );
         let id = jobs
-            .search(
-                SearchRequest {
-                    replaces: None,
-                    text: "offline".into(),
-                    names_only: false,
-                    partitions: vec![],
-                    options: Default::default(),
-                },
-                &snapshot,
-            )
+            .search(scoped(registered.filesystem_id.clone()), &snapshot)
             .unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         let page = loop {
@@ -154,6 +159,7 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
             .search(
                 SearchRequest {
                     replaces: None,
+                    filesystem_id: None,
                     text: "offline".into(),
                     names_only: false,
                     partitions: vec![],
@@ -199,6 +205,7 @@ fn catalog_error_is_not_reported_as_an_empty_search() {
         jobs.search(
             SearchRequest {
                 replaces: None,
+                filesystem_id: None,
                 text: "".into(),
                 names_only: false,
                 partitions: vec![],

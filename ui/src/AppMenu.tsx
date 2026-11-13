@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export type MenuCommand = {
+  id?: string;
   label: string;
   run: () => void;
   disabled?: boolean;
@@ -201,7 +202,7 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
   function command(item: MenuCommand) {
     return (
       <button
-        key={item.label}
+        key={item.id ?? item.label}
         type="button"
         tabIndex={-1}
         role={

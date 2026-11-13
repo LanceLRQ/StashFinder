@@ -74,6 +74,64 @@ function menu(group: string, action: string) {
   fireEvent.click(screen.getByRole("menuitem", { name: action }));
 }
 
+test("saves the live search on Ctrl+D, preserves a failed draft, and reopens it after restart", async () => {
+  const original = vi.mocked(invoke).getMockImplementation()!;
+  let saved: any = await original("preferences_get");
+  let fail = true;
+  vi.mocked(invoke).mockImplementation(async (command, args: any) => {
+    if (command === "preferences_get") return saved;
+    if (command === "preferences_set") {
+      if (fail) throw Error("写入失败");
+      return (saved = args.preferences);
+    }
+    return original(command, args);
+  });
+  const desktop = render(<Desktop />);
+  const overview = screen.getByRole("searchbox");
+  fireEvent.change(overview, { target: { value: "new-report" } });
+  fireEvent.submit(overview.closest("form")!);
+  const input = await screen.findByRole("searchbox", {
+    name: "搜索文件或路径",
+  });
+  fireEvent.keyDown(input, { key: "i", ctrlKey: true });
+  await screen.findByText("没有匹配的文件");
+  input.focus();
+  fireEvent.keyDown(input, { key: "d", ctrlKey: true });
+  const dialog = within(screen.getByRole("dialog", { name: "添加搜索书签" }));
+  const name = dialog.getByLabelText("书签名称");
+  expect(document.activeElement).toBe(name);
+  fireEvent.change(name, { target: { value: "我的报告" } });
+  fireEvent.keyDown(name, { key: "Enter", isComposing: true });
+  expect(invoke).not.toHaveBeenCalledWith("preferences_set", expect.anything());
+  fireEvent.click(dialog.getByRole("button", { name: "保存" }));
+  expect(await dialog.findByRole("alert")).toHaveProperty(
+    "textContent",
+    "设置未保存：写入失败",
+  );
+  expect(name).toHaveProperty("value", "我的报告");
+  fail = false;
+  fireEvent.click(dialog.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(document.activeElement).toBe(input);
+  expect(saved.search_bookmarks[0]).toMatchObject({
+    name: "我的报告",
+    query: {
+      text: "new-report",
+      scope: null,
+      options: { case_sensitive: true },
+    },
+  });
+  desktop.unmount();
+  render(<Desktop />);
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("preferences_get"));
+  fireEvent.click(screen.getByRole("button", { name: "书签" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "我的报告" }));
+  await screen.findByRole("tab", { name: "搜索：new-report", selected: true });
+  expect(
+    screen.getByRole("searchbox", { name: "搜索文件或路径" }),
+  ).toHaveProperty("value", "new-report");
+});
+
 test("F1 opens bundled syntax help without invoking the backend", () => {
   render(<Desktop />);
   const input = screen.getByRole("searchbox");

@@ -65,6 +65,7 @@ type Action =
         text: string;
         names_only: boolean;
         partitions: string[];
+        filesystem_id?: string;
         replaces?: number;
         options?: SearchOptions;
       };

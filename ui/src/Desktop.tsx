@@ -115,24 +115,31 @@ export default function Desktop() {
       active = false;
     };
   }, []);
-  async function save(next: Preferences) {
-    if (saveLock.current) return false;
+  async function savePreferences(
+    next: Preferences,
+    reportGlobally = true,
+  ): Promise<string | null> {
+    if (saveLock.current) return "正在保存设置，请重试。";
     saveLock.current = true;
     setSaving(true);
-    const ok = await writePreferences(next).then(
+    const error = await writePreferences(next).then(
       (value) => {
         setPreferences(value);
         setPreferenceError("");
-        return true;
+        return null;
       },
       (e) => {
-        setPreferenceError(`设置未保存：${String(e)}`);
-        return false;
+        const error = `设置未保存：${String(e).replace(/^Error: /, "")}`;
+        if (reportGlobally) setPreferenceError(error);
+        return error;
       },
     );
     setSaving(false);
     saveLock.current = false;
-    return ok;
+    return error;
+  }
+  async function save(next: Preferences) {
+    return (await savePreferences(next)) === null;
   }
 
   return (
@@ -164,6 +171,12 @@ export default function Desktop() {
             categories={preferences.categories}
             browseFilter={preferences.browse_filter}
             filterPresets={preferences.filter_presets}
+            bookmarks={preferences.search_bookmarks}
+            onSaveBookmarks={(search_bookmarks) =>
+              loaded && !preferenceUnavailable
+                ? savePreferences({ ...preferences, search_bookmarks }, false)
+                : Promise.resolve("设置不可用，请检查设置读取错误后重试。")
+            }
             onBrowseFilter={(id) =>
               void save({ ...preferences, browse_filter: id })
             }

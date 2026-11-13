@@ -14,6 +14,7 @@ import DirectoryTree from "./DirectoryTree";
 import { readDirectory, type DirectoryPage } from "./browse-api";
 import type { Asset } from "./asset-api";
 import { invoke } from "@tauri-apps/api/core";
+import { emptyOptions } from "./search-options";
 
 vi.mock("./browse-api", async (original) => ({
   ...(await original<object>()),
@@ -111,6 +112,98 @@ function choosePartition(name = "Movies") {
   const tree = screen.getByRole("navigation", { name: "目录树" });
   fireEvent.click(within(tree).getByRole("button", { name }));
 }
+
+test("opens scoped bookmarks in separate tabs and blocks a replaced filesystem until range is chosen", async () => {
+  setup().unmount();
+  const requests = () =>
+    vi
+      .mocked(invoke)
+      .mock.calls.flatMap(([, args]: any) =>
+        args?.action?.search_start ? [args.action.search_start] : [],
+      );
+  const other = {
+    ...asset,
+    registration: {
+      ...asset.registration,
+      partition_id: "q",
+      filesystem_id: "fs2",
+      name: "Backup",
+    },
+  };
+  const query = {
+    text: "same",
+    names_only: true,
+    options: {
+      ...emptyOptions,
+      extensions: ["txt"],
+      mode: "whole_word",
+      case_sensitive: true,
+      sort: "size",
+      descending: true,
+      include_history: true,
+    },
+  };
+  render(
+    <Workspace
+      assets={[asset, other]}
+      includePath
+      request={{ text: "", revision: 0 }}
+      bookmarks={[
+        {
+          id: "one",
+          name: "电影盘",
+          query: {
+            ...query,
+            scope: { partition_id: "p", filesystem_id: "fs", entry: [2] },
+          },
+        },
+        {
+          id: "two",
+          name: "备份盘",
+          query: {
+            ...query,
+            scope: { partition_id: "q", filesystem_id: "old-fs", entry: null },
+          },
+        },
+      ]}
+      onSaveBookmarks={async () => null}
+    />,
+  );
+  const open = (name: string) => {
+    fireEvent.click(screen.getByRole("button", { name: "书签" }));
+    fireEvent.click(screen.getByRole("menuitem", { name }));
+  };
+  open("电影盘");
+  await waitFor(() => expect(requests()).toHaveLength(1));
+  expect(requests()[0]).toMatchObject({
+    text: "same",
+    names_only: true,
+    partitions: ["p"],
+    filesystem_id: "fs",
+    options: {
+      mode: "whole_word",
+      sort: "size",
+      descending: true,
+      case_sensitive: true,
+      extensions: ["txt"],
+      scope: { partition_id: "p", entry: [2], recursive: true },
+    },
+  });
+  const first = screen.getByRole("tab", { selected: true });
+  open("备份盘");
+  expect(await screen.findByRole("alert")).toHaveProperty(
+    "textContent",
+    "书签的搜索范围已失效，请重新选择分区范围。",
+  );
+  expect(requests()).toHaveLength(1);
+  expect(first.getAttribute("aria-selected")).toBe("false");
+  fireEvent.change(screen.getByRole("combobox", { name: "分区范围" }), {
+    target: { value: "q" },
+  });
+  await waitFor(() => expect(requests()).toHaveLength(2));
+  expect(requests()[1]).toMatchObject({ text: "same", partitions: ["q"] });
+  expect(requests()[1].options.scope).toBeNull();
+});
 
 test("inverts the directory selection twice without changing the loaded rows", async () => {
   setup();

@@ -21,6 +21,7 @@ import Modal from "./Modal";
 import type { FileView } from "./file-view";
 import Search from "./Search";
 import SearchHelp from "./SearchHelp";
+import BookmarkNameDialog from "./BookmarkNameDialog";
 import WindowChrome from "./WindowChrome";
 import WorkspaceIcon from "./WorkspaceIcon";
 import WorkspaceTabs from "./WorkspaceTabs";
@@ -35,6 +36,8 @@ import {
   type FilterPreset,
   type FilterSelection,
   type SearchContext,
+  type BookmarkedSearch,
+  type SearchBookmark,
 } from "./search-options";
 import type { DirectoryPage } from "./browse-api";
 import type { BrowseLocation } from "./BrowsePane";
@@ -67,6 +70,7 @@ type SearchTab = {
   context?: SearchContext;
   origin: number;
   initialFilter?: FilterSelection;
+  bookmark?: BookmarkedSearch;
   defaults: {
     includePath: boolean;
     initialView: FileView;
@@ -83,6 +87,7 @@ const pages = {
 } as const;
 type AuxiliaryPage = keyof typeof pages;
 type Tab = BrowseTab | SearchTab | (typeof pages)[AuxiliaryPage];
+const noBookmarks: SearchBookmark[] = [];
 const newTab = (id: number): BrowseTab => ({
   kind: "browse",
   id,
@@ -108,6 +113,8 @@ export default function Workspace({
   filterPresets = noPresets,
   onBrowseFilter,
   onSavePresets,
+  bookmarks = noBookmarks,
+  onSaveBookmarks,
   savingFilters,
   indexes,
   automatic,
@@ -140,6 +147,8 @@ export default function Workspace({
   filterPresets?: FilterPreset[];
   onBrowseFilter?: (id: string | null) => void;
   onSavePresets?: (presets: FilterPreset[]) => Promise<boolean>;
+  bookmarks?: SearchBookmark[];
+  onSaveBookmarks?: (bookmarks: SearchBookmark[]) => Promise<string | null>;
   savingFilters?: boolean;
   indexes?: PartitionIndexes;
   automatic?: boolean;
@@ -168,6 +177,9 @@ export default function Workspace({
   const root = useRef<HTMLDivElement>(null);
   const [partitionPickerOpen, setPartitionPickerOpen] = useState(false);
   const [searchHelp, setSearchHelp] = useState(false);
+  const [bookmarkDraft, setBookmarkDraft] = useState<BookmarkedSearch | null>(
+    null,
+  );
   const locations = useRef(new Map<number, DirectoryPage>());
   const [histories, setHistories] = useState<
     Record<number, { entries: BrowseLocation[]; cursor: number }>
@@ -267,13 +279,18 @@ export default function Workspace({
   const activeRef = useRef(active);
   activeRef.current = active;
   const search = useCallback(
-    (initialText: string, context?: SearchContext) => {
+    (
+      initialText: string,
+      context?: SearchContext,
+      bookmark?: BookmarkedSearch,
+    ) => {
       const id = ++sequence.current;
       const tab: SearchTab = {
         id,
         kind: "search",
         initialText,
         context,
+        bookmark,
         title: searchTitle(initialText),
         origin: activeRef.current,
         initialFilter: searchReady ? browseSelection : undefined,
@@ -530,6 +547,7 @@ export default function Workspace({
     ...(actions?.navigation ?? []),
     ...(actions?.search ?? []),
     ...(actions?.export ?? []),
+    ...(actions?.bookmark ?? []),
   ];
   useEffect(() => {
     function keyDown(e: KeyboardEvent) {
@@ -560,6 +578,7 @@ export default function Workspace({
           editing &&
           (shortcut === workspaceShortcuts.selectAll[1] ||
             actions?.navigation?.includes(command) ||
+            (actions?.bookmark?.includes(command) && !searchInput) ||
             (actions?.search?.includes(command) && !searchInput))
         )
           return;
@@ -688,6 +707,24 @@ export default function Workspace({
           : []),
       ],
     },
+    ...(onSaveBookmarks
+      ? [
+          {
+            label: "书签",
+            accessKey: "b",
+            items: [
+              ...(actions?.bookmark ?? [
+                workspaceCommand("bookmark", () => {}, true),
+              ]),
+              ...bookmarks.map(({ id, name, query }) => ({
+                id,
+                label: name,
+                run: () => search(query.text, undefined, query),
+              })),
+            ],
+          },
+        ]
+      : []),
     {
       label: "工具",
       accessKey: "t",
@@ -774,6 +811,19 @@ export default function Workspace({
       </WindowChrome>
       <AppMenu groups={groups} />
       {searchHelp && <SearchHelp onClose={() => setSearchHelp(false)} />}
+      {bookmarkDraft && onSaveBookmarks && (
+        <BookmarkNameDialog
+          title="添加搜索书签"
+          initialName={bookmarkDraft.text.trim().slice(0, 80) || "搜索"}
+          onSave={(name) =>
+            onSaveBookmarks([
+              ...bookmarks,
+              { id: crypto.randomUUID(), name, query: bookmarkDraft },
+            ])
+          }
+          onClose={() => setBookmarkDraft(null)}
+        />
+      )}
       {partitionPickerOpen && (
         <Modal
           title="切换浏览分区"
@@ -944,6 +994,8 @@ export default function Workspace({
                 onLocate={locate}
                 categories={categories}
                 initialFilter={tab.initialFilter ?? browseSelection}
+                bookmark={tab.bookmark}
+                onBookmark={onSaveBookmarks ? setBookmarkDraft : undefined}
                 presets={filterPresets}
                 onSavePresets={onSavePresets}
                 savingFilters={savingFilters}

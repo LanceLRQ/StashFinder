@@ -270,6 +270,7 @@ async fn rename_over_real_pipe_survives_process_termination_and_restart() {
             &name,
             Action::SearchStart(stashfinder_core::index::SearchRequest {
                 replaces: None,
+                filesystem_id: None,
                 text: "offline-result".into(),
                 names_only: false,
                 partitions: vec![],

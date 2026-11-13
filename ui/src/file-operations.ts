@@ -137,6 +137,7 @@ export function commandEnabled(action: MenuAction, facts: CommandFacts) {
   }
 }
 export type FileMenuActions = {
+  bookmark?: MenuCommand[];
   export?: MenuCommand[];
   selection?: MenuCommand[];
   sorting?: MenuCommand[];
