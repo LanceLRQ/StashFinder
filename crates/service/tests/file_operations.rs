@@ -277,6 +277,7 @@ fn search_range_uses_all_positions_and_survives_query_replacement() {
     let search = jobs
         .search(
             stashfinder_core::index::SearchRequest {
+                replaces: None,
                 text: "file:".into(),
                 names_only: false,
                 partitions: vec![],
@@ -305,6 +306,7 @@ fn search_range_uses_all_positions_and_survives_query_replacement() {
     jobs.cancel_search(search);
     jobs.search(
         stashfinder_core::index::SearchRequest {
+            replaces: None,
             text: "missing".into(),
             names_only: false,
             partitions: vec![],

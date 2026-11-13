@@ -12,6 +12,7 @@ Manifests and lockfiles determine exact direct dependency versions. This table r
 | windows / windows-core | [microsoft/windows-rs](https://github.com/microsoft/windows-rs) | MIT OR Apache-2.0 |
 | windows-service | [mullvad/windows-service-rs](https://github.com/mullvad/windows-service-rs) | MIT OR Apache-2.0 |
 | Tokio | [tokio-rs/tokio](https://github.com/tokio-rs/tokio) | MIT |
+| futures-util | [rust-lang/futures-rs](https://github.com/rust-lang/futures-rs) | MIT OR Apache-2.0 |
 | rusqlite | [rusqlite/rusqlite](https://github.com/rusqlite/rusqlite) | MIT |
 | SQLite (bundled) | [sqlite.org](https://sqlite.org/copyright.html) | Public domain |
 | serde / serde_json | [serde-rs](https://github.com/serde-rs) | MIT OR Apache-2.0 |

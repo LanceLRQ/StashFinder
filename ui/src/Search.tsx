@@ -40,6 +40,7 @@ import "./assets.css";
 import "./search.css";
 import "./search-advanced.css";
 const noIndexes: PartitionIndexes = {};
+const inputDelay = 75;
 const refreshDelay = 250;
 const pause = (ms: number) =>
   new Promise<void>((resolve) => window.setTimeout(resolve, ms));
@@ -47,8 +48,11 @@ async function readBatch(
   id: number,
   offset: number,
   limit: number,
+  wait = false,
 ): Promise<SearchPage> {
-  const reply = await indexRequest({ search_batch: { id, offset, limit } });
+  const reply = await indexRequest({
+    search_batch: { id, offset, limit, ...(wait ? { wait_ms: 1000 } : {}) },
+  });
   if (reply.kind !== "search_page") throw Error("搜索分页响应无效");
   if (reply.data.error) throw Error(reply.data.error);
   return reply.data;
@@ -154,6 +158,10 @@ export default function Search({
   const [resultVersion, setResultVersion] = useState(0);
   const [range, setRange] = useState<[number, number]>([0, 24]);
   const pendingId = useRef<number | null>(null);
+  const replacedId = useRef<number | null>(null);
+  const submitPending = useRef<(() => void) | null>(null);
+  const previousText = useRef(text);
+  const [composing, setComposing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState("");
   const [refreshWanted, setRefreshWanted] = useState(0);
@@ -264,7 +272,14 @@ export default function Search({
   }
 
   async function load(token: number, background: boolean) {
-    const start = await indexRequest({ search_start: JSON.parse(queryKey) });
+    const replaces = background ? null : replacedId.current;
+    replacedId.current = null;
+    const start = await indexRequest({
+      search_start: {
+        ...JSON.parse(queryKey),
+        ...(replaces === null ? {} : { replaces }),
+      },
+    });
     if (start.kind !== "search_started") throw Error("搜索响应无效");
     const id = start.data;
     if (token !== sequence.current) {
@@ -274,9 +289,8 @@ export default function Search({
     pendingId.current = id;
     let page: SearchPage;
     do {
-      page = await readBatch(id, 0, background ? 1 : 32);
+      page = await readBatch(id, 0, background ? 1 : 32, true);
       if (token !== sequence.current) return;
-      if (!page.done) await pause(100);
     } while (!page.done && token === sequence.current);
     if (token !== sequence.current) return;
 
@@ -359,6 +373,9 @@ export default function Search({
   }
 
   useEffect(() => {
+    if (composing) return;
+    const typed = previousText.current !== text;
+    previousText.current = text;
     const token = ++sequence.current;
     handledRefresh.current = refreshWanted;
     setBusy(true);
@@ -375,16 +392,22 @@ export default function Search({
     setUnavailable([]);
     setGroups(0);
     setMissing(0);
-    const timer = window.setTimeout(() => {
+    const timer = window.setTimeout(submit, typed ? inputDelay : 0);
+    function submit() {
+      window.clearTimeout(timer);
+      submitPending.current = null;
       if (token === sequence.current)
         void load(token, false).catch((e) => fail(token, e, false));
-    }, 150);
+    }
+    submitPending.current = submit;
     return () => {
       window.clearTimeout(timer);
+      submitPending.current = null;
       const ids = invalidate();
+      replacedId.current = ids[0] ?? replacedId.current;
       void release(ids).catch(() => {});
     };
-  }, [queryKey, revision, partitionKey]);
+  }, [queryKey, revision, partitionKey, composing]);
 
   useEffect(() => {
     if (
@@ -591,6 +614,18 @@ export default function Search({
           aria-label="搜索文件或路径"
           placeholder="搜索文件名或路径…"
           value={text}
+          onCompositionStart={() => setComposing(true)}
+          onCompositionEnd={() => setComposing(false)}
+          onKeyDown={(e) => {
+            if (
+              e.key === "Enter" &&
+              !composing &&
+              !e.nativeEvent.isComposing &&
+              e.keyCode !== 229
+            ) {
+              submitPending.current?.();
+            }
+          }}
           onChange={(e) => {
             setText(e.target.value);
             onTextChange?.(e.target.value);

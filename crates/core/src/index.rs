@@ -49,6 +49,8 @@ pub struct SearchRequest {
     pub text: String,
     pub names_only: bool,
     pub partitions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaces: Option<u64>,
     #[serde(default)]
     pub options: Box<crate::search::QueryOptions>,
 }

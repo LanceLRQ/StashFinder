@@ -113,6 +113,7 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
         let id = jobs
             .search(
                 SearchRequest {
+                    replaces: None,
                     text: "offline".into(),
                     names_only: false,
                     partitions: vec![],
@@ -152,6 +153,7 @@ fn offline_search_survives_worker_restart_and_rejects_unregistered_scans() {
         let id = jobs
             .search(
                 SearchRequest {
+                    replaces: None,
                     text: "offline".into(),
                     names_only: false,
                     partitions: vec![],
@@ -196,6 +198,7 @@ fn catalog_error_is_not_reported_as_an_empty_search() {
     assert!(
         jobs.search(
             SearchRequest {
+                replaces: None,
                 text: "".into(),
                 names_only: false,
                 partitions: vec![],

@@ -91,6 +91,7 @@ async fn index_request(
     use stashfinder_core::{Action, Response};
     let released = match &action {
         Action::SearchCancel { id } => Some(*id),
+        Action::SearchStart(request) => request.replaces,
         _ => None,
     };
     match action {
@@ -112,11 +113,11 @@ async fn index_request(
                 .map_err(|error| format!("{error:#}"))?;
             match &reply {
                 Response::SearchStarted(id) => {
-                    snapshots
-                        .0
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .insert(*id);
+                    let mut snapshots = snapshots.0.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(previous) = released {
+                        snapshots.remove(&previous);
+                    }
+                    snapshots.insert(*id);
                 }
                 Response::Accepted => {
                     if let Some(id) = released {

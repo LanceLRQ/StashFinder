@@ -20,7 +20,9 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
+    time::Duration,
 };
+use tokio::sync::Notify;
 const MAX_SEARCH_SNAPSHOTS: usize = 64;
 
 struct SearchJob {
@@ -33,6 +35,7 @@ struct SearchJob {
 #[derive(Default)]
 struct SearchState {
     cancel: Arc<AtomicBool>,
+    finished: Arc<Notify>,
     partitions: Vec<String>,
     done: bool,
     result: Option<Arc<ResultSet>>,
@@ -148,6 +151,7 @@ impl Indexes {
                         Err(error) => current.error = Some(format!("{error:#}")),
                     }
                     current.unavailable = unavailable;
+                    current.finished.notify_waiters();
                 }
             }
         });
@@ -274,6 +278,7 @@ impl Indexes {
                 });
                 if !registered {
                     state.cancel.store(true, Ordering::Release);
+                    state.finished.notify_waiters();
                 }
                 registered
             });
@@ -325,6 +330,9 @@ impl Indexes {
         let id = self.sequence.fetch_add(1, Ordering::Relaxed);
         let cancel = Arc::new(AtomicBool::new(false));
         let mut mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(previous) = request.replaces {
+            mailbox.cancel(previous);
+        }
         ensure!(
             mailbox.searches.len() < MAX_SEARCH_SNAPSHOTS,
             "搜索快照过多，请关闭不需要的搜索标签页"
@@ -352,10 +360,38 @@ impl Indexes {
     }
     pub fn cancel_search(&self, id: u64) {
         let mut mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(state) = mailbox.searches.remove(&id) {
-            state.cancel.store(true, Ordering::Release);
-            mailbox.jobs.retain(|job| job.id != id);
+        mailbox.cancel(id);
+    }
+    pub(crate) async fn wait_batch(
+        &self,
+        id: u64,
+        offset: usize,
+        limit: usize,
+        wait: Duration,
+    ) -> Result<SearchPage> {
+        ensure!((1..=100).contains(&limit), "搜索页大小无效");
+        let finished = {
+            let mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
+            let state = mailbox
+                .searches
+                .get(&id)
+                .ok_or_else(|| anyhow::anyhow!("搜索请求已过期"))?;
+            // Register before releasing the lock so completion or cancellation cannot be missed.
+            (!state.done).then(|| state.finished.clone().notified_owned())
+        };
+        if let Some(finished) = finished {
+            let _ = tokio::time::timeout(wait, finished).await;
         }
+        self.batch(id, offset, limit)
+    }
+    #[cfg(test)]
+    pub(crate) fn insert_pending_for_test(&self, id: u64) {
+        self.mailbox
+            .0
+            .lock()
+            .unwrap()
+            .searches
+            .insert(id, SearchState::default());
     }
     pub fn page(&self, id: u64, offset: usize) -> Result<SearchPage> {
         let mut page = self.batch(id, offset, 1)?;
@@ -413,6 +449,15 @@ impl Indexes {
         Ok(page)
     }
 }
+impl Mailbox {
+    fn cancel(&mut self, id: u64) {
+        if let Some(state) = self.searches.remove(&id) {
+            state.cancel.store(true, Ordering::Release);
+            state.finished.notify_waiters();
+            self.jobs.retain(|job| job.id != id);
+        }
+    }
+}
 impl Drop for Indexes {
     fn drop(&mut self) {
         let mut mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -421,5 +466,71 @@ impl Drop for Indexes {
             state.cancel.store(true, Ordering::Release);
         }
         self.mailbox.1.notify_one();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn waiters_receive_completion_and_cancellation_without_polling() {
+        let dir = tempfile::tempdir().unwrap();
+        let indexes = Indexes::start(dir.path().to_owned());
+        for (id, cancelled) in [(1, false), (2, true)] {
+            indexes
+                .mailbox
+                .0
+                .lock()
+                .unwrap()
+                .searches
+                .insert(id, SearchState::default());
+            let wait = indexes.wait_batch(id, 0, 32, Duration::from_secs(1));
+            let change = async {
+                tokio::task::yield_now().await;
+                if cancelled {
+                    indexes.cancel_search(id);
+                } else {
+                    let mut mailbox = indexes.mailbox.0.lock().unwrap();
+                    let state = mailbox.searches.get_mut(&id).unwrap();
+                    state.done = true;
+                    state.finished.notify_waiters();
+                }
+            };
+            let (page, ()) = tokio::time::timeout(Duration::from_millis(500), async {
+                tokio::join!(wait, change)
+            })
+            .await
+            .unwrap();
+            if cancelled {
+                assert!(page.is_err());
+            } else {
+                assert!(page.unwrap().done);
+            }
+        }
+    }
+
+    #[test]
+    fn replacing_a_query_releases_its_snapshot_and_leaves_other_tabs_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let indexes = Indexes::start(dir.path().to_owned());
+        indexes.insert_pending_for_test(100);
+        indexes.insert_pending_for_test(200);
+        let id = indexes
+            .search(
+                SearchRequest {
+                    text: "latest".into(),
+                    names_only: false,
+                    partitions: vec![],
+                    replaces: Some(100),
+                    options: Default::default(),
+                },
+                &Snapshot::default(),
+            )
+            .unwrap();
+        assert!(indexes.batch(100, 0, 32).is_err());
+        assert!(indexes.batch(200, 0, 32).is_ok());
+        assert!(indexes.batch(id, 0, 32).is_ok());
     }
 }

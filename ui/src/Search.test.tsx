@@ -172,6 +172,11 @@ test("late pages cannot overwrite a newer query, and previous query is cancelled
   await waitFor(() => expect(resolveOld).toBeTruthy());
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "new" } });
   expect(await screen.findByText("new.txt")).toBeTruthy();
+  expect(invoke).toHaveBeenCalledWith("index_request", {
+    action: {
+      search_start: expect.objectContaining({ text: "new", replaces: 1 }),
+    },
+  });
   await act(async () => resolveOld({ kind: "search_page", data: page }));
   expect(screen.queryByText("movie.txt")).toBeNull();
   expect(screen.getByText(/未完成记录/)).toBeTruthy();
@@ -197,6 +202,82 @@ const publication = (revision: number) => ({
   indexed_at: 1,
 });
 const tick = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+
+test("coalesces rapid input and submits immediately on Enter", async () => {
+  vi.useFakeTimers();
+  mockPage(page);
+  render(<Search partitions={[]} initialText="initial" />);
+  await tick(0);
+  const starts = () =>
+    vi.mocked(invoke).mock.calls.flatMap(([, args]) => {
+      const start = (args as { action: { search_start?: { text: string } } })
+        .action.search_start;
+      return start ? [start.text] : [];
+    });
+  expect(starts()).toEqual(["initial"]);
+  const input = screen.getByRole("searchbox");
+  fireEvent.change(input, { target: { value: "d" } });
+  await tick(40);
+  fireEvent.change(input, { target: { value: "dl" } });
+  await tick(40);
+  fireEvent.change(input, { target: { value: "dll" } });
+  await tick(40);
+  expect(starts()).toEqual(["initial"]);
+  fireEvent.keyDown(input, { key: "Enter" });
+  await tick(0);
+  expect(starts()).toEqual(["initial", "dll"]);
+  await tick(160);
+  expect(starts()).toEqual(["initial", "dll"]);
+});
+
+test("waits for the first page without a client-side polling delay", async () => {
+  vi.useFakeTimers();
+  const batches: { wait_ms?: number }[] = [];
+  vi.mocked(invoke).mockImplementation(async (_, args: any) => {
+    if (args.action.search_start) return { kind: "search_started", data: 1 };
+    if (args.action.search_batch) {
+      batches.push(args.action.search_batch);
+      if (batches.length === 1)
+        return { kind: "search_page", data: { ...page, done: false } };
+      return { kind: "search_page", data: page };
+    }
+    return { kind: "accepted" };
+  });
+  render(<Search partitions={[]} />);
+  await tick(0);
+  expect(batches).toHaveLength(2);
+  expect(batches.every((batch) => batch.wait_ms === 1000)).toBe(true);
+  expect(screen.getByText("movie.txt")).toBeTruthy();
+});
+
+test("waits for the IME to commit before searching", async () => {
+  vi.useFakeTimers();
+  mockPage(page);
+  render(<Search partitions={[]} />);
+  await tick(0);
+  const input = screen.getByRole("searchbox");
+  vi.mocked(invoke).mockClear();
+  fireEvent.compositionStart(input);
+  fireEvent.change(input, { target: { value: "dian" } });
+  fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+  await tick(160);
+  const starts = () =>
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([, args]) =>
+        Boolean(
+          (args as { action: { search_start?: object } }).action.search_start,
+        ),
+      );
+  expect(starts()).toHaveLength(0);
+  fireEvent.change(input, { target: { value: "电影" } });
+  fireEvent.compositionEnd(input, { data: "电影" });
+  await tick(75);
+  expect(starts()).toHaveLength(1);
+  expect(starts()[0][1]).toMatchObject({
+    action: { search_start: { text: "电影" } },
+  });
+});
 
 function refreshFixture() {
   vi.useFakeTimers();

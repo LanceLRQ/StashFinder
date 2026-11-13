@@ -22,7 +22,7 @@ function Invoke-AssetAction($Action) {
     $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', 'StashFinder.M0', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification)
     try {
         $pipe.Connect(3000)
-        $bytes = [Text.Encoding]::UTF8.GetBytes((@{version = 9;id=1;action=$Action} | ConvertTo-Json -Depth 8 -Compress))
+        $bytes = [Text.Encoding]::UTF8.GetBytes((@{110;id=1;action=$Action} | ConvertTo-Json -Depth 8 -Compress))
         $writer = [IO.BinaryWriter]::new($pipe)
         $writer.Write([int]$bytes.Length)
         $writer.Write($bytes)

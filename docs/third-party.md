@@ -12,6 +12,7 @@ M0/M1 代码独立实现，未复制 FindX 或 goz 源码。两者是设计调�
 | windows / windows-core | [microsoft/windows-rs](https://github.com/microsoft/windows-rs) | MIT OR Apache-2.0 |
 | windows-service | [mullvad/windows-service-rs](https://github.com/mullvad/windows-service-rs) | MIT OR Apache-2.0 |
 | Tokio | [tokio-rs/tokio](https://github.com/tokio-rs/tokio) | MIT |
+| futures-util | [rust-lang/futures-rs](https://github.com/rust-lang/futures-rs) | MIT OR Apache-2.0 |
 | rusqlite | [rusqlite/rusqlite](https://github.com/rusqlite/rusqlite) | MIT |
 | SQLite（bundled） | [sqlite.org](https://sqlite.org/copyright.html) | Public domain |
 | serde / serde_json | [serde-rs](https://github.com/serde-rs) | MIT OR Apache-2.0 |

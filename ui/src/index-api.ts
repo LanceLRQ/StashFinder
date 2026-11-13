@@ -65,11 +65,19 @@ type Action =
         text: string;
         names_only: boolean;
         partitions: string[];
+        replaces?: number;
         options?: SearchOptions;
       };
     }
   | { search_page: { id: number; offset: number } }
-  | { search_batch: { id: number; offset: number; limit: number } }
+  | {
+      search_batch: {
+        id: number;
+        offset: number;
+        limit: number;
+        wait_ms?: number;
+      };
+    }
   | { search_cancel: { id: number } };
 type Reply =
   | { kind: "accepted" }

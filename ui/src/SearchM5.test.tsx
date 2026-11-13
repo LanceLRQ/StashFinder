@@ -604,7 +604,7 @@ test("a failed automatic cancellation does not prevent the replacement search", 
   render(<Search partitions={[]} />);
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("index_request", {
-      action: { search_batch: { id: 1, offset: 0, limit: 32 } },
+      action: { search_batch: { id: 1, offset: 0, limit: 32, wait_ms: 1000 } },
     }),
   );
   expect(screen.queryByRole("button", { name: "取消搜索" })).toBeNull();
