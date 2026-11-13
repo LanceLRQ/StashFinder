@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Category, FilterPreset } from "./search-options";
+import type { Category, FilterPreset, SearchBookmark } from "./search-options";
 import type { FileView } from "./file-view";
 
 export type Page = "overview" | "files" | "tasks" | "settings";
@@ -15,6 +15,7 @@ export type Preferences = {
   show_status_bar?: boolean;
   categories?: Category[];
   filter_presets?: FilterPreset[];
+  search_bookmarks?: SearchBookmark[];
   browse_filter?: string | null;
 };
 export const defaultPreferences: Preferences = {

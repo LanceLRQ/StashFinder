@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
-use stashfinder_core::search::{FileFilter, normalize_extensions};
+use stashfinder_core::search::{FileFilter, Query, QueryOptions, normalize_extensions};
 use std::{io::Write, path::Path};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +29,8 @@ pub struct Preferences {
     pub categories: Vec<Category>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub filter_presets: Vec<FilterPreset>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub search_bookmarks: Vec<SearchBookmark>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browse_filter: Option<String>,
     pub version: u32,
@@ -61,6 +63,7 @@ impl Default for Preferences {
             show_status_bar: true,
             categories: default_categories(),
             filter_presets: Vec::new(),
+            search_bookmarks: Vec::new(),
             browse_filter: None,
         }
     }
@@ -114,6 +117,31 @@ pub struct FilterPreset {
     pub id: String,
     pub name: String,
     pub rule: FileFilter,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchBookmark {
+    pub id: String,
+    pub name: String,
+    pub query: BookmarkedSearch,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BookmarkedSearch {
+    pub text: String,
+    pub names_only: bool,
+    pub options: QueryOptions,
+    pub scope: Option<BookmarkScope>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BookmarkScope {
+    pub partition_id: String,
+    pub filesystem_id: String,
+    pub entry: Option<Vec<u8>>,
 }
 fn default_categories() -> Vec<Category> {
     [
@@ -183,12 +211,99 @@ fn normalize(p: &mut Preferences) -> Result<()> {
     }) {
         p.browse_filter = None;
     }
+    ensure!(p.search_bookmarks.len() <= 64, "最多保存 64 个搜索书签");
+    names.clear();
+    ids.clear();
+    for bookmark in &mut p.search_bookmarks {
+        ensure!(
+            !bookmark.id.is_empty()
+                && bookmark.id.len() <= 64
+                && bookmark
+                    .id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                && ids.insert(bookmark.id.as_str()),
+            "书签标识无效或重复"
+        );
+        bookmark.name = bookmark.name.trim().into();
+        ensure!(
+            !bookmark.name.is_empty()
+                && bookmark.name.len() <= 256
+                && !bookmark.name.chars().any(char::is_control)
+                && names.insert(bookmark.name.to_lowercase()),
+            "书签名称无效或重复"
+        );
+        let query = &bookmark.query;
+        ensure!(
+            query.options.scope.is_none(),
+            "书签目录范围缺少文件系统标识"
+        );
+        if let Some(scope) = &query.scope {
+            ensure!(
+                [&scope.partition_id, &scope.filesystem_id]
+                    .into_iter()
+                    .all(|id| {
+                        !id.is_empty()
+                            && id.len() <= 64
+                            && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    })
+                    && scope
+                        .entry
+                        .as_ref()
+                        .is_none_or(|entry| !entry.is_empty() && entry.len() <= 65_534),
+                "书签搜索范围无效"
+            );
+        }
+        Query::compile(&query.text, query.names_only, &query.options)
+            .with_context(|| format!("书签「{}」的搜索条件无效", bookmark.name))?;
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bookmarks_round_trip_query_and_scope_and_reject_invalid_updates() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("preferences.json");
+        let mut json = serde_json::json!({"version":1,"collapsed":false,"start_page":"overview","include_path":true});
+        std::fs::write(&path, json.to_string()).unwrap();
+        assert!(read(&path).unwrap().search_bookmarks.is_empty());
+        json["search_bookmarks"] = serde_json::json!([{
+            "id":"a-1", "name":" 离线文档 ", "query": {
+                "text":"report", "names_only":true,
+                "options":{"case_sensitive":true,"mode":"whole_word","extensions":["pdf"],"sort":"size","descending":true,"include_history":true},
+                "scope":{"partition_id":"p","filesystem_id":"fs","entry":[1,2]}
+            }
+        }]);
+        write(&path, &serde_json::from_value(json.clone()).unwrap()).unwrap();
+        let saved = read(&path).unwrap();
+        let bookmark = &saved.search_bookmarks[0];
+        assert_eq!(bookmark.name, "离线文档");
+        assert_eq!(
+            bookmark.query.scope.as_ref().unwrap().entry,
+            Some(vec![1, 2])
+        );
+        assert_eq!(bookmark.query.options.extensions, ["pdf"]);
+        assert!(bookmark.query.options.case_sensitive && bookmark.query.options.descending);
+        let mut bad = json.clone();
+        bad["search_bookmarks"][0]["query"]["scope"]["filesystem_id"] = "".into();
+        assert!(write(&path, &serde_json::from_value(bad).unwrap()).is_err());
+        let mut bad = json.clone();
+        bad["search_bookmarks"][0]["query"]["text"] = "<".into();
+        assert!(write(&path, &serde_json::from_value(bad).unwrap()).is_err());
+        let mut bad = json.clone();
+        let mut duplicate = bad["search_bookmarks"][0].clone();
+        duplicate["id"] = "b-1".into();
+        bad["search_bookmarks"]
+            .as_array_mut()
+            .unwrap()
+            .push(duplicate);
+        assert!(write(&path, &serde_json::from_value(bad).unwrap()).is_err());
+        assert_eq!(read(&path).unwrap(), saved);
+    }
 
     #[test]
     fn legacy_preferences_default_to_all_registered_disks_and_details() {

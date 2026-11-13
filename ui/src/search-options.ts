@@ -138,6 +138,22 @@ export type SearchOptions = FileFilter & {
   descending: boolean;
   scope: { partition_id: string; entry: number[]; recursive: boolean } | null;
 };
+export type BookmarkScope = {
+  partition_id: string;
+  filesystem_id: string;
+  entry: number[] | null;
+};
+export type BookmarkedSearch = {
+  text: string;
+  names_only: boolean;
+  options: Omit<SearchOptions, "scope">;
+  scope: BookmarkScope | null;
+};
+export type SearchBookmark = {
+  id: string;
+  name: string;
+  query: BookmarkedSearch;
+};
 export const emptyOptions: SearchOptions = {
   ...emptyFileFilter,
   case_sensitive: false,
