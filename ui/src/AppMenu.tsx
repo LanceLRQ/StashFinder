@@ -215,7 +215,9 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
         aria-disabled={item.disabled}
         aria-keyshortcuts={item.shortcut
           ?.replace("↑", "ArrowUp")
-          .replace("↓", "ArrowDown")}
+          .replace("↓", "ArrowDown")
+          .replace("←", "ArrowLeft")
+          .replace("→", "ArrowRight")}
         onClick={() => {
           if (item.disabled) return;
           close(true);

@@ -12,6 +12,8 @@ export const workspaceShortcuts = {
   previousTab: ["上一个标签页", "Ctrl+Shift+Tab"],
   preview: ["预览窗格", "Alt+P"],
   up: ["上一级目录", "Alt+↑"],
+  back: ["后退", "Alt+←"],
+  forward: ["前进", "Alt+→"],
   details: ["详情", "Ctrl+Shift+6"],
   small: ["缩略图（小图标）", "Ctrl+Shift+4"],
   medium: ["缩略图（中图标）", "Ctrl+Shift+3"],
@@ -36,8 +38,12 @@ export function eventShortcut(event: KeyboardEvent) {
   const key =
     /^Digit[0-9]$/.test(event.code) && event.ctrlKey && event.shiftKey
       ? event.code.slice(-1)
-      : event.key === "ArrowUp"
-        ? "↑"
+      : event.key === "ArrowUp" ||
+          event.key === "ArrowLeft" ||
+          event.key === "ArrowRight"
+        ? ({ ArrowUp: "↑", ArrowLeft: "←", ArrowRight: "→" } as const)[
+            event.key
+          ]
         : event.key.length === 1
           ? event.key.toUpperCase()
           : event.key;
@@ -59,7 +65,10 @@ const shortcutGroups = [
       "previousTab",
     ],
   ],
-  ["视图与目录", ["preview", "up", "details", "small", "medium", "large"]],
+  [
+    "视图与目录",
+    ["preview", "up", "back", "forward", "details", "small", "medium", "large"],
+  ],
   ["当前搜索", ["caseSensitive", "wholeWord", "path", "regex"]],
 ] as const;
 

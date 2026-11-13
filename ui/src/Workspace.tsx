@@ -36,6 +36,7 @@ import {
   type SearchContext,
 } from "./search-options";
 import type { DirectoryPage } from "./browse-api";
+import type { BrowseLocation } from "./BrowsePane";
 import AppMenu, { type MenuCommand, type MenuGroup } from "./AppMenu";
 import {
   editCommands,
@@ -54,6 +55,7 @@ type BrowseTab = {
   parent: number[] | null;
   focusEntry?: number[];
   view?: FileView;
+  historyPage?: DirectoryPage;
 };
 type SearchTab = {
   kind: "search";
@@ -140,6 +142,9 @@ export default function Workspace({
   const root = useRef<HTMLDivElement>(null);
   const [partitionPickerOpen, setPartitionPickerOpen] = useState(false);
   const locations = useRef(new Map<number, DirectoryPage>());
+  const [histories, setHistories] = useState<
+    Record<number, { entries: BrowseLocation[]; cursor: number }>
+  >({});
   const searchFocus = useRef(false);
   const [commands, setCommands] = useState<FileCommandContext | null>(null);
   const currentTab = tabs.find((tab) => tab.id === active);
@@ -165,9 +170,57 @@ export default function Workspace({
       : currentTab?.kind === "browse" || currentTab?.kind === "search"
         ? commands?.refresh
         : undefined;
-  const location = useCallback((id: number, page: DirectoryPage) => {
-    locations.current.set(id, page);
-  }, []);
+  const location = useCallback(
+    (id: number, page: DirectoryPage, partition: string) => {
+      locations.current.set(id, page);
+      const next = {
+        partition,
+        filesystem: page.filesystem_id,
+        entry: page.location,
+      };
+      setHistories((previous) => {
+        const history = previous[id];
+        const current = history?.entries[history.cursor];
+        if (
+          current?.partition === next.partition &&
+          current.filesystem === next.filesystem &&
+          current.entry.join(",") === next.entry.join(",")
+        )
+          return previous;
+        const entries = [
+          ...(history?.entries.slice(0, history.cursor + 1) ?? []),
+          next,
+        ];
+        return { ...previous, [id]: { entries, cursor: entries.length - 1 } };
+      });
+    },
+    [],
+  );
+  function applyHistory(
+    id: number,
+    cursor: number,
+    target: BrowseLocation,
+    page: DirectoryPage,
+  ) {
+    setHistories((previous) => ({
+      ...previous,
+      [id]: { ...previous[id], cursor },
+    }));
+    setTabs((previous) =>
+      previous.map((tab) =>
+        tab.kind === "browse" && tab.id === id
+          ? {
+              ...tab,
+              partition: target.partition,
+              filesystem: target.filesystem,
+              parent: target.entry,
+              focusEntry: undefined,
+              historyPage: page,
+            }
+          : tab,
+      ),
+    );
+  }
   const activeRef = useRef(active);
   activeRef.current = active;
   const search = useCallback(
@@ -249,6 +302,11 @@ export default function Workspace({
     );
     if (!removed.length) return;
     for (const tab of removed) locations.current.delete(tab.id);
+    setHistories((previous) => {
+      const next = { ...previous };
+      for (const tab of removed) delete next[tab.id];
+      return next;
+    });
     setTabs(tabs.filter((tab) => !removed.includes(tab)));
     if (removed.some((tab) => tab.id === active)) setActive(pages.overview.id);
   }, [assets, tabs, active, panels?.overview]);
@@ -273,6 +331,12 @@ export default function Workspace({
   function close(id: number) {
     if (id === pages.overview.id) return;
     locations.current.delete(id);
+    setHistories((previous) => {
+      if (!previous[id]) return previous;
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
     const closed = tabs.find((t) => t.id === id);
     const remaining = tabs.filter((t) => t.id !== id);
     if (!remaining.length) {
@@ -318,6 +382,7 @@ export default function Workspace({
               filesystem: chosen.registration.filesystem_id,
               parent: null,
               focusEntry: undefined,
+              historyPage: undefined,
               title: chosen.registration.name,
             }
           : tab,
@@ -425,7 +490,7 @@ export default function Workspace({
         if (
           editing &&
           (shortcut === workspaceShortcuts.selectAll[1] ||
-            shortcut === workspaceShortcuts.up[1] ||
+            actions?.navigation?.includes(command) ||
             (actions?.search?.includes(command) && !searchInput))
         )
           return;
@@ -693,6 +758,11 @@ export default function Workspace({
                   asset={asset}
                   assets={assets}
                   initialParent={tab.parent}
+                  historyPage={tab.historyPage}
+                  history={histories[tab.id]}
+                  onHistory={(cursor, target, page) =>
+                    applyHistory(tab.id, cursor, target, page)
+                  }
                   focusEntry={tab.focusEntry}
                   onLocation={location}
                   onCommands={setCommands}

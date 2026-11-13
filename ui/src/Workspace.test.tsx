@@ -130,6 +130,75 @@ test("inverts the directory selection twice without changing the loaded rows", a
   expect(folder.getAttribute("aria-selected")).toBe("false");
 });
 
+test("navigates offline directory history without moving past a missing target", async () => {
+  setup();
+  choosePartition();
+  fireEvent.doubleClick(await screen.findByRole("row", { name: /Films/ }));
+  await screen.findByText("movie.mkv");
+  fireEvent.keyDown(document.body, { key: "ArrowLeft", altKey: true });
+  await screen.findByText("notes.txt");
+  fireEvent.keyDown(document.body, { key: "ArrowRight", altKey: true });
+  await screen.findByText("movie.mkv");
+  fireEvent.keyDown(document.body, { key: "ArrowLeft", altKey: true });
+  await screen.findByText("notes.txt");
+  const read = vi.mocked(readDirectory).getMockImplementation()!;
+  vi.mocked(readDirectory).mockImplementation((request) =>
+    request.parent?.[0] === 2
+      ? Promise.reject(Error("目录已不存在"))
+      : read(request),
+  );
+  fireEvent.keyDown(document.body, { key: "ArrowRight", altKey: true });
+  expect(await screen.findByRole("alert")).toHaveProperty(
+    "textContent",
+    "无法打开历史目录：目录已不存在",
+  );
+  expect(screen.getByText("notes.txt")).toBeTruthy();
+  vi.mocked(readDirectory).mockImplementation(read);
+  fireEvent.keyDown(document.body, { key: "ArrowRight", altKey: true });
+  await screen.findByText("movie.mkv");
+});
+
+test("directory history distinguishes same-named partitions and truncates its forward branch", async () => {
+  const view = setup();
+  const second = {
+    ...asset,
+    registration: {
+      ...asset.registration,
+      partition_id: "q",
+      filesystem_id: "other",
+    },
+  };
+  const original = vi.mocked(readDirectory).getMockImplementation()!;
+  vi.mocked(readDirectory).mockImplementation(async (request) =>
+    request.partition_id === "q"
+      ? { ...root, filesystem_id: "other", entries: [row(5, "second.txt")] }
+      : original(request),
+  );
+  view.rerender(
+    <Workspace
+      assets={[asset, second]}
+      includePath
+      request={{ text: "", revision: 0 }}
+    />,
+  );
+  const partitions = () =>
+    within(screen.getByRole("navigation", { name: "目录树" })).getAllByRole(
+      "button",
+      { name: "Movies" },
+    );
+  fireEvent.click(partitions()[0]);
+  await screen.findByText("notes.txt");
+  fireEvent.click(partitions()[1]);
+  await screen.findByText("second.txt");
+  fireEvent.keyDown(document.body, { key: "ArrowLeft", altKey: true });
+  await screen.findByText("notes.txt");
+  fireEvent.doubleClick(screen.getByRole("row", { name: /Films/ }));
+  await screen.findByText("movie.mkv");
+  fireEvent.keyDown(document.body, { key: "ArrowRight", altKey: true });
+  expect(screen.getByText("movie.mkv")).toBeTruthy();
+  expect(screen.queryByText("second.txt")).toBeNull();
+});
+
 test("only shows tab scroll buttons when tabs overflow and keeps Home available", () => {
   render(
     <Workspace

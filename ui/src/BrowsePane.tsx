@@ -34,11 +34,20 @@ import {
   workspaceShortcuts,
 } from "./workspace-shortcuts";
 
+export type BrowseLocation = {
+  partition: string;
+  filesystem: string;
+  entry: number[];
+};
+
 export default function BrowsePane({
   id,
   asset,
   assets,
   initialParent,
+  historyPage,
+  history,
+  onHistory,
   focusEntry,
   onChoose,
   onSearch,
@@ -58,6 +67,13 @@ export default function BrowsePane({
   asset?: Asset;
   assets: Asset[];
   initialParent: number[] | null;
+  historyPage?: DirectoryPage;
+  history?: { entries: BrowseLocation[]; cursor: number };
+  onHistory?: (
+    cursor: number,
+    target: BrowseLocation,
+    page: DirectoryPage,
+  ) => void;
   focusEntry?: number[];
   onChoose: (partition: string) => void;
   onSearch: (text: string) => void;
@@ -114,6 +130,7 @@ export default function BrowsePane({
   const composing = useRef(false);
   const request = useRef(0);
   const currentPage = useRef(page);
+  const usedHistoryPage = useRef<DirectoryPage>(undefined);
   const partition = asset?.registration.partition_id;
   const filesystem = asset?.registration.filesystem_id;
   useEffect(() => {
@@ -140,13 +157,17 @@ export default function BrowsePane({
     async function load() {
       let result: DirectoryPage;
       try {
-        result = await readDirectory({
-          partition_id: partition!,
-          filesystem_id: filesystem!,
-          parent: JSON.parse(parentKey),
-          ...(sort && { sort }),
-          ...(rule && { filter: rule }),
-        });
+        if (historyPage && usedHistoryPage.current !== historyPage) {
+          result = historyPage;
+          usedHistoryPage.current = historyPage;
+        } else
+          result = await readDirectory({
+            partition_id: partition!,
+            filesystem_id: filesystem!,
+            parent: JSON.parse(parentKey),
+            ...(sort && { sort }),
+            ...(rule && { filter: rule }),
+          });
       } catch (e) {
         if (token !== request.current) return;
         if (!String(e).includes("目录已不存在")) throw e;
@@ -208,7 +229,7 @@ export default function BrowsePane({
     return () => {
       request.current++;
     };
-  }, [partition, filesystem, parentKey, refresh, sort, filterKey]);
+  }, [partition, filesystem, parentKey, refresh, sort, filterKey, historyPage]);
   useEffect(() => {
     onTitle(
       id,
@@ -225,6 +246,40 @@ export default function BrowsePane({
     setNotice("");
     setParent(next);
     setRefresh((n) => n + 1);
+  }
+  async function visitHistory(delta: number) {
+    if (!history || !onHistory || busy) return;
+    const cursor = history.cursor + delta;
+    const target = history.entries[cursor];
+    if (!target) return;
+    const token = ++request.current;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      if (
+        !assets.some(
+          ({ registration }) =>
+            registration.partition_id === target.partition &&
+            registration.filesystem_id === target.filesystem,
+        )
+      )
+        throw Error("分区记录已不可用");
+      const result = await readDirectory({
+        partition_id: target.partition,
+        filesystem_id: target.filesystem,
+        parent: target.entry,
+        ...(target.partition === partition && sort && { sort }),
+        ...(filter && { filter }),
+      });
+      if (token !== request.current) return;
+      navigate(target.entry);
+      onHistory(cursor, target, result);
+    } catch (e) {
+      if (token !== request.current) return;
+      setError(`无法打开历史目录：${String(e).replace(/^Error: /, "")}`);
+      setBusy(false);
+    }
   }
   function reload() {
     setParent(page?.location || parent);
@@ -398,6 +453,19 @@ export default function BrowsePane({
       ),
       navigation: [
         workspaceCommand("up", goUp, !up || busy || editing !== null),
+        workspaceCommand(
+          "back",
+          () => void visitHistory(-1),
+          busy || editing !== null || !history || history.cursor === 0,
+        ),
+        workspaceCommand(
+          "forward",
+          () => void visitHistory(1),
+          busy ||
+            editing !== null ||
+            !history ||
+            history.cursor + 1 >= history.entries.length,
+        ),
       ],
     },
   );
