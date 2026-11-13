@@ -8,6 +8,7 @@ CLAUDE.local.md
 
 # Build outputs and local verification data
 /target/
+/node_modules/
 /ui/node_modules/
 /ui/dist/
 /ui/src-tauri/gen/

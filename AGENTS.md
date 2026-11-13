@@ -23,9 +23,9 @@ A personal disk catalog and file search tool for Windows 10/11, including offlin
 
 ## 完成标准 / Done
 
-统一检查：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1`。首次运行先执行 `npm ci --prefix ui`。检查包括 Rust 格式、Clippy、测试、构建及前端格式、类型、组件测试和构建。管理员服务与资源管理器交互另外按公开开发文档验收，不能用自动检查替代。
+在仓库根目录运行 `pnpm install --frozen-lockfile` 安装前端依赖，再运行 `pnpm check`。检查包括 Rust 格式、Clippy、测试、构建及前端格式、类型、组件测试和构建。管理员服务与资源管理器交互另外按公开开发文档验收，不能用自动检查替代。
 
-Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1` after `npm ci --prefix ui`. It checks Rust formatting, Clippy, tests and builds, plus frontend formatting, types, component tests and builds. Verify elevated service and Explorer interaction separately using the public development guide.
+From the repository root, install frontend dependencies with `pnpm install --frozen-lockfile`, then run `pnpm check`. It checks Rust formatting, Clippy, tests and builds, plus frontend formatting, types, component tests and builds. Verify elevated service and Explorer interaction separately using the public development guide.
 
 每次交付运行与改动相符的检查，报告实际命令、结果和未验证范围。有测试框架后，功能和修复先建立行为测试；没有框架时使用可重复的检查方法，不虚构测试通过。
 

@@ -1,0 +1,12 @@
+{
+  "name": "stashfinder",
+  "private": true,
+  "packageManager": "pnpm@12.19.0",
+  "scripts": {
+    "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-desktop.ps1",
+    "check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1",
+    "package": "pnpm run package:portable && pnpm run package:installer",
+    "package:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1",
+    "package:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-installer.ps1"
+  }
+}

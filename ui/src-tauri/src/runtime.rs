@@ -98,7 +98,7 @@ fn connection_error(error: anyhow::Error) -> anyhow::Error {
     } else if active() {
         error.context("便携后台未响应，请退出并重新启动 StashFinder")
     } else {
-        error.context("未连接开发后台。请在仓库根目录运行 npm --prefix ui run dev:desktop，或打开已安装版或完整便携包")
+        error.context("未连接开发后台。请在仓库根目录运行 pnpm dev，或打开已安装版或完整便携包")
     }
 }
 pub fn active() -> bool {

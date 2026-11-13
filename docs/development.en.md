@@ -10,15 +10,15 @@ NTFS volume identity queries require a read-access handle, not a zero-access dev
 
 - Windows x64, targeting Windows 10/11. A successful developer-machine run does not validate both systems.
 - Rust 1.94.0, pinned with rustfmt and Clippy in `rust-toolchain.toml`.
-- Node.js and npm. The development environment uses Node 26.13.0 and npm 11.20.0.
+- Node.js 22.22.2 or 24.15.0 and later within those major versions, or Node.js 26 and later. The root `package.json` pins pnpm 12.19.0.
 - MSVC C++ build tools, Windows SDK, and WebView2: see the [official Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
-- Preserve `Cargo.lock` and `ui/package-lock.json`. Initial dependency downloads require network access.
+- Preserve `Cargo.lock` and `pnpm-lock.yaml`. Initial dependency downloads require network access. pnpm manages frontend dependencies, and Cargo manages Rust dependencies.
 
 From the repository root:
 
 ```powershell
-npm ci --prefix ui
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1
+pnpm install --frozen-lockfile
+pnpm check
 ```
 
 The check runs Rust formatting, Clippy with warnings denied, tests and builds, plus Prettier, TypeScript, component tests and Vite builds. Close the validation window and foreground service process first so Windows does not lock build outputs. Outputs in `target/` and `ui/dist/` are ignored.
@@ -30,16 +30,16 @@ When available memory is limited, set `$env:CARGO_BUILD_JOBS = '1'` in the curre
 Start the development GUI and backend together from the repository root as a standard user:
 
 ```powershell
-npm --prefix ui run dev:desktop
+pnpm dev
 ```
 
-The launcher waits for the foreground backend handshake before starting Tauri. Development data lives in `.local/dev-assets`. A compatible backend already listening on the verification pipe is reused. On exit, the launcher stops only the process it started. To debug the components separately, run `cargo run -p stashfinder-service -- --foreground --data-dir "$PWD\.local\dev-assets"` and `npm --prefix ui run tauri -- dev` in separate terminals.
+The launcher waits for the foreground backend handshake before starting Tauri. Development data lives in `.local/dev-assets`. A compatible backend already listening on the verification pipe is reused. On exit, the launcher stops only the process it started. To debug the components separately, run `cargo run -p stashfinder-service -- --foreground --data-dir "$PWD\.local\dev-assets"` and `pnpm --dir ui run tauri dev` in separate terminals.
 
 The app opens on the Overview tab, pinned at the far left. Double-click a partition card to browse its directories. Open Settings from the top menu. Multiple search tabs run independently in the same desktop window. The Overview sidebar shows items needing attention, active indexing phases and paused partitions. Use the sidebar to act on an item or expand recent operations. Selecting a partition limits the sidebar to its details and actions. Cancellation targets a task ID and pauses its partition until updates are explicitly resumed. An ordinary foreground process may lack access to physical disk layouts. The UI reports this explicitly. Use the LocalSystem verification service below for complete device validation. Settings → About and diagnostics reports the actual app version, backend mode and connection state. The local pipe allows the configured account, SYSTEM and administrators and rejects remote clients. IPC accepts neither database paths nor arbitrary commands.
 
 ## Windows installer
 
-Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-installer.ps1` from the repository root. The NSIS installer is written to `target/release/bundle/nsis/`.
+Run `pnpm package` from the repository root to build the portable ZIP and the NSIS installer in sequence. To build either artifact individually, run `pnpm package:portable` or `pnpm package:installer`. The portable ZIP goes to `.local/packages/` and the NSIS installer to `target/release/bundle/nsis/`.
 
 Keep the default `Program Files\StashFinder` directory. A fresh install defaults to desktop management. When opening the app, choose **Start indexing backend** or **Start later**. Approve UAC if Windows prompts you when starting the backend. The process stops when the app exits. Select the Windows service option to register and start the automatic `StashFinder` service, which keeps running after the GUI closes. Opening the app or reconnecting from About and diagnostics starts a stopped service. Both modes keep the GUI unelevated and share the protected `%ProgramData%\StashFinder` index and configured account.
 
@@ -126,7 +126,7 @@ The script covers automatic builds, directory renames and hard links, incrementa
 To build and launch without a development server:
 
 ```powershell
-npm --prefix ui run tauri -- build --debug --no-bundle
+pnpm --dir ui run tauri build --debug --no-bundle -- -- --locked
 & .\target\debug\stashfinder-desktop.exe
 ```
 
@@ -260,7 +260,7 @@ See [system icons and thumbnails](system-visuals.en.md). The desktop obtains sys
 
 ## Portable builds
 
-Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1` to build the release GUI and backend, an allowlisted ZIP, and SHA256 metadata. Output defaults to the ignored `.local/packages/` directory; existing output directories are rejected. Validate with `scripts/verify-portable-package.ps1 -Archive <zip-path>` without executing packaged programs.
+Run `pnpm package:portable` to build the release GUI and backend, an allowlisted ZIP, and SHA256 metadata. Output defaults to the ignored `.local/packages/` directory; existing output directories are rejected. Validate with `scripts/verify-portable-package.ps1 -Archive <zip-path>` without executing packaged programs.
 
 The `portable.json` marker enables `data` beside the executable for indexes, preferences, image caches, and WebView2 user data. The GUI remains unelevated; the backend is elevated separately on each run without service registration. Tray and settings exits revoke the session and wait for the backend; parent-process detection handles abnormal GUI exits. Without a marker, existing behavior remains. See the [portable guide](portable.en.md) for usage and dependencies.
 

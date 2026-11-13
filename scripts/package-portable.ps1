@@ -5,6 +5,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1')
 $projectRoot = Split-Path $PSScriptRoot -Parent
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $projectRoot ('.local\packages\' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')) }
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
@@ -19,7 +20,7 @@ Push-Location $projectRoot
 try {
     if (-not $SkipBuild) {
         if ($BinaryDirectory -ne (Join-Path $projectRoot 'target\release')) { throw 'Custom BinaryDirectory requires -SkipBuild.' }
-        & npm.cmd --prefix ui run tauri -- build --no-bundle -- --locked
+        & pnpm --dir ui run tauri build --no-bundle -- -- --locked
         if ($LASTEXITCODE -ne 0) { throw 'Desktop release build failed.' }
         $originalRustFlags = [Environment]::GetEnvironmentVariable('RUSTFLAGS', 'Process')
         try {

@@ -35,7 +35,7 @@ Windows 上，图片目录为 `%LOCALAPPDATA%\io.github.lancelrq.stashfinder\vis
 ```powershell
 cargo test -p stashfinder-windows --test visuals --locked
 cargo test -p stashfinder-desktop --locked
-npm.cmd --prefix ui test -- --run src/Visuals.test.tsx src/CacheSettings.test.tsx
+pnpm --dir ui test src/Visuals.test.tsx src/CacheSettings.test.tsx
 ```
 
 Windows 接口测试只在临时目录生成样本，验证系统类型图标、真实缩略图生成和后续系统缓存命中。桌面端测试验证离线不访问提供程序、盘符无关的缓存键、元数据变化、取消、清空期间的旧结果隔离、额度及实际整理进度。

@@ -39,4 +39,4 @@ NTFS 系统内部暂存的待删除文件不会作为用户文件展示。已经
 
 包内 `manifest.json` 记录基础源码提交、是否包含未提交改动、文件大小及 SHA256；`built_from_source=false` 表示使用预先构建的二进制打包。ZIP 旁的 `.sha256` 用于核对完整归档。此开发包未签名；第三方来源见包内说明，完整发布许可和系统矩阵继续在发布阶段收口。
 
-从源码打包：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1`。默认输出到 `.local/packages/<时间>/`；重复构建使用新输出目录，不覆盖已有包。预构建打包可使用 `-SkipBuild -BinaryDirectory <目录>`，该目录需含 `stashfinder-desktop.exe` 和 `stashfinder-service.exe`；脚本不运行这些预构建文件。验证归档使用 `scripts/verify-portable-package.ps1 -Archive <zip路径>`。
+在仓库根目录运行 `pnpm package:portable` 从源码打包。默认输出到 `.local/packages/<时间>/`；重复构建使用新输出目录，不覆盖已有包。若已有二进制文件，可运行 `pnpm package:portable -SkipBuild -BinaryDirectory <目录>`，该目录需含 `stashfinder-desktop.exe` 和 `stashfinder-service.exe`；脚本不运行这些预构建文件。验证归档使用 `scripts/verify-portable-package.ps1 -Archive <zip路径>`。

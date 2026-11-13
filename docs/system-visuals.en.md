@@ -35,7 +35,7 @@ See the [development guide](development.en.md) for the unified checks. Focused c
 ```powershell
 cargo test -p stashfinder-windows --test visuals --locked
 cargo test -p stashfinder-desktop --locked
-npm.cmd --prefix ui test -- --run src/Visuals.test.tsx src/CacheSettings.test.tsx
+pnpm --dir ui test src/Visuals.test.tsx src/CacheSettings.test.tsx
 ```
 
 Windows interface tests create temporary samples and verify system type icons, actual thumbnail generation, and subsequent Windows cache hits. Desktop tests cover offline requests without provider access, drive-letter-independent keys, metadata changes, cancellation, stale results during clearing, limits, and actual maintenance progress.

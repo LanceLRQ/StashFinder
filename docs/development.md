@@ -10,15 +10,15 @@ NTFS 卷身份查询需要只读访问句柄，不能使用仅用于设备属性
 
 - Windows x64；目标 Windows 10/11。开发机成功不等于两个系统均已验收。
 - Rust 1.94.0（`rust-toolchain.toml` 固定，包含 rustfmt/Clippy）。
-- Node.js 和 npm；本轮开发环境为 Node 26.13.0、npm 11.20.0。
+- Node.js 22.22.2、24.15.0 或同一主版本的更新版本，也可使用 Node.js 26 及以上。pnpm 12.19.0 由根目录 `package.json` 固定。
 - MSVC C++ 构建工具、Windows SDK 和 WebView2，见 [Tauri 官方前置条件](https://v2.tauri.app/start/prerequisites/)。
-- `Cargo.lock` 和 `ui/package-lock.json` 必须保留，首次依赖下载需要网络。
+- `Cargo.lock` 和 `pnpm-lock.yaml` 必须保留，首次依赖下载需要网络。pnpm 管理前端依赖，Cargo 管理 Rust 依赖。
 
 在仓库根目录执行：
 
 ```powershell
-npm ci --prefix ui
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1
+pnpm install --frozen-lockfile
+pnpm check
 ```
 
 统一检查包含 Rust 格式、Clippy（warning 视为失败）、测试与构建，以及前端 Prettier、TypeScript、组件测试和 Vite 构建。运行前关闭验证窗口和前台后台进程，避免 Windows 锁定待构建程序。生成物放在 `target/`、`ui/dist/`，不入库。
@@ -30,16 +30,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1
 在仓库根目录以普通权限启动开发界面及后台：
 
 ```powershell
-npm --prefix ui run dev:desktop
+pnpm dev
 ```
 
-启动器先等待前台后台握手，再运行 Tauri。开发目录为 `.local/dev-assets`。若默认验证管道上已有兼容后台，则复用连接。退出时只停止本次启动的后台。需要独立调试时，可以分别运行 `cargo run -p stashfinder-service -- --foreground --data-dir "$PWD\.local\dev-assets"` 和 `npm --prefix ui run tauri -- dev`。
+启动器先等待前台后台握手，再运行 Tauri。开发目录为 `.local/dev-assets`。若默认验证管道上已有兼容后台，则复用连接。退出时只停止本次启动的后台。需要独立调试时，可以分别运行 `cargo run -p stashfinder-service -- --foreground --data-dir "$PWD\.local\dev-assets"` 和 `pnpm --dir ui run tauri dev`。
 
 启动进入固定在最左侧的概览标签。双击分区卡片打开目录浏览。顶部菜单打开设置标签。多个搜索标签在同一桌面窗口内独立运行。概览右栏显示待处理问题、更新阶段和暂停状态，可直接处理或展开最近操作。选中分区后，右栏只显示该分区的详情和操作。取消按任务 ID 定位，取消后分区暂停，需显式继续更新。普通用户前台模式可能无权读取物理磁盘布局，界面应明确显示不可访问；完整设备验收需使用下述 LocalSystem 服务。“设置 → 关于与诊断”可检查实际应用版本、后台模式和连接状态。命名管道限定配置账户、SYSTEM 和管理员，拒绝远程连接；IPC 不接受数据库路径或任意执行命令。
 
 ## 正式 Windows 安装包
 
-从仓库根目录运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-installer.ps1`。生成的 NSIS 安装包位于 `target/release/bundle/nsis/`。
+从仓库根目录运行 `pnpm package`，依次生成便携 ZIP 和 NSIS 安装包。也可单独运行 `pnpm package:portable` 或 `pnpm package:installer`。便携包位于 `.local/packages/`，NSIS 安装包位于 `target/release/bundle/nsis/`。
 
 安装时保留默认的 `Program Files\StashFinder` 位置。首次安装默认由桌面管理后台。打开应用时可选择“启动索引后台”或“稍后启动”。启动时按 Windows 提示确认 UAC，退出应用后后台随之停止。勾选安装 Windows 服务后，安装器会注册并启动自动运行的 `StashFinder` 服务，关闭界面后服务继续运行。服务停止时，打开界面或在“关于与诊断”重新连接会尝试启动。两种模式下界面都以普通权限运行，共用受保护的 `%ProgramData%\StashFinder` 和原安装账户。
 
@@ -126,7 +126,7 @@ Remove-Item Env:SF_M6_MANIFEST
 无开发服务器的构建与启动：
 
 ```powershell
-npm --prefix ui run tauri -- build --debug --no-bundle
+pnpm --dir ui run tauri build --debug --no-bundle -- -- --locked
 & .\target\debug\stashfinder-desktop.exe
 ```
 
@@ -260,7 +260,7 @@ cargo build -p stashfinder-store --bin baseline --release --locked
 
 ## 便携构建
 
-运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1` 生成 release GUI、后台、白名单 ZIP 和 SHA256 清单。默认输出到忽略的 `.local/packages/`；已有输出目录会被拒绝。包验证入口为 `scripts/verify-portable-package.ps1 -Archive <zip路径>`，不执行包内程序。
+运行 `pnpm package:portable` 生成 release GUI、后台、白名单 ZIP 和 SHA256 清单。默认输出到忽略的 `.local/packages/`；已有输出目录会被拒绝。包验证入口为 `scripts/verify-portable-package.ps1 -Archive <zip路径>`，不执行包内程序。
 
 `portable.json` 标记启用程序目录旁的 `data`，覆盖索引、界面设置、图片缓存及 WebView2 用户数据路径；GUI 仍以普通权限运行，后台每次单独提升，不注册服务。托盘和设置中的退出会撤销会话并等待后台停止，异常 GUI 退出另由父进程检测处理。没有标记则沿用现有模式。使用和依赖见[便携版说明](portable.md)。
 
