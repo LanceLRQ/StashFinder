@@ -71,6 +71,10 @@ export default function Search({
   onBack,
   includePath = true,
   initialText = "",
+  initialView = "details",
+  initialPreview = false,
+  onlineOnly = false,
+  includeHistory = false,
   onTextChange,
   active = true,
   onCommands,
@@ -88,6 +92,10 @@ export default function Search({
   onBack?: () => void;
   includePath?: boolean;
   initialText?: string;
+  initialView?: FileView;
+  initialPreview?: boolean;
+  onlineOnly?: boolean;
+  includeHistory?: boolean;
   onTextChange?: (text: string) => void;
   active?: boolean;
   onCommands?: (context: FileCommandContext | null) => void;
@@ -131,7 +139,11 @@ export default function Search({
   const [text, setText] = useState(initialText);
   const [namesOnly, setNamesOnly] = useState(!includePath);
   const [partition, setPartition] = useState("");
-  const [options, setOptions] = useState<SearchOptions>(emptyOptions);
+  const [options, setOptions] = useState<SearchOptions>(() => ({
+    ...emptyOptions,
+    online_only: onlineOnly,
+    include_history: includeHistory,
+  }));
   const [filter, setFilter] = useState(initialFilter);
   const [filterOpen, setFilterOpen] = useState<"search" | "save" | false>(
     false,
@@ -151,8 +163,8 @@ export default function Search({
   const [missing, setMissing] = useState(0);
   const [unavailable, setUnavailable] = useState<string[]>([]);
   const [revision, setRevision] = useState(0);
-  const [preview, setPreview] = useState(false);
-  const [view, setView] = useState<FileView>("details");
+  const [preview, setPreview] = useState(initialPreview);
+  const [view, setView] = useState<FileView>(initialView);
   const grid = view === "details" ? undefined : thumbnailLayouts[view];
   const [selection, setSelection] = useState<number[]>([]);
   const selectedSnapshot = useRef<{ index: number; hit: SearchHit } | null>(

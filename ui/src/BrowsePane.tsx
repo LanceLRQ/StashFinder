@@ -60,6 +60,7 @@ export default function BrowsePane({
   emptyState,
   onCommands,
   view,
+  initialPreview = false,
   onView,
   filter,
 }: {
@@ -90,6 +91,7 @@ export default function BrowsePane({
   active?: boolean;
   onCommands?: (context: FileCommandContext | null) => void;
   view: FileView;
+  initialPreview?: boolean;
   onView: (view: FileView) => void;
   emptyState?: ReactNode;
   filter?: FileFilter;
@@ -124,7 +126,7 @@ export default function BrowsePane({
   const [sort, setSort] = useState<DirectorySort>();
   const appliedSort = useRef<DirectorySort>(undefined);
   const [tree, setTree] = useState(true);
-  const [preview, setPreview] = useState(false);
+  const [preview, setPreview] = useState(initialPreview);
   const [breadcrumb, setBreadcrumb] = useState(true);
   const [searchText, setSearchText] = useState("");
   const composing = useRef(false);

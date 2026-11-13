@@ -12,6 +12,16 @@ pub enum Page {
     Settings,
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileView {
+    #[default]
+    Details,
+    Small,
+    Medium,
+    Large,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Preferences {
@@ -25,6 +35,14 @@ pub struct Preferences {
     pub collapsed: bool,
     pub start_page: Page,
     pub include_path: bool,
+    #[serde(default)]
+    pub search_online_only: bool,
+    #[serde(default)]
+    pub search_include_history: bool,
+    #[serde(default)]
+    pub default_view: FileView,
+    #[serde(default)]
+    pub default_preview: bool,
 }
 
 impl Default for Preferences {
@@ -34,6 +52,10 @@ impl Default for Preferences {
             collapsed: false,
             start_page: Page::Overview,
             include_path: true,
+            search_online_only: false,
+            search_include_history: false,
+            default_view: FileView::Details,
+            default_preview: false,
             categories: default_categories(),
             filter_presets: Vec::new(),
             browse_filter: None,
@@ -162,6 +184,18 @@ fn normalize(p: &mut Preferences) -> Result<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn legacy_preferences_default_to_all_registered_disks_and_details() {
+        let old: Preferences = serde_json::from_str(
+            r#"{"version":1,"collapsed":false,"start_page":"overview","include_path":true}"#,
+        )
+        .unwrap();
+        assert!(!old.search_online_only && !old.search_include_history && !old.default_preview);
+        assert_eq!(old.default_view, FileView::Details);
+        assert!(serde_json::from_str::<Preferences>(
+            r#"{"version":1,"collapsed":false,"start_page":"overview","include_path":true,"default_view":"invalid"}"#
+        ).is_err());
+    }
     #[test]
     fn round_trips_presets_and_clears_a_removed_selection_without_losing_legacy_categories() {
         let dir = tempfile::tempdir().unwrap();

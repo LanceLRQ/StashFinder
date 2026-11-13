@@ -144,6 +144,10 @@ export default function Desktop() {
             }}
             assets={assets}
             includePath={preferences.include_path}
+            defaultView={preferences.default_view}
+            defaultPreview={preferences.default_preview}
+            searchOnlineOnly={preferences.search_online_only}
+            searchIncludeHistory={preferences.search_include_history}
             categories={preferences.categories}
             browseFilter={preferences.browse_filter}
             filterPresets={preferences.filter_presets}

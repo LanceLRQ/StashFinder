@@ -31,7 +31,14 @@ const sections = [
 export type SettingsPage = (typeof sections)[number][0];
 type PreferenceDraft = Pick<
   Preferences,
-  "include_path" | "browse_filter" | "categories" | "filter_presets"
+  | "include_path"
+  | "browse_filter"
+  | "categories"
+  | "filter_presets"
+  | "search_online_only"
+  | "search_include_history"
+  | "default_view"
+  | "default_preview"
 >;
 
 export default function Settings({
@@ -59,7 +66,7 @@ export default function Settings({
 }) {
   const [category, setCategory] = useState<SettingsPage>(initialPage);
   const [changes, setChanges] = useState<Partial<PreferenceDraft>>({});
-  const draft = { ...preferences, ...changes };
+  const draft = { ...defaultPreferences, ...preferences, ...changes };
   const categories = draft.categories ?? defaultCategories;
   const presets = draft.filter_presets ?? noPresets;
   const availablePresets = filterPresetEntries(categories, presets);
@@ -149,6 +156,10 @@ export default function Settings({
                   ...previous,
                   include_path: defaultPreferences.include_path,
                   browse_filter: null,
+                  search_online_only: false,
+                  search_include_history: false,
+                  default_view: "details",
+                  default_preview: false,
                 }))
               }
             >
@@ -237,6 +248,44 @@ export default function Settings({
                   }
                   aria-label="默认包含路径"
                 />
+              </label>
+              {(
+                [
+                  ["search_online_only", "新搜索默认仅在线"],
+                  ["search_include_history", "新搜索默认包含历史记录"],
+                  ["default_preview", "新标签默认显示预览窗格"],
+                ] as const
+              ).map(([key, label]) => (
+                <label className="setting-row" key={key}>
+                  {label}
+                  <input
+                    type="checkbox"
+                    checked={draft[key] ?? false}
+                    disabled={formDisabled}
+                    onChange={(e) =>
+                      setChanges({ ...changes, [key]: e.target.checked })
+                    }
+                  />
+                </label>
+              ))}
+              <label className="setting-row">
+                新标签默认布局
+                <select
+                  disabled={formDisabled}
+                  value={draft.default_view ?? "details"}
+                  onChange={(e) =>
+                    setChanges({
+                      ...changes,
+                      default_view: e.target
+                        .value as Preferences["default_view"],
+                    })
+                  }
+                >
+                  <option value="details">详情</option>
+                  <option value="large">大图标</option>
+                  <option value="medium">中图标</option>
+                  <option value="small">小图标</option>
+                </select>
               </label>
               <label className="setting-row">
                 浏览与新搜索默认筛选

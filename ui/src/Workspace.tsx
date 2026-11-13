@@ -55,6 +55,7 @@ type BrowseTab = {
   parent: number[] | null;
   focusEntry?: number[];
   view?: FileView;
+  initialPreview?: boolean;
   historyPage?: DirectoryPage;
 };
 type SearchTab = {
@@ -65,6 +66,13 @@ type SearchTab = {
   context?: SearchContext;
   origin: number;
   initialFilter?: FilterSelection;
+  defaults: {
+    includePath: boolean;
+    initialView: FileView;
+    initialPreview: boolean;
+    onlineOnly: boolean;
+    includeHistory: boolean;
+  };
 };
 const searchTitle = (text: string) =>
   text.trim() ? `搜索：${text.trim()}` : "搜索";
@@ -85,6 +93,10 @@ const newTab = (id: number): BrowseTab => ({
 export default function Workspace({
   assets,
   includePath,
+  defaultView = "details",
+  defaultPreview = false,
+  searchOnlineOnly = false,
+  searchIncludeHistory = false,
   request,
   browseRequest,
   categories = defaultCategories,
@@ -107,6 +119,10 @@ export default function Workspace({
 }: {
   assets: Asset[];
   includePath: boolean;
+  defaultView?: FileView;
+  defaultPreview?: boolean;
+  searchOnlineOnly?: boolean;
+  searchIncludeHistory?: boolean;
   request: { text: string; revision: number };
   browseRequest?: { partition: string; revision: number };
   categories?: Category[];
@@ -234,11 +250,26 @@ export default function Workspace({
         title: searchTitle(initialText),
         origin: activeRef.current,
         initialFilter: searchReady ? browseSelection : undefined,
+        defaults: {
+          includePath,
+          initialView: defaultView,
+          initialPreview: defaultPreview,
+          onlineOnly: searchOnlineOnly,
+          includeHistory: searchIncludeHistory,
+        },
       };
       setTabs((previous) => [...previous, tab]);
       setActive(id);
     },
-    [browseSelection, searchReady],
+    [
+      browseSelection,
+      searchReady,
+      includePath,
+      defaultView,
+      defaultPreview,
+      searchOnlineOnly,
+      searchIncludeHistory,
+    ],
   );
   const searchRevision = useRef(0);
   useEffect(() => {
@@ -284,12 +315,14 @@ export default function Workspace({
       partition: asset.registration.partition_id,
       filesystem: asset.registration.filesystem_id,
       parent: null,
+      view: defaultView,
+      initialPreview: defaultPreview,
     };
     setTabs((previous) =>
       empty ? previous.map((t) => (t.id === id ? tab : t)) : [...previous, tab],
     );
     setActive(id);
-  }, [browseRequest, assets, tabs]);
+  }, [browseRequest, assets, tabs, defaultView, defaultPreview]);
   useEffect(() => {
     if (!panels?.overview) return;
     const removed = tabs.filter(
@@ -325,7 +358,10 @@ export default function Workspace({
   );
   function add() {
     const id = ++sequence.current;
-    setTabs((previous) => [...previous, newTab(id)]);
+    setTabs((previous) => [
+      ...previous,
+      { ...newTab(id), view: defaultView, initialPreview: defaultPreview },
+    ]);
     setActive(id);
   }
   function close(id: number) {
@@ -341,7 +377,9 @@ export default function Workspace({
     const remaining = tabs.filter((t) => t.id !== id);
     if (!remaining.length) {
       const next = ++sequence.current;
-      setTabs([newTab(next)]);
+      setTabs([
+        { ...newTab(next), view: defaultView, initialPreview: defaultPreview },
+      ]);
       setActive(next);
     } else {
       setTabs(remaining);
@@ -406,6 +444,8 @@ export default function Workspace({
         partition: hit.partition_id,
         filesystem: hit.filesystem_id,
         parent: folder ? hit.file.entry : hit.file.parent,
+        view: defaultView,
+        initialPreview: defaultPreview,
         focusEntry: folder ? undefined : hit.file.entry,
       },
     ]);
@@ -744,6 +784,7 @@ export default function Workspace({
                   }
                   active={visible && active === tab.id}
                   view={tab.view ?? "details"}
+                  initialPreview={tab.initialPreview}
                   onView={(view) =>
                     setTabs((previous) =>
                       previous.map((item) =>
@@ -837,7 +878,7 @@ export default function Workspace({
                   id: a.registration.partition_id,
                   name: a.registration.name,
                 }))}
-                includePath={includePath}
+                {...tab.defaults}
                 initialText={tab.initialText}
                 onTextChange={(text) => title(tab.id, searchTitle(text))}
                 active={visible && active === tab.id}

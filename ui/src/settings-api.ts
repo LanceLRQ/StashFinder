@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Category, FilterPreset } from "./search-options";
+import type { FileView } from "./file-view";
 
 export type Page = "overview" | "files" | "tasks" | "settings";
 export type Preferences = {
@@ -7,6 +8,10 @@ export type Preferences = {
   collapsed: boolean;
   start_page: Page;
   include_path: boolean;
+  search_online_only?: boolean;
+  search_include_history?: boolean;
+  default_view?: FileView;
+  default_preview?: boolean;
   categories?: Category[];
   filter_presets?: FilterPreset[];
   browse_filter?: string | null;
@@ -16,6 +21,10 @@ export const defaultPreferences: Preferences = {
   collapsed: false,
   start_page: "overview",
   include_path: true,
+  search_online_only: false,
+  search_include_history: false,
+  default_view: "details",
+  default_preview: false,
 };
 export type ServiceStatus = {
   version: number;

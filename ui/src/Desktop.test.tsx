@@ -74,6 +74,44 @@ function menu(group: string, action: string) {
   fireEvent.click(screen.getByRole("menuitem", { name: action }));
 }
 
+test("uses saved layout, preview and search scope defaults only for new tabs", async () => {
+  render(<Desktop />);
+  menu("文件", "新建搜索标签页");
+  const first = await screen.findByRole("searchbox", {
+    name: "搜索文件或路径",
+  });
+  const oldPanel = first.closest('[role="tabpanel"]')!;
+  await screen.findByText("没有匹配的文件");
+  menu("工具", "设置…");
+  const settings = within(screen.getByRole("dialog", { name: "设置" }));
+  fireEvent.click(settings.getByLabelText("新搜索默认仅在线"));
+  fireEvent.click(settings.getByLabelText("新搜索默认包含历史记录"));
+  fireEvent.click(settings.getByLabelText("新标签默认显示预览窗格"));
+  fireEvent.change(settings.getByLabelText("新标签默认布局"), {
+    target: { value: "small" },
+  });
+  fireEvent.click(settings.getByRole("button", { name: "确定" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(oldPanel.querySelector("table")).toBeTruthy();
+  expect(oldPanel.querySelector('[aria-label="预览窗格"]')).toBeNull();
+  vi.mocked(invoke).mockClear();
+  menu("文件", "新建搜索标签页");
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("index_request", {
+      action: {
+        search_start: expect.objectContaining({
+          options: expect.objectContaining({
+            online_only: true,
+            include_history: true,
+          }),
+        }),
+      },
+    }),
+  );
+  expect(screen.getByRole("complementary", { name: "预览窗格" })).toBeTruthy();
+  expect(screen.getByRole("listbox", { name: "搜索结果列表" })).toBeTruthy();
+});
+
 test("remembers the browse preset and copies it only into new search tabs", async () => {
   const original = vi.mocked(invoke).getMockImplementation()!;
   let saved: any = await original("preferences_get");
