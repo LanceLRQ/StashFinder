@@ -26,28 +26,43 @@ const Context = createContext({
   paste: (_target: EntryRef, _changed?: () => void) => {},
 });
 const StatusContext = createContext<ReactNode>(null);
+const StatusVisibility = createContext(true);
 const feedbackDuration = 8000;
 
 export const useFileOperations = () => useContext(Context);
 
 export function FileStatusBar({
   children,
+  essential,
+  liveStatus,
   className = "browse-status",
 }: {
   children?: ReactNode;
+  essential?: ReactNode;
+  liveStatus?: string | null;
   className?: string;
 }) {
   const status = useContext(StatusContext);
-  if (!children && !status) return null;
+  const visible = useContext(StatusVisibility);
+  const routine = visible ? children : null;
+  if (!routine && !essential && !status && !liveStatus) return null;
   return (
     <footer className={className}>
-      {children}
+      {routine}
+      {essential}
+      {liveStatus !== undefined && <span role="status">{liveStatus}</span>}
       {status}
     </footer>
   );
 }
 
-export default function FileOperations({ children }: { children: ReactNode }) {
+export default function FileOperations({
+  children,
+  showStatus = true,
+}: {
+  children: ReactNode;
+  showStatus?: boolean;
+}) {
   const [status, setStatus] = useState<OperationStatus | null>(null);
   const [message, setMessage] = useState("");
   const [quietMenu, setQuietMenu] = useState(false);
@@ -272,7 +287,9 @@ export default function FileOperations({ children }: { children: ReactNode }) {
   return (
     <Context.Provider value={api}>
       <StatusContext.Provider value={feedback}>
-        {children}
+        <StatusVisibility.Provider value={showStatus}>
+          {children}
+        </StatusVisibility.Provider>
       </StatusContext.Provider>
       {showReport && report && (
         <Modal

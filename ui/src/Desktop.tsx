@@ -132,7 +132,7 @@ export default function Desktop() {
 
   return (
     <Visuals>
-      <FileOperations>
+      <FileOperations showStatus={preferences.show_status_bar ?? true}>
         <main className="desktop">
           <Workspace
             onSettings={setSettings}
@@ -148,6 +148,13 @@ export default function Desktop() {
             defaultPreview={preferences.default_preview}
             searchOnlineOnly={preferences.search_online_only}
             searchIncludeHistory={preferences.search_include_history}
+            showStatus={preferences.show_status_bar ?? true}
+            onShowStatus={
+              loaded && !saving && !preferenceUnavailable
+                ? (show_status_bar) =>
+                    void save({ ...preferences, show_status_bar })
+                : undefined
+            }
             categories={preferences.categories}
             browseFilter={preferences.browse_filter}
             filterPresets={preferences.filter_presets}

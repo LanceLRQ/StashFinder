@@ -97,6 +97,8 @@ export default function Workspace({
   defaultPreview = false,
   searchOnlineOnly = false,
   searchIncludeHistory = false,
+  showStatus = true,
+  onShowStatus,
   request,
   browseRequest,
   categories = defaultCategories,
@@ -123,6 +125,8 @@ export default function Workspace({
   defaultPreview?: boolean;
   searchOnlineOnly?: boolean;
   searchIncludeHistory?: boolean;
+  showStatus?: boolean;
+  onShowStatus?: (show: boolean) => void;
   request: { text: string; revision: number };
   browseRequest?: { partition: string; revision: number };
   categories?: Category[];
@@ -619,6 +623,15 @@ export default function Workspace({
           : []),
         ...(actions?.navigation?.length
           ? [{ label: "前往", items: actions.navigation }]
+          : []),
+        ...(onShowStatus
+          ? [
+              {
+                label: "显示状态栏",
+                checked: showStatus,
+                run: () => onShowStatus(!showStatus),
+              },
+            ]
           : []),
       ],
     },

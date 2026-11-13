@@ -688,7 +688,23 @@ export default function Assets({
           </div>
         </Modal>
       )}
-      <FileStatusBar className="asset-footer">
+      <FileStatusBar
+        className="asset-footer"
+        liveStatus={
+          working
+            ? "正在处理设备信息…"
+            : capacityDeferred
+              ? (current?.capacity_error ?? null)
+              : null
+        }
+        essential={
+          error && !registerOpen && !rename && !removing ? (
+            <span className="asset-error" role="alert" title={error}>
+              {error}
+            </span>
+          ) : null
+        }
+      >
         <div className="asset-stats" aria-label="已登记资产统计">
           <span>硬盘 {data ? groups.size : "—"}</span>
           <span
@@ -706,18 +722,6 @@ export default function Assets({
               : "—"}
           </span>
         </div>
-        {error && !registerOpen && !rename && !removing && (
-          <span className="asset-error" role="alert" title={error}>
-            {error}
-          </span>
-        )}
-        <span role="status">
-          {working
-            ? "正在处理设备信息…"
-            : capacityDeferred
-              ? current?.capacity_error
-              : ""}
-        </span>
       </FileStatusBar>
       {removing && (
         <Modal

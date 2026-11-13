@@ -74,6 +74,36 @@ function menu(group: string, action: string) {
   fireEvent.click(screen.getByRole("menuitem", { name: action }));
 }
 
+test("hides routine status while keeping active search and failure feedback", async () => {
+  const original = vi.mocked(invoke).getMockImplementation()!;
+  let rejectPage: (reason: Error) => void = () => {};
+  vi.mocked(invoke).mockImplementation((command, args: any) => {
+    if (args?.action?.search_batch)
+      return new Promise((_, reject) => {
+        rejectPage = reject;
+      });
+    return original(command, args);
+  });
+  render(<Desktop />);
+  await screen.findByLabelText("已登记 0 个分区");
+  fireEvent.click(screen.getByRole("button", { name: "查看" }));
+  fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "显示状态栏" }));
+  await waitFor(() =>
+    expect(screen.queryByLabelText("已登记 0 个分区")).toBeNull(),
+  );
+  menu("文件", "新建搜索标签页");
+  await waitFor(() =>
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(([, args]: any) => args?.action?.search_batch),
+    ).toBe(true),
+  );
+  expect(screen.getByText("正在搜索…")).toBeTruthy();
+  await act(async () => rejectPage(Error("模拟查询错误")));
+  expect(screen.getByRole("alert").textContent).toContain("模拟查询错误");
+});
+
 test("uses saved layout, preview and search scope defaults only for new tabs", async () => {
   render(<Desktop />);
   menu("文件", "新建搜索标签页");

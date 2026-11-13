@@ -43,6 +43,8 @@ pub struct Preferences {
     pub default_view: FileView,
     #[serde(default)]
     pub default_preview: bool,
+    #[serde(default = "default_show_status")]
+    pub show_status_bar: bool,
 }
 
 impl Default for Preferences {
@@ -56,11 +58,15 @@ impl Default for Preferences {
             search_include_history: false,
             default_view: FileView::Details,
             default_preview: false,
+            show_status_bar: true,
             categories: default_categories(),
             filter_presets: Vec::new(),
             browse_filter: None,
         }
     }
+}
+fn default_show_status() -> bool {
+    true
 }
 
 pub fn read(path: &Path) -> Result<Preferences> {
@@ -192,6 +198,7 @@ mod tests {
         .unwrap();
         assert!(!old.search_online_only && !old.search_include_history && !old.default_preview);
         assert_eq!(old.default_view, FileView::Details);
+        assert!(old.show_status_bar);
         assert!(serde_json::from_str::<Preferences>(
             r#"{"version":1,"collapsed":false,"start_page":"overview","include_path":true,"default_view":"invalid"}"#
         ).is_err());

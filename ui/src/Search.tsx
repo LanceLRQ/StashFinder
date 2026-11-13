@@ -1137,14 +1137,23 @@ export default function Search({
           />
         )}
       </div>
-      <FileStatusBar>
-        <span className="search-summary" role="status">
-          {busy
-            ? "正在搜索…"
-            : error
-              ? "搜索失败"
-              : `${total.toLocaleString()} 条结果`}
-        </span>
+      <FileStatusBar
+        essential={
+          busy || error ? (
+            <span className="search-summary" role="status">
+              {busy ? "正在搜索…" : "搜索失败"}
+            </span>
+          ) : count > maxFileSelection ? (
+            <span role="status">{fileSelectionLimit}</span>
+          ) : null
+        }
+      >
+        {!busy && !error && (
+          <span
+            className="search-summary"
+            role="status"
+          >{`${total.toLocaleString()} 条结果`}</span>
+        )}
         <span>
           {count
             ? `已选择 ${count.toLocaleString()} 项`
@@ -1155,9 +1164,6 @@ export default function Search({
         <span>
           {missing ? `${missing.toLocaleString()} 项缺少查重元数据` : ""}
         </span>
-        {count > maxFileSelection && (
-          <span role="status">{fileSelectionLimit}</span>
-        )}
       </FileStatusBar>
       {active && menu && (
         <FileContextMenu

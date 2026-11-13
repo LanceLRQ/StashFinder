@@ -12,6 +12,7 @@ export type Preferences = {
   search_include_history?: boolean;
   default_view?: FileView;
   default_preview?: boolean;
+  show_status_bar?: boolean;
   categories?: Category[];
   filter_presets?: FilterPreset[];
   browse_filter?: string | null;
@@ -25,6 +26,7 @@ export const defaultPreferences: Preferences = {
   search_include_history: false,
   default_view: "details",
   default_preview: false,
+  show_status_bar: true,
 };
 export type ServiceStatus = {
   version: number;

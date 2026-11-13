@@ -39,6 +39,7 @@ type PreferenceDraft = Pick<
   | "search_include_history"
   | "default_view"
   | "default_preview"
+  | "show_status_bar"
 >;
 
 export default function Settings({
@@ -160,6 +161,7 @@ export default function Settings({
                   search_include_history: false,
                   default_view: "details",
                   default_preview: false,
+                  show_status_bar: true,
                 }))
               }
             >
@@ -247,6 +249,20 @@ export default function Settings({
                     setChanges({ ...changes, include_path: e.target.checked })
                   }
                   aria-label="默认包含路径"
+                />
+              </label>
+              <label className="setting-row">
+                显示状态栏
+                <input
+                  type="checkbox"
+                  checked={draft.show_status_bar ?? true}
+                  disabled={formDisabled}
+                  onChange={(e) =>
+                    setChanges({
+                      ...changes,
+                      show_status_bar: e.target.checked,
+                    })
+                  }
                 />
               </label>
               {(

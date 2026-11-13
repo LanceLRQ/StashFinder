@@ -743,14 +743,20 @@ export default function BrowsePane({
               />
             )}
           </div>
-          <FileStatusBar>
+          <FileStatusBar
+            essential={
+              busy && page ? (
+                <span role="status">正在读取…</span>
+              ) : count > maxFileSelection ? (
+                <span role="status">{fileSelectionLimit}</span>
+              ) : null
+            }
+          >
             <span role="status">
-              {busy && page
-                ? "正在读取…"
-                : count > 0
-                  ? `已选择 ${count.toLocaleString()} 项`
-                  : page &&
-                    `${(page.total ?? page.entries.length).toLocaleString()} 项`}
+              {count > 0
+                ? `已选择 ${count.toLocaleString()} 项`
+                : page &&
+                  `${(page.total ?? page.entries.length).toLocaleString()} 项`}
             </span>
             <span>
               {connectionLabel[asset.connection] || "状态未确认"}
@@ -765,9 +771,6 @@ export default function BrowsePane({
                   ? "索引待校验"
                   : ""}
             </span>
-            {count > maxFileSelection && (
-              <span role="status">{fileSelectionLimit}</span>
-            )}
           </FileStatusBar>
           {active && menu && (
             <FileContextMenu
