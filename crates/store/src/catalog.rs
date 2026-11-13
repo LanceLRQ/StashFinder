@@ -249,6 +249,7 @@ impl Catalog {
                 file.with_extension("sqlite-wal"),
                 file.with_extension("sqlite-shm"),
                 file.with_extension("sqlite-journal"),
+                crate::search::startup_cache::path(&file),
             ]
             .iter()
             .all(|path| match std::fs::remove_file(path) {

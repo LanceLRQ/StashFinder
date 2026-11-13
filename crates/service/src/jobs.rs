@@ -57,6 +57,7 @@ impl Indexes {
         let runner = crate::supervisor::Runner::start(root.clone());
         let caches = runner.caches();
         let states = runner.states();
+        let startup = runner.startup();
         let mailbox = Arc::new((Mutex::new(Mailbox::default()), Condvar::new()));
         let work_mailbox = mailbox.clone();
         thread::spawn(move || {
@@ -79,6 +80,7 @@ impl Indexes {
                     for asset in job.assets {
                         ensure!(!job.cancel.load(Ordering::Relaxed), "搜索已取消");
                         let partition = &asset.registration.partition_id;
+                        startup.wait(partition, &job.cancel)?;
                         let index = (|| -> Result<Option<Arc<SearchIndex>>> {
                             if asset.error.is_some() {
                                 catalog.health(&asset.registration.filesystem_id)?;

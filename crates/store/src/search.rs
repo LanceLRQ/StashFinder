@@ -1,6 +1,7 @@
 use crate::volume::Volume;
 #[path = "query.rs"]
 pub mod query;
+pub(crate) mod startup_cache;
 use anyhow::{Context, Result, ensure};
 use rusqlite::OptionalExtension;
 use stashfinder_core::{
@@ -18,6 +19,7 @@ pub struct SearchIndex {
     pub partial: bool,
     pub indexed_at: Option<u64>,
     pub needs_validation: bool,
+    startup_cache_loaded: bool,
     directories: Vec<String>,
     folded_directories: Vec<String>,
     directory_entries: Vec<Vec<u8>>,
@@ -26,6 +28,7 @@ pub struct SearchIndex {
     links: HashSet<Vec<u8>>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct CachedEntry {
     parent: usize,
     row: CachedRow,
@@ -42,16 +45,32 @@ struct DirectoryNode {
     parent: Option<usize>,
     name: String,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 struct CachedRow {
+    #[serde(with = "serde_bytes")]
     entry: Box<[u8]>,
+    #[serde(with = "serde_bytes")]
     object: Box<[u8]>,
     name: Box<str>,
     folded: Box<str>,
-    kind: &'static str,
+    kind: CachedKind,
     size: Option<u64>,
     created: Option<u64>,
     modified: Option<u64>,
     attributes: u32,
+}
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+enum CachedKind {
+    File,
+    Folder,
+}
+impl CachedKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Folder => "folder",
+        }
+    }
 }
 impl CachedRow {
     fn record<'a>(
@@ -64,7 +83,7 @@ impl CachedRow {
             folded_name: &self.folded,
             parent,
             folded_parent,
-            kind: self.kind,
+            kind: self.kind.as_str(),
             size: self.size,
             created: self.created,
             modified: self.modified,
@@ -84,7 +103,7 @@ impl CachedRow {
             } else {
                 format!("{prefix}\\{}", self.name)
             },
-            kind: self.kind.into(),
+            kind: self.kind.as_str().into(),
             attributes: self.attributes,
             size: self.size.map(|n| n.to_string()),
             created: self.created.map(|n| n.to_string()),
@@ -203,7 +222,11 @@ impl SearchIndex {
                     object: object_id.into(),
                     folded: name.to_lowercase().into_boxed_str(),
                     name: name.into_boxed_str(),
-                    kind: if object.folder { "folder" } else { "file" },
+                    kind: if object.folder {
+                        CachedKind::Folder
+                    } else {
+                        CachedKind::File
+                    },
                     size: object.size,
                     created: object.created,
                     modified: object.modified,
@@ -256,6 +279,7 @@ impl SearchIndex {
         }
         Ok(Self {
             revision,
+            startup_cache_loaded: false,
             folded_directories: directories.iter().map(|s| s.to_lowercase()).collect(),
             directory_entries,
             directory_ids: ids,

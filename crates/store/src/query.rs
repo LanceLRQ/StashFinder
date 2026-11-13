@@ -1,4 +1,4 @@
-use super::{SearchIndex, extension};
+use super::{CachedKind, SearchIndex, extension};
 #[cfg(feature = "query-bench")]
 pub fn synthetic_sources(count: usize) -> Vec<Source> {
     (0..12)
@@ -29,7 +29,7 @@ fn synthetic_range(start: usize, count: usize) -> Source {
                     object: (i as u64).to_le_bytes().to_vec().into_boxed_slice(),
                     folded: name.to_lowercase().into_boxed_str(),
                     name: name.into_boxed_str(),
-                    kind: "file",
+                    kind: CachedKind::File,
                     attributes: 0,
                     size: Some((i % 10000) as u64 * 1048576),
                     created: Some(133000000000000000),
@@ -51,6 +51,7 @@ fn synthetic_range(start: usize, count: usize) -> Source {
             partial: false,
             indexed_at: Some(1),
             needs_validation: false,
+            startup_cache_loaded: false,
             directories: vec!["项目\\aaa\\level-1\\level-2\\深目录".into()],
             folded_directories: vec!["项目\\aaa\\level-1\\level-2\\深目录".into()],
             directory_entries: vec![vec![0]],
@@ -159,7 +160,9 @@ impl ResultSet {
                 )? {
                     let unknown = query.duplicate().iter().any(|f| match f {
                         DuplicateField::Name => false,
-                        DuplicateField::Size => row.kind == "folder" || row.size.is_none(),
+                        DuplicateField::Size => {
+                            row.kind == CachedKind::Folder || row.size.is_none()
+                        }
                         DuplicateField::Modified => row.modified.is_none(),
                     });
                     if unknown {
@@ -248,12 +251,18 @@ impl ResultSet {
                         |names| names[a.source as usize].cmp(&names[b.source as usize]),
                     ),
                     SortField::Group => a.group.cmp(&b.group),
-                    SortField::Extension => {
-                        extension(if ra.kind == "file" { &ra.folded } else { "" })
-                            .cmp(extension(if rb.kind == "file" { &rb.folded } else { "" }))
-                    }
-                    SortField::Type => ra.kind.cmp(rb.kind).reverse().then_with(|| {
-                        if ra.kind == "file" {
+                    SortField::Extension => extension(if ra.kind == CachedKind::File {
+                        &ra.folded
+                    } else {
+                        ""
+                    })
+                    .cmp(extension(if rb.kind == CachedKind::File {
+                        &rb.folded
+                    } else {
+                        ""
+                    })),
+                    SortField::Type => ra.kind.cmp(&rb.kind).reverse().then_with(|| {
+                        if ra.kind == CachedKind::File {
                             extension(&ra.folded).cmp(extension(&rb.folded))
                         } else {
                             Cmp::Equal
@@ -343,7 +352,7 @@ fn number_cmp(a: &Option<u64>, b: &Option<u64>, descending: bool) -> Cmp {
 fn compare_dupe(s: &[Source], a: Row, b: Row, fields: &[DuplicateField], case: bool) -> Cmp {
     let a = &s[a.source as usize].index.entries[a.entry as usize].row;
     let b = &s[b.source as usize].index.entries[b.entry as usize].row;
-    let mut cmp = a.kind.cmp(b.kind);
+    let mut cmp = a.kind.cmp(&b.kind);
     for field in fields {
         if cmp != Cmp::Equal {
             break;

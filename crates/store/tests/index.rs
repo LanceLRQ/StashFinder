@@ -76,6 +76,125 @@ fn published_paths_and_hard_links_survive_restart_without_a_source_disk() {
 }
 
 #[test]
+fn startup_cache_round_trips_and_rejects_corruption_and_old_revisions() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("volume.sqlite");
+    let mut db = Volume::create(&path, "{}").unwrap();
+    let g = db.begin_generation().unwrap();
+    let cursor = Cursor {
+        journal: vec![1],
+        next: 1,
+    };
+    db.write_batch(
+        g,
+        &[object(1, true, None), object(2, false, Some(8))],
+        &[
+            entry(1, 1, None, "\\"),
+            entry(2, 2, Some(1), "示例.JS"),
+            entry(3, 2, Some(1), "link.js"),
+        ],
+        &[],
+        Some(&cursor),
+    )
+    .unwrap();
+    db.complete(g).unwrap();
+    db.publish(g).unwrap();
+    let cancelled = AtomicBool::new(false);
+    let original = SearchIndex::load(&db).unwrap().unwrap();
+    original
+        .save_startup_cache(
+            &db,
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+    let query = Query::parse(".js", false).unwrap();
+    let compare = |index: SearchIndex| {
+        serde_json::to_value(index.search(&query, &[], 100, &cancelled).unwrap()).unwrap()
+    };
+    let cached = SearchIndex::load_startup(&db, &cancelled).unwrap().unwrap();
+    assert_eq!(cached.revision, original.revision);
+    let expected = compare(original);
+    assert_eq!(compare(cached), expected);
+
+    let cache = path.with_extension("search-cache");
+    let data = std::fs::read(&cache).unwrap();
+    std::fs::write(&cache, &data[..data.len() / 2]).unwrap();
+    assert_eq!(
+        compare(SearchIndex::load_startup(&db, &cancelled).unwrap().unwrap()),
+        expected
+    );
+    std::fs::write(cache, data).unwrap();
+
+    db.apply_incremental(
+        g,
+        Changes {
+            objects: &[],
+            entries: &[
+                entry(2, 2, Some(1), "new.js"),
+                entry(3, 2, Some(1), "link.js"),
+            ],
+            removed: &[],
+            pending: &[],
+            cursor: Some(&cursor),
+            replace_links: true,
+        },
+    )
+    .unwrap();
+    db.finish_incremental(g).unwrap();
+    let updated = SearchIndex::load_startup(&db, &cancelled).unwrap().unwrap();
+    let matches = updated.search(&query, &[], 100, &cancelled).unwrap();
+    assert_eq!(matches.rows[0].name, "new.js");
+    assert_eq!(matches.rows[1].name, "link.js");
+}
+
+#[test]
+fn startup_cache_cannot_be_used_for_a_different_filesystem() {
+    let dir = tempfile::tempdir().unwrap();
+    let create = |path: &std::path::Path, manifest, name| {
+        let mut db = Volume::create(path, manifest).unwrap();
+        let g = db.begin_generation().unwrap();
+        db.write_batch(
+            g,
+            &[object(1, true, None), object(2, false, None)],
+            &[entry(1, 1, None, "\\"), entry(2, 2, Some(1), name)],
+            &[],
+            None,
+        )
+        .unwrap();
+        db.complete(g).unwrap();
+        db.publish(g).unwrap();
+        rusqlite::Connection::open(path)
+            .unwrap()
+            .execute("UPDATE generations SET completed=1", [])
+            .unwrap();
+        db
+    };
+    let first = dir.path().join("one.sqlite");
+    let second = dir.path().join("two.sqlite");
+    let db = create(&first, "one", "one.js");
+    SearchIndex::load(&db)
+        .unwrap()
+        .unwrap()
+        .save_startup_cache(
+            &db,
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+    let db = create(&second, "two", "two.js");
+    std::fs::copy(
+        first.with_extension("search-cache"),
+        second.with_extension("search-cache"),
+    )
+    .unwrap();
+    let cancelled = AtomicBool::new(false);
+    let index = SearchIndex::load_startup(&db, &cancelled).unwrap().unwrap();
+    let found = index
+        .search(&Query::parse(".js", false).unwrap(), &[], 1, &cancelled)
+        .unwrap();
+    assert_eq!(found.rows[0].name, "two.js");
+}
+
+#[test]
 fn search_cache_rejects_a_path_without_its_file_object() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("volume.sqlite");

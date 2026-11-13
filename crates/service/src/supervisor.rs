@@ -16,8 +16,8 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     path::PathBuf,
     sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -26,6 +26,42 @@ use std::{
 pub(crate) type Cache = Arc<Mutex<HashMap<String, Arc<SearchIndex>>>>;
 type SourceFactory = dyn Fn(&Asset) -> Result<Box<dyn Source>> + Send + 'static;
 type ScanFactory = dyn Fn(&Asset) -> Result<Box<dyn scan::Source>> + Send + 'static;
+
+#[derive(Default)]
+pub(crate) struct Startup {
+    pending: Mutex<Option<HashSet<String>>>,
+    changed: Condvar,
+}
+impl Startup {
+    fn begin<'a>(&self, partitions: impl IntoIterator<Item = &'a str>) {
+        *self.pending.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(partitions.into_iter().map(str::to_owned).collect());
+        self.changed.notify_all();
+    }
+    fn finish(&self, partition: &str) {
+        if let Some(pending) = self
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut()
+        {
+            pending.remove(partition);
+        }
+        self.changed.notify_all();
+    }
+    pub(crate) fn wait(&self, partition: &str, cancel: &AtomicBool) -> Result<()> {
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        while pending.as_ref().is_none_or(|ids| ids.contains(partition)) {
+            ensure!(!cancel.load(Ordering::Relaxed), "搜索已取消");
+            (pending, _) = self
+                .changed
+                .wait_timeout(pending, Duration::from_millis(25))
+                .unwrap_or_else(|e| e.into_inner());
+        }
+        ensure!(!cancel.load(Ordering::Relaxed), "搜索已取消");
+        Ok(())
+    }
+}
 
 pub struct Runner {
     shared: Arc<Shared>,
@@ -37,6 +73,7 @@ struct Shared {
     snapshot: Mutex<Snapshot>,
     pub states: Arc<Mutex<HashMap<String, IndexStatus>>>,
     pub caches: Cache,
+    startup: Arc<Startup>,
     active: Mutex<Option<(String, Arc<AtomicBool>)>>,
     stop: AtomicBool,
     ready: AtomicBool,
@@ -153,6 +190,7 @@ impl Runner {
             snapshot: Mutex::new(Snapshot::default()),
             states: Arc::new(Mutex::new(HashMap::new())),
             caches: Arc::new(Mutex::new(HashMap::new())),
+            startup: Arc::new(Startup::default()),
             active: Mutex::new(None),
             stop: AtomicBool::new(false),
             ready: AtomicBool::new(false),
@@ -166,6 +204,9 @@ impl Runner {
     }
     pub(crate) fn caches(&self) -> Cache {
         self.shared.caches.clone()
+    }
+    pub(crate) fn startup(&self) -> Arc<Startup> {
+        self.shared.startup.clone()
     }
     pub(crate) fn states(&self) -> Arc<Mutex<HashMap<String, IndexStatus>>> {
         self.shared.states.clone()
@@ -531,6 +572,21 @@ impl Drop for Runner {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+        let deadline = Instant::now() + Duration::from_secs(4);
+        let caches = self
+            .shared
+            .caches
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        for (partition, index) in &caches {
+            if Instant::now() >= deadline {
+                break;
+            }
+            if let Ok(volume) = self.shared.load(partition) {
+                let _ = index.save_startup_cache(&volume, deadline);
+            }
+        }
     }
 }
 impl Shared {
@@ -545,9 +601,14 @@ impl Shared {
         let row = catalog.get(partition)?;
         catalog.open_volume(&row)
     }
-    fn publish(&self, partition: &str, db: &Volume) -> Result<()> {
+    fn publish(&self, partition: &str, db: &Volume, startup: bool) -> Result<()> {
         let status = db.index_status()?;
-        if let Some(index) = SearchIndex::load(db)? {
+        let index = if startup {
+            SearchIndex::load_startup(db, &self.stop)?
+        } else {
+            SearchIndex::load_cancelled(db, &self.stop)?
+        };
+        if let Some(index) = index {
             self.caches
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -562,42 +623,61 @@ impl Shared {
 }
 
 fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanFactory>) {
-    if let Ok(catalog) = Catalog::read(&shared.root)
-        && let Ok(rows) = catalog.list()
-    {
-        for row in rows {
-            let result = (|| -> Result<()> {
-                let mut db = shared.load(&row.partition_id)?;
-                let status = db.index_status()?;
-                if status.phase == "initial_paths" {
-                    db.discard_initial(
-                        status.generation.context("构建代次缺失")?,
-                        "上次构建中断，将重新建立",
-                    )?;
-                } else if status.phase == "building" {
-                    db.fail_generation(
-                        status.generation.context("构建代次缺失")?,
-                        "上次构建中断，将重新建立",
-                    )?;
+    let mut rows = Catalog::read(&shared.root)
+        .and_then(|catalog| catalog.list())
+        .unwrap_or_default();
+    rows.sort_by_key(|row| row.state != "ready");
+    shared
+        .startup
+        .begin(rows.iter().map(|row| row.partition_id.as_str()));
+    let next = AtomicUsize::new(0);
+    let workers = thread::available_parallelism()
+        .map_or(1, usize::from)
+        .min(3);
+    thread::scope(|scope| {
+        let load = || {
+            while !shared.stop.load(Ordering::Relaxed)
+                && let Some(row) = rows.get(next.fetch_add(1, Ordering::Relaxed))
+            {
+                let result = (|| -> Result<()> {
+                    let catalog = Catalog::read(&shared.root)?;
+                    let mut db = catalog.open_volume(row)?;
+                    let status = db.index_status()?;
+                    if status.phase == "initial_paths" {
+                        db.discard_initial(
+                            status.generation.context("构建代次缺失")?,
+                            "上次构建中断，将重新建立",
+                        )?;
+                    } else if status.phase == "building" {
+                        db.fail_generation(
+                            status.generation.context("构建代次缺失")?,
+                            "上次构建中断，将重新建立",
+                        )?;
+                    }
+                    shared.publish(&row.partition_id, &db, true)
+                })();
+                if let Err(e) = result {
+                    shared
+                        .states
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(
+                            row.partition_id.clone(),
+                            IndexStatus {
+                                phase: "failed".into(),
+                                error: Some(format!("{e:#}")),
+                                ..Default::default()
+                            },
+                        );
                 }
-                shared.publish(&row.partition_id, &db)
-            })();
-            if let Err(e) = result {
-                shared
-                    .states
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert(
-                        row.partition_id,
-                        IndexStatus {
-                            phase: "failed".into(),
-                            error: Some(format!("{e:#}")),
-                            ..Default::default()
-                        },
-                    );
+                shared.startup.finish(&row.partition_id);
             }
+        };
+        for _ in 1..workers.min(rows.len()) {
+            scope.spawn(load);
         }
-    }
+        load();
+    });
     shared.ready.store(true, Ordering::Release);
     let mut failures: HashMap<String, (u32, Instant)> = HashMap::new();
     let mut last_check = Instant::now() - Duration::from_secs(3);
@@ -722,7 +802,7 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                     if let Some(g) = db.active_generation()?
                         && index::exclude_runtime_paths(source.as_ref(), &mut db, g)?
                     {
-                        shared.publish(id, &db)?;
+                        shared.publish(id, &db, false)?;
                     }
                     let status = db.index_status()?;
                     let journal = source.journal()?;
@@ -933,7 +1013,7 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                         let cursor = db.cursor(generation)?.ok_or(index::JournalCursorInvalid)?;
                         match source.journal()? {
                             Some(journal) if index::cursor_matches_journal(&cursor, &journal) => {
-                                shared.publish(&task.partition_id, &db)?;
+                                shared.publish(&task.partition_id, &db, false)?;
                                 shared.with_tasks(|t| {
                                     if t.get(&task.id)?.state == "running" {
                                         t.set_state(&task.id, "superseded", None)?;
@@ -979,7 +1059,7 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                 {
                     db.mark_stale(g, &error.to_string())?;
                 }
-                shared.publish(&task.partition_id, &db)?;
+                shared.publish(&task.partition_id, &db, false)?;
                 result
             })();
             let mut active = shared.active.lock().unwrap_or_else(|e| e.into_inner());
@@ -1040,5 +1120,28 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
         } else {
             thread::sleep(Duration::from_millis(100));
         }
+    }
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+
+    #[test]
+    fn search_waits_only_for_its_partition_and_can_cancel() {
+        let startup = Startup::default();
+        startup.begin(["C", "D"]);
+        startup.finish("C");
+        let cancel = AtomicBool::new(false);
+        startup.wait("C", &cancel).unwrap();
+        startup.wait("registered-later", &cancel).unwrap();
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                cancel.store(true, Ordering::Release);
+            });
+            assert!(startup.wait("D", &cancel).is_err());
+        });
+        startup.finish("D");
+        startup.wait("D", &AtomicBool::new(false)).unwrap();
     }
 }

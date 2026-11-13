@@ -15,6 +15,9 @@ Manifests and lockfiles determine exact direct dependency versions. This table r
 | rusqlite | [rusqlite/rusqlite](https://github.com/rusqlite/rusqlite) | MIT |
 | SQLite (bundled) | [sqlite.org](https://sqlite.org/copyright.html) | Public domain |
 | serde / serde_json | [serde-rs](https://github.com/serde-rs) | MIT OR Apache-2.0 |
+| serde_bytes | [serde-rs/bytes](https://github.com/serde-rs/bytes) | MIT OR Apache-2.0 |
+| rmp-serde | [3Hren/msgpack-rust](https://github.com/3Hren/msgpack-rust) | MIT |
+| crc32fast | [srijs/rust-crc32fast](https://github.com/srijs/rust-crc32fast) | MIT OR Apache-2.0 |
 | anyhow | [dtolnay/anyhow](https://github.com/dtolnay/anyhow) | MIT OR Apache-2.0 |
 | tempfile | [Stebalien/tempfile](https://github.com/Stebalien/tempfile) | MIT OR Apache-2.0 |
 | png | [image-rs/image-png](https://github.com/image-rs/image-png) | MIT OR Apache-2.0 |
