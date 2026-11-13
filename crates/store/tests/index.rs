@@ -76,6 +76,33 @@ fn published_paths_and_hard_links_survive_restart_without_a_source_disk() {
 }
 
 #[test]
+fn search_cache_rejects_a_path_without_its_file_object() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("volume.sqlite");
+    let mut db = Volume::create(&path, "{}").unwrap();
+    let g = db.begin_generation().unwrap();
+    db.write_batch(
+        g,
+        &[object(1, true, None), object(2, false, None)],
+        &[entry(1, 1, None, "\\"), entry(2, 2, Some(1), "file.txt")],
+        &[],
+        None,
+    )
+    .unwrap();
+    db.complete(g).unwrap();
+    db.publish(g).unwrap();
+
+    let corrupt = rusqlite::Connection::open(&path).unwrap();
+    corrupt.pragma_update(None, "foreign_keys", false).unwrap();
+    corrupt
+        .execute("DELETE FROM objects WHERE generation=?1 AND id=x'02'", [g])
+        .unwrap();
+
+    let error = SearchIndex::load(&db).err().unwrap();
+    assert_eq!(error.to_string(), "路径缺少文件对象");
+}
+
+#[test]
 fn interrupted_successor_keeps_old_searchable_generation_and_reports_failure() {
     let dir = tempfile::tempdir().unwrap();
     let mut db = Volume::create(&dir.path().join("v.sqlite"), "{}").unwrap();

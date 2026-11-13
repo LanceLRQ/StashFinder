@@ -108,20 +108,23 @@ impl Volume {
 
     pub fn open(path: &Path) -> Result<Self> {
         let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-        ensure!(
-            matches!(
-                db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
-                1..=5
-            ),
-            "不支持的分区库版本"
-        );
-        ensure!(
-            db.query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))? == "ok",
-            "分区库损坏"
-        );
+        Self::open_connection(db, true)
+    }
+
+    pub(crate) fn open_connection(db: Connection, check: bool) -> Result<Self> {
+        let version = db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?;
+        ensure!(matches!(version, 1..=5), "不支持的分区库版本");
+        if check || version < 5 {
+            ensure!(
+                db.query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))? == "ok",
+                "分区库损坏"
+            );
+        }
         configure(&db)?;
         let mut volume = Self { db };
-        volume.migrate()?;
+        if version < 5 {
+            volume.migrate()?;
+        }
         Ok(volume)
     }
 

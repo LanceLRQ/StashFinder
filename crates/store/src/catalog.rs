@@ -270,7 +270,7 @@ impl Catalog {
         let path = self.volume_path(&row.filesystem_id)?;
         row.state = "ready".into();
         let child = if path.exists() {
-            self.open_owned(&row)?
+            self.open_owned(&row)?.0
         } else {
             Volume::create(&path, &serde_json::to_string(&row)?)?
         };
@@ -306,22 +306,28 @@ impl Catalog {
             .into_iter()
             .find(|r| r.filesystem_id == filesystem)
             .context("登记不存在")?;
+        self.open_volume(&row).map(|_| ())
+    }
+
+    pub fn open_volume(&self, row: &Registration) -> Result<Volume> {
         ensure!(
             matches!(row.state.as_str(), "ready" | "historical"),
             "登记初始化未完成，可重试"
         );
-        let child = self.open_owned(&row)?;
-        let saved: Registration = serde_json::from_str(&child.manifest()?)?;
+        let (child, saved) = self.open_owned(row)?;
         ensure!(
             saved.revision == row.revision && saved.name == row.name,
             "名称恢复副本尚未同步，请刷新重试"
         );
-        Ok(())
+        Ok(child)
     }
 
-    fn open_owned(&self, row: &Registration) -> Result<Volume> {
+    fn open_owned(&self, row: &Registration) -> Result<(Volume, Registration)> {
         let path = self.volume_path(&row.filesystem_id)?;
-        let saved: Registration = serde_json::from_str(&Volume::inspect_manifest(&path)?)?;
+        let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let manifest: String =
+            db.query_row("SELECT value FROM manifest WHERE id=1", [], |r| r.get(0))?;
+        let saved: Registration = serde_json::from_str(&manifest)?;
         ensure!(
             saved.filesystem_id == row.filesystem_id
                 && saved.partition_id == row.partition_id
@@ -329,17 +335,22 @@ impl Catalog {
                 && saved.observation.identity == row.observation.identity,
             "分区库归属不一致"
         );
-        Volume::open(&path)
+        // Ordinary reads validate ownership and let SQLite report errors on the pages they use.
+        // Recovery and schema migration still run a full quick_check.
+        Ok((Volume::open_connection(db, false)?, saved))
     }
 
     fn sync_manifest(&self, row: &Registration) -> Result<()> {
-        let child = self.open_owned(row)?;
-        let saved: Registration = serde_json::from_str(&child.manifest()?)?;
+        let (child, saved) = self.open_owned(row)?;
         ensure!(
             saved.revision <= row.revision,
             "分区配置版本高于资产库，需要恢复"
         );
-        child.set_manifest(&serde_json::to_string(row)?)
+        let value = serde_json::to_string(row)?;
+        if value != serde_json::to_string(&saved)? {
+            child.set_manifest(&value)?;
+        }
+        Ok(())
     }
 
     pub fn rename(&mut self, partition: &str, name: &str) -> Result<()> {
@@ -359,12 +370,11 @@ impl Catalog {
     pub fn observe(&mut self, partition: &str, observation: &Observation) -> Result<bool> {
         let mut row = self.get(partition)?;
         ensure!(row.state == "ready", "历史记录不能自动更新");
-        self.health(&row.filesystem_id)?;
         ensure!(
             row.observation.identity.compare(&observation.identity) == IdentityMatch::Same,
             "分区身份未确认"
         );
-        let child = Volume::open(&self.volume_path(&row.filesystem_id)?)?;
+        let child = self.open_volume(&row)?;
         // Capacity and the recovery manifest are one short, opportunistic write.
         // Do not compete with an index transaction or expose its lock as device failure.
         child.db.busy_timeout(std::time::Duration::ZERO)?;

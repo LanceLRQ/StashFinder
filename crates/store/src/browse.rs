@@ -36,8 +36,10 @@ pub(crate) fn filter_clause(db: &Connection, rule: Option<&FileFilter>) -> Resul
                     folded_parent: "",
                     kind: &kind,
                     size: ctx.get::<Option<i64>>(2)?.map(|size| size as u64),
-                    created: decode_time_value(ctx.get(3)?).map_err(sql_error)?,
-                    modified: decode_time_value(ctx.get(4)?).map_err(sql_error)?,
+                    created: decode_time_value(ctx.get::<Option<Vec<u8>>>(3)?.as_deref())
+                        .map_err(sql_error)?,
+                    modified: decode_time_value(ctx.get::<Option<Vec<u8>>>(4)?.as_deref())
+                        .map_err(sql_error)?,
                 },
                 &[],
             )

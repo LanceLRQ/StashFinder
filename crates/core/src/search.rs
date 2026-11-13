@@ -3,6 +3,7 @@ use anyhow::{Context, Result, bail, ensure};
 use chrono::{Datelike, Duration, Local, NaiveDate, TimeZone};
 use pcre2::bytes::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -454,18 +455,13 @@ impl Text {
             };
             return Ok(path.contains(&self.value));
         }
-        let path;
-        if filename {
-            path = r.name.to_owned();
+        let path = if filename || r.parent.is_empty() && self.target < 3 {
+            Cow::Borrowed(r.name)
         } else if self.target == 3 || self.target == 4 {
-            path = r.parent.into();
+            Cow::Borrowed(r.parent)
         } else {
-            path = if r.parent.is_empty() {
-                r.name.into()
-            } else {
-                format!("{}\\{}", r.parent, r.name)
-            };
-        }
+            Cow::Owned(format!("{}\\{}", r.parent, r.name))
+        };
         if drive {
             if names_only && self.target == 0 {
                 return Ok(false);
@@ -493,9 +489,9 @@ impl Text {
                 .context("正则匹配超过资源限制或执行失败");
         }
         let s = if self.case {
-            s.into()
+            Cow::Borrowed(s)
         } else {
-            s.to_lowercase()
+            Cow::Owned(s.to_lowercase())
         };
         Ok(if self.target == 3 || self.mode == MatchMode::WholeName {
             s == self.value

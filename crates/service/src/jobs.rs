@@ -11,7 +11,6 @@ use stashfinder_store::{
         SearchIndex,
         query::{ResultSet, Source},
     },
-    volume::Volume,
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -92,10 +91,12 @@ impl Indexes {
                             {
                                 return Ok(Some(index));
                             }
-                            catalog.health(&asset.registration.filesystem_id)?;
-                            let db = Volume::open(
-                                &catalog.volume_path(&asset.registration.filesystem_id)?,
-                            )?;
+                            let row = catalog.get(partition)?;
+                            ensure!(
+                                row.filesystem_id == asset.registration.filesystem_id,
+                                "搜索分区的文件系统已变化"
+                            );
+                            let db = catalog.open_volume(&row)?;
                             let index =
                                 SearchIndex::load_cancelled(&db, &job.cancel)?.map(Arc::new);
                             Ok(index.map(|index| {

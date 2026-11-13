@@ -23,6 +23,43 @@ fn removing_a_partition_removes_only_its_catalog_and_index_and_allows_registrati
 }
 
 #[test]
+fn opening_a_registered_volume_checks_ownership_and_recovery_revision() {
+    let root = tempfile::tempdir().unwrap();
+    let mut catalog = Catalog::open(root.path()).unwrap();
+    let row = catalog.prepare(&observed("a"), "A").unwrap();
+    assert!(catalog.open_volume(&row).is_err());
+    catalog.finish(&row.partition_id).unwrap();
+    let row = catalog.get(&row.partition_id).unwrap();
+    let child = catalog.open_volume(&row).unwrap();
+    let mut foreign = row.clone();
+    foreign.partition_id = "foreign".into();
+    child
+        .set_manifest(&serde_json::to_string(&foreign).unwrap())
+        .unwrap();
+    assert!(
+        catalog
+            .open_volume(&row)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("归属不一致")
+    );
+    let mut stale = row.clone();
+    stale.name = "Old name".into();
+    child
+        .set_manifest(&serde_json::to_string(&stale).unwrap())
+        .unwrap();
+    assert!(
+        catalog
+            .open_volume(&row)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("恢复副本")
+    );
+}
+
+#[test]
 fn read_only_catalog_does_not_initialize_pending_children() {
     let root = tempfile::tempdir().unwrap();
     let mut catalog = Catalog::open(root.path()).unwrap();

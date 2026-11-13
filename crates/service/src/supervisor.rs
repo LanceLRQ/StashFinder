@@ -543,8 +543,7 @@ impl Shared {
     fn load(&self, partition: &str) -> Result<Volume> {
         let catalog = Catalog::read(&self.root)?;
         let row = catalog.get(partition)?;
-        catalog.health(&row.filesystem_id)?;
-        Volume::open(&catalog.volume_path(&row.filesystem_id)?)
+        catalog.open_volume(&row)
     }
     fn publish(&self, partition: &str, db: &Volume) -> Result<()> {
         let status = db.index_status()?;

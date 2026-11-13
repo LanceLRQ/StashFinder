@@ -212,6 +212,13 @@ impl ResultSet {
             result.rows = kept;
         }
         let sources = &result.sources;
+        let folded_partitions = (options.sort == SortField::Partition && !options.case_sensitive)
+            .then(|| {
+                sources
+                    .iter()
+                    .map(|source| source.name.to_lowercase())
+                    .collect::<Vec<_>>()
+            });
         sort(
             &mut result.rows,
             |a, b| {
@@ -223,16 +230,23 @@ impl ResultSet {
                     SortField::Name => ra
                         .name_key(options.case_sensitive)
                         .cmp(rb.name_key(options.case_sensitive)),
-                    SortField::Path => text_cmp(
-                        &sa.index.directories[sa.index.entries[a.entry as usize].parent],
-                        &sb.index.directories[sb.index.entries[b.entry as usize].parent],
-                        options.case_sensitive,
-                    )
+                    SortField::Path => {
+                        let ap = sa.index.entries[a.entry as usize].parent;
+                        let bp = sb.index.entries[b.entry as usize].parent;
+                        if options.case_sensitive {
+                            sa.index.directories[ap].cmp(&sb.index.directories[bp])
+                        } else {
+                            sa.index.folded_directories[ap].cmp(&sb.index.folded_directories[bp])
+                        }
+                    }
                     .then_with(|| {
                         ra.name_key(options.case_sensitive)
                             .cmp(rb.name_key(options.case_sensitive))
                     }),
-                    SortField::Partition => text_cmp(&sa.name, &sb.name, options.case_sensitive),
+                    SortField::Partition => folded_partitions.as_ref().map_or_else(
+                        || sa.name.cmp(&sb.name),
+                        |names| names[a.source as usize].cmp(&names[b.source as usize]),
+                    ),
                     SortField::Group => a.group.cmp(&b.group),
                     SortField::Extension => {
                         extension(if ra.kind == "file" { &ra.folded } else { "" })
@@ -315,13 +329,6 @@ impl ResultSet {
         })
     }
 }
-fn text_cmp(a: &str, b: &str, case: bool) -> Cmp {
-    if case {
-        a.cmp(b)
-    } else {
-        a.to_lowercase().cmp(&b.to_lowercase())
-    }
-}
 fn number_cmp(a: &Option<u64>, b: &Option<u64>, descending: bool) -> Cmp {
     match (a, b) {
         (None, None) => Cmp::Equal,
@@ -356,6 +363,10 @@ fn sort(rows: &mut Vec<Row>, compare: impl Fn(Row, Row) -> Cmp, cancel: &AtomicB
         chunk.sort_unstable_by(|a, b| compare(*a, *b));
     }
     let mut width = 2048;
+    if rows.len() <= width {
+        ensure!(!cancel.load(Ordering::Relaxed), "搜索已取消");
+        return Ok(());
+    }
     let mut buffer = vec![Row::default(); rows.len()];
     while width < rows.len() {
         for start in (0..rows.len()).step_by(width * 2) {
