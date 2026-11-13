@@ -230,6 +230,37 @@ test("coalesces rapid input and submits immediately on Enter", async () => {
   expect(starts()).toEqual(["initial", "dll"]);
 });
 
+test("keeps previous rows visible but inactive until a replacement search completes", async () => {
+  vi.useFakeTimers();
+  const fixture = refreshFixture();
+  render(<Search partitions={[]} />);
+  await tick(0);
+  const input = screen.getByRole("searchbox");
+  const oldRow = screen.getByText("query-1-0.txt").closest("tr")!;
+  fireEvent.contextMenu(oldRow);
+  expect(screen.getByRole("menu")).toBeTruthy();
+
+  fixture.delay = (id) => (id === 2 ? 400 : 0);
+  fireEvent.change(input, { target: { value: "new" } });
+  await tick(75);
+  expect(screen.getByText("正在搜索…")).toBeTruthy();
+  expect(screen.getByText("query-1-0.txt").closest("tr")).toBe(oldRow);
+  expect(oldRow.closest("[inert]")).toBeTruthy();
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.queryByText(/已选择/)).toBeNull();
+
+  await tick(400);
+  expect(screen.queryByText("query-1-0.txt")).toBeNull();
+  expect(screen.getByText("query-2-0.txt").closest("[inert]")).toBeNull();
+  expect(fixture.cancels).toContain(1);
+
+  fixture.fail = true;
+  fireEvent.change(input, { target: { value: "failed" } });
+  await tick(75);
+  expect(screen.getByRole("alert").textContent).toBe("索引暂时不可用");
+  expect(screen.queryByText("query-2-0.txt")).toBeNull();
+});
+
 test("waits for the first page without a client-side polling delay", async () => {
   vi.useFakeTimers();
   const batches: { wait_ms?: number }[] = [];

@@ -367,7 +367,11 @@ export default function Search({
     void release(ids).catch(() => {});
     const message = String(e).replace(/^Error: /, "");
     if (background) setRefreshError(message);
-    else setError(message);
+    else {
+      setTotal(0);
+      setCache(new Map());
+      setError(message);
+    }
     setBusy(false);
     setRefreshing(false);
   }
@@ -382,8 +386,6 @@ export default function Search({
     setRefreshing(false);
     setError("");
     setRefreshError("");
-    setTotal(0);
-    setCache(new Map());
     setRestore(null);
     setSelection([]);
     selectedSnapshot.current = null;
@@ -589,7 +591,12 @@ export default function Search({
     sameParent,
     singleFile: count === 1 && selectedRow?.file.kind === "file",
     folder: count === 1 && selectedRow?.file.kind === "folder",
-    blocked: busy || refreshing || editing !== null || queryId.current === null,
+    blocked:
+      busy ||
+      composing ||
+      refreshing ||
+      editing !== null ||
+      queryId.current === null,
   };
   const dispatch = useFileCommands(
     facts,
@@ -701,7 +708,11 @@ export default function Search({
           ))}
         </details>
       )}
-      <div className="search-body" onClick={() => setMenu(null)}>
+      <div
+        className="search-body"
+        inert={total > 0 && (busy || composing)}
+        onClick={() => setMenu(null)}
+      >
         <VirtualResults
           overlay={
             !busy &&
