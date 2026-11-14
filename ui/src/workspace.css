@@ -166,12 +166,8 @@
   z-index: 26;
 }
 .app-menu-arrow {
-  width: 6px;
-  height: 6px;
-  border-block-start: 1px solid currentColor;
-  border-inline-end: 1px solid currentColor;
-  transform: rotate(45deg);
-  margin-inline-end: 4px;
+  width: 14px;
+  height: 14px;
 }
 .app-menu-group > button {
   padding: 5px 11px;
@@ -200,9 +196,10 @@
   box-shadow: var(--ui-popup-shadow);
 }
 .app-menu-popup button {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
+  display: grid;
+  grid-template-columns: 1em minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 6px;
   width: 100%;
   padding: 6px 10px;
   border: 0;
@@ -219,19 +216,32 @@
   color: #697685;
   cursor: default;
 }
-.app-menu-popup button span {
+.app-menu-check,
+.app-menu-label,
+.app-menu-shortcut,
+.app-menu-arrow {
+  grid-row: 1;
+}
+.app-menu-check {
+  grid-column: 1;
+  justify-self: center;
+}
+.app-menu-label {
+  grid-column: 2;
+}
+.app-menu-shortcut,
+.app-menu-arrow {
+  grid-column: 3;
+  justify-self: end;
+  margin-inline-start: 12px;
+}
+.app-menu-shortcut {
   color: #566476;
 }
 .app-menu button:focus-visible,
 .app-menu-popup:focus-visible {
   outline: 2px solid #315c9b;
   outline-offset: -2px;
-}
-.app-menu-popup .menu-check {
-  display: inline-grid;
-  grid-template-columns: 1em auto;
-  gap: 6px;
-  color: inherit;
 }
 @media (forced-colors: active) {
   .workspace-tab.is-active {

@@ -4,6 +4,42 @@ import AppMenu from "./AppMenu";
 
 afterEach(cleanup);
 
+test("uses the same label slot for commands, checkboxes and submenu triggers", () => {
+  const run = vi.fn();
+  render(
+    <AppMenu
+      groups={[
+        {
+          label: "查看",
+          accessKey: "v",
+          sections: [
+            [
+              { label: "刷新当前页", run, shortcut: "F5" },
+              { label: "预览窗格", run, checked: false },
+              { label: "布局", sections: [[{ label: "详情", run }]] },
+              { label: "显示状态栏", run, checked: true },
+            ],
+          ],
+        },
+      ]}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "查看" }));
+  for (const [role, name] of [
+    ["menuitem", "刷新当前页"],
+    ["menuitemcheckbox", "预览窗格"],
+    ["menuitem", "布局"],
+    ["menuitemcheckbox", "显示状态栏"],
+  ]) {
+    const item = screen.getByRole(role, { name });
+    const label = item.querySelector(":scope > .app-menu-label");
+    expect(label?.textContent).toBe(name);
+  }
+  expect(
+    screen.getByRole("menuitemcheckbox", { name: "显示状态栏", checked: true }),
+  ).toBeTruthy();
+});
+
 test("enters and leaves a submenu one level at a time", () => {
   const run = vi.fn();
   render(

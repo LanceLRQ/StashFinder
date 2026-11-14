@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import WorkspaceIcon from "./WorkspaceIcon";
 
 export type MenuCommand = {
   id?: string;
@@ -231,15 +232,17 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
           item.run();
         }}
       >
-        {item.checked === undefined ? (
-          item.label
-        ) : (
-          <span className="menu-check">
-            <span aria-hidden="true">{item.checked ? "✓" : ""}</span>
-            {item.label}
+        {item.checked && (
+          <span className="app-menu-check" aria-hidden="true">
+            ✓
           </span>
         )}
-        {item.shortcut && <span aria-hidden="true">{item.shortcut}</span>}
+        <span className="app-menu-label">{item.label}</span>
+        {item.shortcut && (
+          <span className="app-menu-shortcut" aria-hidden="true">
+            {item.shortcut}
+          </span>
+        )}
       </button>
     );
   }
@@ -308,8 +311,11 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
                         if (!item.disabled) setChild(item.label);
                       }}
                     >
-                      {item.label}
-                      <span className="app-menu-arrow" aria-hidden="true" />
+                      <span className="app-menu-label">{item.label}</span>
+                      <WorkspaceIcon
+                        name="chevronRight"
+                        className="app-menu-arrow"
+                      />
                     </button>
                     {child === item.label && !item.disabled && (
                       <div
