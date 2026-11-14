@@ -10,6 +10,8 @@ export type FileColumnId =
   | DirectorySortField
   | "partition"
   | "status"
+  | "link_type"
+  | "index_status"
   | "group";
 export type FileColumn = {
   id: FileColumnId;
@@ -69,6 +71,8 @@ export const searchColumns: readonly FileColumn[] = [
   { id: "partition", label: "分区", width: 108, sortable: true },
   ...metadata,
   { id: "status", label: "状态", width: 150 },
+  { id: "link_type", label: "链接类型", width: 96, optional: true },
+  { id: "index_status", label: "索引状态", width: 124, optional: true },
   { id: "group", label: "重复组", width: 75, sortable: true },
 ];
 

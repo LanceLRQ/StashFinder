@@ -940,8 +940,12 @@ export default function Search({
         >
           <WorkspaceIcon name="filter" />
           筛选器
-          {filterActive && <span id={filterStatusId}>已启用</span>}
         </button>
+        {filterActive && (
+          <span id={filterStatusId} hidden>
+            已启用
+          </span>
+        )}
         {active && filterOpen && (
           <SearchFilters
             mode={filterOpen}
@@ -1127,7 +1131,6 @@ export default function Search({
                     : undefined
                 }
                 location={location}
-                badge={r?.hard_link ? "硬链接" : undefined}
                 onClick={(e) => {
                   if (suppressClick.current) {
                     suppressClick.current = false;
@@ -1186,37 +1189,33 @@ export default function Search({
                     <td colSpan={detailColumns.length}>正在读取…</td>
                   ) : (
                     detailColumns.slice(1).map(({ id }) => {
-                      if (id === "status") {
-                        const state =
-                          connectionLabel[r.connection] || "状态未确认";
-                        const note = r.partial
-                          ? "未完成记录"
-                          : r.needs_validation
-                            ? "索引待校验"
-                            : "";
-                        return (
-                          <td
-                            key={id}
-                            title={note ? `${state} · ${note}` : state}
-                          >
-                            <span>{state}</span>
-                            {note && (
-                              <>
-                                {" "}
-                                · <span>{note}</span>
-                              </>
-                            )}
-                          </td>
-                        );
+                      let text: string;
+                      switch (id) {
+                        case "path":
+                          text = path;
+                          break;
+                        case "partition":
+                          text = r.partition_name;
+                          break;
+                        case "status":
+                          text = connectionLabel[r.connection] || "状态未确认";
+                          break;
+                        case "link_type":
+                          text = r.hard_link ? "硬链接" : "—";
+                          break;
+                        case "index_status":
+                          text = r.partial
+                            ? "未完成记录"
+                            : r.needs_validation
+                              ? "索引待校验"
+                              : "—";
+                          break;
+                        case "group":
+                          text = String(r.duplicate_group || "—");
+                          break;
+                        default:
+                          text = fileColumnText(r.file, id);
                       }
-                      const text =
-                        id === "path"
-                          ? path
-                          : id === "partition"
-                            ? r.partition_name
-                            : id === "group"
-                              ? String(r.duplicate_group || "—")
-                              : fileColumnText(r.file, id);
                       return (
                         <td
                           key={id}

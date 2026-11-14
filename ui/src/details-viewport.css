@@ -113,11 +113,6 @@
 .marquee-details tr[aria-selected="true"] {
   background: var(--ui-selected);
 }
-.marquee-details .file-entry-badge {
-  display: inline;
-  margin: 0 0 0 4px;
-  color: #647082;
-}
 .details-viewport .marquee-details input.file-rename-input {
   box-sizing: border-box;
   height: 24px;

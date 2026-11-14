@@ -63,6 +63,8 @@ A candidate group needs two distinct file objects. Multiple hard links alone do 
 
 ## Large results
 
+Right-click a search result column header in Details view to show the optional Link type and Index status columns. They show hard links and records that need validation or are incomplete. The Status column shows partition connectivity.
+
 After a search completes, choose File → Export search results or press Ctrl+S to save the selection or all matches as UTF-8 CSV. Export preserves the result order and includes unloaded rows and offline records. Paths are volume-relative, times are UTC, and unknown fields are blank.
 
 Column headers and filters sort the complete result set; unknown numeric values remain last. The UI loads a bounded viewport window instead of creating millions of DOM rows. Ctrl/Shift selection crosses pages, and Ctrl+A selects the entire query result. Context actions can browse a result's parent in a new tab.

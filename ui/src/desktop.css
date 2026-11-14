@@ -253,11 +253,6 @@ input[type="radio"] {
   background: var(--ui-selected);
   color: var(--ui-accent);
 }
-.search-filter-button span {
-  padding-inline-start: 6px;
-  border-inline-start: 1px solid currentColor;
-  font-size: 11px;
-}
 .desktop .search-results {
   min-height: 0;
   max-height: none;

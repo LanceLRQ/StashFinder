@@ -16,7 +16,6 @@ export default function FileListItem({
   connection,
   editing,
   location,
-  badge,
   children,
   ...events
 }: HTMLAttributes<HTMLElement> & {
@@ -33,7 +32,6 @@ export default function FileListItem({
     onCancel: () => void;
   };
   location?: string;
-  badge?: string;
 }) {
   const grid = view === "details" ? undefined : thumbnailLayouts[view];
   const Item = grid ? "div" : "tr";
@@ -102,7 +100,6 @@ export default function FileListItem({
             <td title={file.name}>
               {icon}
               {name}
-              {badge && <small className="file-entry-badge">{badge}</small>}
             </td>
           )}
           {children}

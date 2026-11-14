@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
@@ -13,6 +14,7 @@ import Search from "./Search";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.useRealTimers();
   vi.resetAllMocks();
 });
@@ -25,6 +27,7 @@ const hit = {
   generation: 1,
   partial: false,
   needs_validation: false,
+  hard_link: false,
   indexed_at: 1700000000,
   file: {
     entry: [2],
@@ -109,6 +112,45 @@ test("shows offline relative paths, unknown metadata and bounded results without
   expect(screen.queryByRole("button", { name: "打开" })).toBeNull();
 });
 
+test.each([
+  [false, "索引待校验"],
+  [true, "未完成记录"],
+])(
+  "shows link type and index state only in enabled detail columns (partial=%s)",
+  async (partial, indexState) => {
+    mockPage({
+      ...page,
+      row: { ...hit, hard_link: true, needs_validation: true, partial },
+    });
+    const view = render(<Search partitions={[]} />);
+    const row = within((await screen.findByText("movie.txt")).closest("tr")!);
+    expect(row.getByRole("cell", { name: "movie.txt" })).toBeTruthy();
+    expect(row.getByRole("cell", { name: "离线" })).toBeTruthy();
+    expect(row.queryByText("硬链接")).toBeNull();
+    expect(row.queryByText(indexState)).toBeNull();
+
+    for (const [column, value] of [
+      ["链接类型", "硬链接"],
+      ["索引状态", indexState],
+    ]) {
+      expect(screen.queryByRole("columnheader", { name: column })).toBeNull();
+      fireEvent.contextMenu(screen.getByRole("button", { name: "按名称排序" }));
+      const menu = within(screen.getByRole("menu", { name: "详情列" }));
+      fireEvent.click(
+        menu.getByRole("menuitemcheckbox", { name: column, checked: false }),
+      );
+      expect(screen.getByRole("columnheader", { name: column })).toBeTruthy();
+      expect(row.getByRole("cell", { name: value })).toBeTruthy();
+    }
+
+    view.unmount();
+    render(<Search partitions={[]} />);
+    await screen.findByText("movie.txt");
+    expect(screen.getByRole("columnheader", { name: "链接类型" })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "索引状态" })).toBeTruthy();
+  },
+);
+
 test("sends filename and partition filters, and distinguishes errors from empty results", async () => {
   mockPage({ ...page, row: null, more: false, error: "索引不可用" });
   render(
@@ -120,13 +162,16 @@ test("sends filename and partition filters, and distinguishes errors from empty 
   );
   expect(screen.queryByText("没有匹配的文件")).toBeNull();
   const filterButton = screen.getByRole("button", { name: "筛选器" });
-  expect(filterButton.hasAttribute("aria-describedby")).toBe(false);
+  expect(
+    screen.queryByRole("button", { name: "筛选器", description: "已启用" }),
+  ).toBeNull();
   fireEvent.click(filterButton);
   fireEvent.click(screen.getByRole("checkbox", { name: "仅文件名" }));
   fireEvent.click(screen.getByRole("button", { name: "应用" }));
   expect(
     screen.getByRole("button", { name: "筛选器", description: "已启用" }),
   ).toBe(filterButton);
+  expect(filterButton.textContent).toBe("筛选器");
   fireEvent.change(screen.getByRole("combobox", { name: "分区范围" }), {
     target: { value: "p" },
   });
@@ -177,6 +222,8 @@ test("late pages cannot overwrite a newer query, and previous query is cancelled
   await waitFor(() => expect(resolveOld).toBeTruthy());
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "new" } });
   expect(await screen.findByText("new.txt")).toBeTruthy();
+  fireEvent.contextMenu(screen.getByRole("button", { name: "按名称排序" }));
+  fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "索引状态" }));
   expect(invoke).toHaveBeenCalledWith("index_request", {
     action: {
       search_start: expect.objectContaining({ text: "new", replaces: 1 }),
