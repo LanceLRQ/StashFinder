@@ -75,6 +75,15 @@ test("registration shows eligible and registered cards without editable names", 
     within(dialog).getByRole("checkbox", { name: "登记后自动建立索引" }),
   ).toHaveProperty("checked", true);
   expect(boxes[1]).toHaveProperty("disabled", true);
+  expect(boxes[1]).toHaveProperty("checked", false);
+  expect(boxes[1].getAttribute("aria-description")).toBe("已登记");
+  expect(
+    boxes[1].closest("label")?.querySelector('[title="已登记"] svg'),
+  ).toBeTruthy();
+  expect(within(dialog).queryByText("已登记")).toBeNull();
+  fireEvent.click(boxes[0]);
+  expect(boxes[0]).toHaveProperty("checked", true);
+  expect(within(dialog).getByText("已选 1 个分区")).toBeTruthy();
   expect(within(dialog).queryByRole("textbox")).toBeNull();
   expect(within(dialog).queryByText(/Z:/)).toBeNull();
   const actions = dialog.querySelector<HTMLElement>(".dialog-actions");

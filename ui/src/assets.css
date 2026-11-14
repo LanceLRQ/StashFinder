@@ -387,7 +387,7 @@
 .asset-dialog .candidate-card {
   align-items: center;
   gap: 10px;
-  padding: 9px 11px;
+  padding: 12px;
   cursor: pointer;
 }
 .asset-dialog .candidate-card:has(:disabled) {
@@ -395,18 +395,39 @@
   background: #f1f3f6;
   cursor: default;
 }
-.candidate-card input {
+.asset-dialog .candidate-card:has(.candidate-registered) {
+  border-color: var(--ui-control-border);
+  background: var(--ui-panel);
+}
+.candidate-card > input,
+.candidate-registered {
+  order: 1;
   flex: 0 0 auto;
   margin: 0;
 }
+.candidate-registered {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--ui-control-border);
+  border-radius: 50%;
+  background: var(--ui-selected);
+  color: var(--ui-accent);
+}
+@media (forced-colors: active) {
+  .candidate-registered {
+    color: Highlight;
+    border-color: Highlight;
+  }
+}
 .candidate-card:has(:focus-visible) {
-  outline: 2px solid #4a78a8;
+  outline: 2px solid var(--ui-accent);
   outline-offset: 2px;
 }
 .candidate-copy {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
+  display: grid;
+  gap: 2px;
   min-width: 0;
   flex: 1;
 }
@@ -424,14 +445,9 @@
   white-space: nowrap;
 }
 .candidate-copy small {
-  flex-shrink: 0;
+  margin: 0;
   white-space: nowrap;
   color: #59687c;
-}
-.asset-dialog .candidate-status {
-  flex-shrink: 0;
-  align-self: flex-start;
-  margin: 0;
 }
 
 @media (max-width: 670px) {

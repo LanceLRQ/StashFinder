@@ -651,6 +651,10 @@ export default function Assets({
                   <label key={id} className="candidate-card">
                     <input
                       type="checkbox"
+                      className={candidate.registered ? "sr-only" : undefined}
+                      aria-description={
+                        candidate.registered ? "已登记" : undefined
+                      }
                       disabled={disabled || !!candidate.registered}
                       checked={!candidate.registered && id in selected}
                       onChange={(event) => {
@@ -682,7 +686,13 @@ export default function Assets({
                       </small>
                     </span>
                     {candidate.registered && (
-                      <small className="candidate-status">已登记</small>
+                      <span
+                        className="candidate-registered"
+                        title="已登记"
+                        aria-hidden="true"
+                      >
+                        <WorkspaceIcon name="check" />
+                      </span>
                     )}
                   </label>
                 );
