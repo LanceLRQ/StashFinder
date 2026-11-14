@@ -12,6 +12,7 @@ import FileList from "./FileList";
 import { fileViewOptions, type FileView } from "./file-view";
 import FileDetails from "./FileDetails";
 import FileContextMenu from "./FileContextMenu";
+import WorkspaceIcon from "./WorkspaceIcon";
 import { FileStatusBar, useFileOperations } from "./FileOperations";
 import {
   fileKey,
@@ -584,6 +585,7 @@ export default function BrowsePane({
       }}
     >
       <div className="browse-toolbar">
+        <WorkspaceIcon name="search" className="search-field-icon" />
         <input
           type="search"
           aria-label="搜索文件或路径"

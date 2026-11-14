@@ -40,6 +40,10 @@
 }
 .search-summary {
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.search-pending {
+  color: var(--ui-accent);
 }
 .search-results {
   border: 1px solid #d4d9d2;

@@ -93,7 +93,9 @@ test("searches on Enter and puts counts in the footer", async () => {
   vi.mocked(invoke).mockResolvedValue(snapshot());
   const { container } = render(<Assets onSearch={search} />);
   await screen.findByRole("button", { name: "登记分区…" });
-  const field = screen.getByPlaceholderText("输入关键词，按 Enter 搜索");
+  const field = screen.getByRole("searchbox", { name: "搜索所有文件" });
+  expect(field.getAttribute("aria-description")).toBe("按 Enter 搜索");
+  expect(within(field.closest("form")!).getByText("Enter").tagName).toBe("KBD");
   fireEvent.change(field, { target: { value: "movie" } });
   fireEvent.submit(field.closest("form")!);
   expect(search).toHaveBeenCalledWith("movie");

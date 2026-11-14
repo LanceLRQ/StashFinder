@@ -389,13 +389,16 @@ export default function Assets({
               if (text) onSearch(text);
             }}
           >
+            <WorkspaceIcon name="search" className="search-field-icon" />
             <input
               type="search"
               aria-label="搜索所有文件"
-              placeholder="输入关键词，按 Enter 搜索"
+              aria-description="按 Enter 搜索"
+              placeholder="搜索文件名或路径…"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
+            <kbd aria-hidden="true">Enter</kbd>
           </form>
         )}
         <button

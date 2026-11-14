@@ -135,23 +135,31 @@
   align-items: flex-start;
   gap: 13px;
   min-width: 0;
-  border: 1px solid #d6dfe9;
-  border-radius: 6px;
-  background: #fff;
+  border: 1px solid var(--ui-line);
+  border-radius: 10px;
+  background: var(--ui-surface);
   padding: 14px;
   text-align: left;
 }
 
 .assets-app .disk-card:hover,
 .asset-dialog .candidate-card:hover:not(:has(:disabled)) {
-  border-color: #9fb6cf;
-  background: #f5f9ff;
+  border-color: var(--ui-control-border);
+  background: var(--ui-panel);
 }
 
 .assets-app .disk-card[aria-pressed="true"],
 .asset-dialog .candidate-card:has(:checked) {
-  border-color: #4a78a8;
-  background: #edf5ff;
+  border-color: var(--ui-accent);
+  background: var(--ui-selected);
+}
+
+@media (forced-colors: active) {
+  .assets-app .disk-card[aria-pressed="true"],
+  .asset-dialog .candidate-card:has(:checked) {
+    outline: 1px solid Highlight;
+    outline-offset: -2px;
+  }
 }
 
 .disk-card > svg,
@@ -214,22 +222,22 @@
 }
 
 .disk-card meter::-webkit-meter-bar {
-  background: #e5ecf5;
+  background: var(--ui-chrome);
   border: 0;
-  border-radius: 2px;
+  border-radius: 3px;
   height: 6px;
 }
 
 .disk-card meter::-webkit-meter-optimum-value {
-  background: #4d80b6;
+  background: var(--ui-accent);
 }
 
 .asset-details {
   flex: 0 0 clamp(245px, 29%, 330px);
   overflow: auto;
   padding: 20px;
-  border-left: 1px solid #dce1e7;
-  background: #f8fafc;
+  border-left: 1px solid var(--ui-line);
+  background: var(--ui-panel);
 }
 
 .asset-details h2 {
@@ -280,6 +288,7 @@
 .asset-details dd {
   margin: 0;
   overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
 }
 
 .asset-detail-actions {

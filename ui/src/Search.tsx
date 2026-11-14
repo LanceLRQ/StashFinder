@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { indexRequest, type SearchHit, type SearchPage } from "./index-api";
 import { connectionLabel } from "./browse-api";
 import { fileColumnText, searchColumns, sortCommands } from "./file-columns";
@@ -30,6 +37,7 @@ import { virtualWindow, type ViewportLayout } from "./DetailsViewport";
 import { fileViewOptions, thumbnailLayouts, type FileView } from "./file-view";
 import { inSpans, rectangleSpans, toggleSpans } from "./marquee";
 import FileContextMenu from "./FileContextMenu";
+import WorkspaceIcon from "./WorkspaceIcon";
 import FileListItem from "./FileListItem";
 import type { Asset } from "./asset-api";
 import type { PartitionIndexes } from "./task-api";
@@ -168,6 +176,7 @@ export default function Search({
   const [filterOpen, setFilterOpen] = useState<"search" | "save" | false>(
     false,
   );
+  const filterStatusId = useId();
   const filterActive =
     hasFileFilter(filter.rule) ||
     namesOnly !== !includePath ||
@@ -872,6 +881,7 @@ export default function Search({
       )}
       {onBack && <button onClick={onBack}>硬盘管理</button>}
       <div className="search-toolbar">
+        <WorkspaceIcon name="search" className="search-field-icon" />
         <input
           ref={input}
           type="search"
@@ -924,9 +934,13 @@ export default function Search({
           type="button"
           aria-label="筛选器"
           aria-haspopup="dialog"
+          aria-describedby={filterActive ? filterStatusId : undefined}
+          className="search-filter-button"
           onClick={() => setFilterOpen("search")}
         >
-          {filterActive ? "筛选器 · 已启用" : "筛选器"}
+          <WorkspaceIcon name="filter" />
+          筛选器
+          {filterActive && <span id={filterStatusId}>已启用</span>}
         </button>
         {active && filterOpen && (
           <SearchFilters
@@ -984,6 +998,7 @@ export default function Search({
             !error &&
             !total && (
               <p className="search-empty-overlay" role="status">
+                <WorkspaceIcon name="search" />
                 没有匹配的文件
               </p>
             )
@@ -1263,7 +1278,10 @@ export default function Search({
       <FileStatusBar
         essential={
           busy || error ? (
-            <span className="search-summary" role="status">
+            <span
+              className={`search-summary ${busy ? "search-pending" : ""}`}
+              role="status"
+            >
               {busy ? "正在搜索…" : "搜索失败"}
             </span>
           ) : count > maxFileSelection ? (

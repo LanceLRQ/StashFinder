@@ -119,9 +119,14 @@ test("sends filename and partition filters, and distinguishes errors from empty 
     "索引不可用",
   );
   expect(screen.queryByText("没有匹配的文件")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "筛选器" }));
+  const filterButton = screen.getByRole("button", { name: "筛选器" });
+  expect(filterButton.hasAttribute("aria-describedby")).toBe(false);
+  fireEvent.click(filterButton);
   fireEvent.click(screen.getByRole("checkbox", { name: "仅文件名" }));
   fireEvent.click(screen.getByRole("button", { name: "应用" }));
+  expect(
+    screen.getByRole("button", { name: "筛选器", description: "已启用" }),
+  ).toBe(filterButton);
   fireEvent.change(screen.getByRole("combobox", { name: "分区范围" }), {
     target: { value: "p" },
   });

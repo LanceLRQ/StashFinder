@@ -9,12 +9,18 @@
   position: absolute;
   inset: 0;
   display: grid;
-  place-items: center;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
   margin: 0;
   padding: 16px;
-  background: rgb(248 250 252 / 35%);
-  color: #647082;
+  color: var(--ui-muted);
   pointer-events: none;
+}
+.search-empty-overlay svg {
+  width: 24px;
+  height: 24px;
+  color: var(--ui-accent);
 }
 .modal.search-filter-dialog {
   --modal-width: 640px;
