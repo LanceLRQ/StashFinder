@@ -208,12 +208,15 @@ export default function Settings({
               <label className="setting-row">
                 <span>
                   自动更新已登记分区
-                  <small>已在执行的任务会继续，关闭窗口不停止后台服务。</small>
+                  <small id="settings-sync-hint">
+                    关闭自动更新后，已在执行的任务会继续。
+                  </small>
                 </span>
                 <input
                   type="checkbox"
                   role="switch"
                   aria-label="自动更新已登记分区"
+                  aria-describedby="settings-sync-hint"
                   checked={tasks?.automatic ?? false}
                   disabled={!tasks || !!taskError || policySaving}
                   onChange={(e) =>
@@ -236,93 +239,91 @@ export default function Settings({
             </>
           )}
           {category === "general" && (
-            <>
-              <label className="setting-row">
-                <span>
-                  默认包含路径<small>用于下次打开的搜索页面。</small>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={draft.include_path}
-                  disabled={formDisabled}
-                  onChange={(e) =>
-                    setChanges({ ...changes, include_path: e.target.checked })
-                  }
-                  aria-label="默认包含路径"
-                />
-              </label>
-              <label className="setting-row">
-                显示状态栏
-                <input
-                  type="checkbox"
-                  checked={draft.show_status_bar ?? true}
-                  disabled={formDisabled}
-                  onChange={(e) =>
-                    setChanges({
-                      ...changes,
-                      show_status_bar: e.target.checked,
-                    })
-                  }
-                />
-              </label>
-              {(
-                [
-                  ["search_online_only", "新搜索默认仅在线"],
-                  ["search_include_history", "新搜索默认包含历史记录"],
-                  ["default_preview", "新标签默认显示预览窗格"],
-                ] as const
-              ).map(([key, label]) => (
-                <label className="setting-row" key={key}>
-                  {label}
-                  <input
-                    type="checkbox"
-                    checked={draft[key] ?? false}
+            <div className="settings-groups">
+              <fieldset className="settings-group">
+                <legend>搜索与筛选</legend>
+                {(
+                  [
+                    ["include_path", "默认包含路径"],
+                    ["search_online_only", "新搜索默认仅在线"],
+                    ["search_include_history", "新搜索默认包含历史记录"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label className="setting-row" key={key}>
+                    {label}
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      checked={draft[key] ?? false}
+                      disabled={formDisabled}
+                      onChange={(e) =>
+                        setChanges({ ...changes, [key]: e.target.checked })
+                      }
+                    />
+                  </label>
+                ))}
+                <label className="setting-row">
+                  浏览与新搜索默认筛选
+                  <select
                     disabled={formDisabled}
+                    value={selectedPreset ?? ""}
                     onChange={(e) =>
-                      setChanges({ ...changes, [key]: e.target.checked })
+                      setChanges({
+                        ...changes,
+                        browse_filter: e.target.value || null,
+                      })
                     }
-                  />
+                  >
+                    {availablePresets.map(({ id, name }) => (
+                      <option key={id ?? ""} value={id ?? ""}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
                 </label>
-              ))}
-              <label className="setting-row">
-                新标签默认布局
-                <select
-                  disabled={formDisabled}
-                  value={draft.default_view ?? "details"}
-                  onChange={(e) =>
-                    setChanges({
-                      ...changes,
-                      default_view: e.target
-                        .value as Preferences["default_view"],
-                    })
-                  }
-                >
-                  <option value="details">详情</option>
-                  <option value="large">大图标</option>
-                  <option value="medium">中图标</option>
-                  <option value="small">小图标</option>
-                </select>
-              </label>
-              <label className="setting-row">
-                浏览与新搜索默认筛选
-                <select
-                  disabled={formDisabled}
-                  value={selectedPreset ?? ""}
-                  onChange={(e) =>
-                    setChanges({
-                      ...changes,
-                      browse_filter: e.target.value || null,
-                    })
-                  }
-                >
-                  {availablePresets.map(({ id, name }) => (
-                    <option key={id ?? ""} value={id ?? ""}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </>
+              </fieldset>
+              <fieldset className="settings-group">
+                <legend>界面与布局</legend>
+                {(
+                  [
+                    ["show_status_bar", "显示状态栏"],
+                    ["default_preview", "新标签默认显示预览窗格"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label className="setting-row" key={key}>
+                    {label}
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      checked={draft[key] ?? defaultPreferences[key]}
+                      disabled={formDisabled}
+                      onChange={(e) =>
+                        setChanges({ ...changes, [key]: e.target.checked })
+                      }
+                    />
+                  </label>
+                ))}
+                <label className="setting-row">
+                  新标签默认布局
+                  <select
+                    disabled={formDisabled}
+                    value={draft.default_view ?? "details"}
+                    onChange={(e) =>
+                      setChanges({
+                        ...changes,
+                        default_view: e.target
+                          .value as Preferences["default_view"],
+                      })
+                    }
+                  >
+                    <option value="details">详情</option>
+                    <option value="large">大图标</option>
+                    <option value="medium">中图标</option>
+                    <option value="small">小图标</option>
+                  </select>
+                </label>
+              </fieldset>
+            </div>
           )}
           <div hidden={category !== "categories"}>
             <CategoryEditor

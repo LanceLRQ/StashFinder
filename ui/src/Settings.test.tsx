@@ -97,7 +97,19 @@ test("saves preferences, restores them on restart, and retains saved values on f
   });
   const view = render(<Desktop />);
   openSettings();
-  const include = screen.getByLabelText("默认包含路径");
+  const search = within(screen.getByRole("group", { name: "搜索与筛选" }));
+  const appearance = within(screen.getByRole("group", { name: "界面与布局" }));
+  const include = search.getByRole("switch", { name: "默认包含路径" });
+  expect(
+    search.getByRole("combobox", { name: "浏览与新搜索默认筛选" }),
+  ).toBeTruthy();
+  expect(appearance.getByRole("switch", { name: "显示状态栏" })).toHaveProperty(
+    "checked",
+    true,
+  );
+  expect(
+    appearance.getByRole("combobox", { name: "新标签默认布局" }),
+  ).toHaveProperty("value", "details");
   await waitFor(() => expect(include).toHaveProperty("disabled", false));
   fireEvent.click(include);
   expect(saved.include_path).toBe(true);
