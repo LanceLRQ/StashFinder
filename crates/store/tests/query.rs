@@ -80,6 +80,30 @@ fn result_visual_references_keep_the_query_snapshot_revision() {
 }
 
 #[test]
+fn reselects_the_same_entry_in_new_order_without_switching_to_a_hard_link() {
+    let options = QueryOptions::default();
+    let query = Query::compile("", false, &options).unwrap();
+    let run = |files: &[(&str, Option<u64>, u8)]| {
+        ResultSet::run(
+            vec![source("photos", files)],
+            &query,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap()
+    };
+    let old = run(&[("b.png", Some(10), 1), ("c.png", Some(10), 1)]);
+    let updated = run(&[
+        ("b.png", Some(20), 1),
+        ("c.png", Some(20), 1),
+        ("a.png", Some(10), 2),
+    ]);
+    assert_eq!(updated.reselect(&old, 1).unwrap(), Some(2));
+    let replaced = run(&[("b.png", Some(10), 1), ("c.png", Some(10), 3)]);
+    assert_eq!(replaced.reselect(&old, 1).unwrap(), None);
+}
+
+#[test]
 fn duplicates_are_filtered_globally_before_pagination_and_sorting() {
     let sources = vec![
         source(

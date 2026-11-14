@@ -297,6 +297,19 @@ async fn rename_over_real_pipe_survives_process_termination_and_restart() {
             assert!(std::time::Instant::now() < deadline);
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
+        let stashfinder_core::Response::SearchPosition(position) = request(
+            &name,
+            Action::SearchReselect {
+                id,
+                previous: id,
+                offset: 0,
+            },
+        )
+        .await
+        .unwrap() else {
+            panic!("search position missing")
+        };
+        assert_eq!(position, Some(0));
         drop(server);
     }
 }

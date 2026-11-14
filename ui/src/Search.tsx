@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -199,9 +200,22 @@ export default function Search({
   const [view, setView] = useState<FileView>(initialView);
   const grid = view === "details" ? undefined : thumbnailLayouts[view];
   const [selection, setSelection] = useState<number[]>([]);
-  const selectedSnapshot = useRef<{ index: number; hit: SearchHit } | null>(
-    null,
-  );
+  const latestSelection = useRef(selection);
+  useLayoutEffect(() => {
+    latestSelection.current = selection;
+  }, [selection]);
+  const count = useMemo(() => {
+    let total = 0;
+    for (let i = 0; i < selection.length; i += 2)
+      total += selection[i + 1] - selection[i];
+    return total;
+  }, [selection]);
+  const multipleSelected = count > 1;
+  const selectedSnapshot = useRef<{
+    index: number;
+    hit: SearchHit;
+    detail: SearchHit;
+  } | null>(null);
   const anchor = useRef(0);
   const cursor = useRef(0);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -219,6 +233,7 @@ export default function Search({
   const [refreshError, setRefreshError] = useState("");
   const [refreshWanted, setRefreshWanted] = useState(0);
   const handledRefresh = useRef(0);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
   const viewportPosition = useRef({
     logicalTop: 0,
     height: 500,
@@ -340,7 +355,7 @@ export default function Search({
     );
   }
 
-  async function load(token: number, background: boolean) {
+  async function load(token: number, background: boolean, manual = false) {
     const replaces = background ? null : replacedId.current;
     replacedId.current = null;
     const start = await indexRequest({
@@ -400,11 +415,54 @@ export default function Search({
           }
         }
         if (position !== viewportPosition.current) continue;
+        const selected = latestSelection.current;
+        const previous = queryId.current;
+        let nextIndex: number | null = null;
+        if (
+          selected.length &&
+          (selected.length !== 2 || selected[1] - selected[0] !== 1)
+        ) {
+          if (!manual) {
+            void release(invalidate(true)).catch(() => {});
+            setRefreshing(false);
+            setRefreshWanted((n) => n + 1);
+            return;
+          }
+        } else if (selected.length && previous !== null && page.total) {
+          const reply = await indexRequest({
+            search_reselect: { id, previous, offset: selected[0] },
+          });
+          if (token !== sequence.current) return;
+          if (reply.kind !== "search_position") throw Error("搜索选择响应无效");
+          nextIndex = reply.data;
+          if (nextIndex !== null && !rows.has(nextIndex)) {
+            const batch = await readBatch(id, nextIndex, 1);
+            if (token !== sequence.current) return;
+            if (!batch.rows[0]) throw Error("搜索结果分页不完整，请重试");
+            rows.set(nextIndex, batch.rows[0]);
+          }
+        }
+        if (
+          position !== viewportPosition.current ||
+          selected !== latestSelection.current
+        )
+          continue;
         nextCache = rows;
         setRestore({ logicalTop });
         anchor.current = cursor.current =
+          nextIndex ??
           Math.floor(logicalTop / position.layout.rowHeight) *
-          position.layout.columns;
+            position.layout.columns;
+        if (nextIndex === null) {
+          if (selected.length) setSelection([]);
+          selectedSnapshot.current = null;
+        } else {
+          if (manual) selectedSnapshot.current = null;
+          else if (selectedSnapshot.current)
+            selectedSnapshot.current.index = nextIndex;
+          if (nextIndex !== selected[0])
+            setSelection([nextIndex, nextIndex + 1]);
+        }
         break;
       }
     } else {
@@ -422,12 +480,11 @@ export default function Search({
     setMissing(page.missing);
     setUnavailable(page.unavailable);
     setCache(nextCache);
-    setSelection([]);
-    selectedSnapshot.current = null;
     setMenu(null);
     setError("");
     setBusy(false);
     setRefreshing(false);
+    setManualRefreshing(false);
   }
 
   function fail(token: number, e: unknown, background: boolean) {
@@ -447,6 +504,7 @@ export default function Search({
     }
     setBusy(false);
     setRefreshing(false);
+    setManualRefreshing(false);
   }
 
   useEffect(() => {
@@ -457,6 +515,7 @@ export default function Search({
     handledRefresh.current = refreshWanted;
     setBusy(true);
     setRefreshing(false);
+    setManualRefreshing(false);
     setError("");
     setRefreshError("");
     setRestore(null);
@@ -499,10 +558,11 @@ export default function Search({
       exportSnapshot !== null ||
       refreshing ||
       editing !== null ||
+      multipleSelected ||
       refreshWanted === handledRefresh.current
     )
       return;
-    let timer: number;
+    let timer = window.setTimeout(startWhenStill, refreshDelay);
     function startWhenStill() {
       const wait =
         refreshDelay - (Date.now() - viewportPosition.current.lastScroll);
@@ -517,7 +577,6 @@ export default function Search({
       setRefreshing(true);
       void load(token, true).catch((e) => fail(token, e, true));
     }
-    timer = window.setTimeout(startWhenStill, refreshDelay);
     return () => window.clearTimeout(timer);
   }, [
     active,
@@ -526,6 +585,7 @@ export default function Search({
     exportSnapshot,
     refreshing,
     editing,
+    multipleSelected,
     refreshWanted,
     queryKey,
     revision,
@@ -560,26 +620,21 @@ export default function Search({
     };
   }, [cache, range, total, busy, refreshing, active, resultVersion]);
   const selected = (i: number) => inSpans(selection, i);
-  const count = useMemo(() => {
-    let total = 0;
-    for (let i = 0; i < selection.length; i += 2)
-      total += selection[i + 1] - selection[i];
-    return total;
-  }, [selection]);
-  const loadedSelected =
-    count === 1 ? [...cache].find(([i]) => selected(i))?.[1] : undefined;
-  if (loadedSelected) {
-    const index = [...cache].find(([, hit]) => hit === loadedSelected)![0];
-    selectedSnapshot.current = { index, hit: loadedSelected };
+  const selectedIndex = count === 1 ? selection[0] : undefined;
+  if (selectedSnapshot.current?.index !== selectedIndex)
+    selectedSnapshot.current = null;
+  if (selectedIndex !== undefined) {
+    const hit = cache.get(selectedIndex);
+    if (hit)
+      selectedSnapshot.current = {
+        index: selectedIndex,
+        hit,
+        detail: selectedSnapshot.current?.detail ?? hit,
+      };
   }
-  const selectedHit =
-    loadedSelected ||
-    (count === 1 &&
-    selectedSnapshot.current &&
-    selected(selectedSnapshot.current.index)
-      ? selectedSnapshot.current.hit
-      : undefined);
-  const selectedRow = selectedHit ? currentHit(selectedHit) : undefined;
+  const snapshot = selectedSnapshot.current;
+  const selectedRow = snapshot ? currentHit(snapshot.hit) : undefined;
+  const detailRow = snapshot ? currentHit(snapshot.detail) : undefined;
   function choose(i: number, shift: boolean, ctrl: boolean) {
     cursor.current = i;
     if (shift) {
@@ -592,6 +647,7 @@ export default function Search({
       anchor.current = i;
     } else {
       anchor.current = i;
+      if (cache.has(i)) selectedSnapshot.current = null;
       setSelection([i, i + 1]);
     }
   }
@@ -599,8 +655,8 @@ export default function Search({
     .filter(([i]) => selected(i))
     .map(([, row]) => currentHit(row));
   const previewRows =
-    count === 1 && selectedRow
-      ? [selectedRow]
+    count === 1 && detailRow
+      ? [detailRow]
       : knownSelected.length === count
         ? knownSelected
         : [];
@@ -719,8 +775,20 @@ export default function Search({
         checked: preview,
       },
     ],
-    !busy && !refreshing && editing === null
-      ? () => setRevision((n) => n + 1)
+    !busy &&
+      !refreshing &&
+      !invalidScope &&
+      exportSnapshot === null &&
+      editing === null
+      ? () => {
+          handledRefresh.current = refreshWanted;
+          const token = ++sequence.current;
+          setMenu(null);
+          setRefreshError("");
+          setRefreshing(true);
+          setManualRefreshing(true);
+          void load(token, true, true).catch((e) => fail(token, e, true));
+        }
       : undefined,
     onCommands && {
       ...(onBookmark && {
@@ -1240,13 +1308,13 @@ export default function Search({
             active={active}
             selectionCount={count}
             reference={
-              selectedRow
+              detailRow
                 ? {
-                    partition_id: selectedRow.partition_id,
-                    filesystem_id: selectedRow.filesystem_id,
-                    generation: String(selectedRow.generation),
-                    revision: String(selectedRow.revision),
-                    entry: selectedRow.file.entry,
+                    partition_id: detailRow.partition_id,
+                    filesystem_id: detailRow.filesystem_id,
+                    generation: String(detailRow.generation),
+                    revision: String(detailRow.revision),
+                    entry: detailRow.file.entry,
                   }
                 : undefined
             }
@@ -1276,12 +1344,12 @@ export default function Search({
       </div>
       <FileStatusBar
         essential={
-          busy || error ? (
+          busy || manualRefreshing || error ? (
             <span
-              className={`search-summary ${busy ? "search-pending" : ""}`}
+              className={`search-summary ${busy || manualRefreshing ? "search-pending" : ""}`}
               role="status"
             >
-              {busy ? "正在搜索…" : "搜索失败"}
+              {busy || manualRefreshing ? "正在搜索…" : "搜索失败"}
             </span>
           ) : count > maxFileSelection ? (
             <span role="status">{fileSelectionLimit}</span>

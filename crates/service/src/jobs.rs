@@ -1,4 +1,4 @@
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use stashfinder_core::{
     MAX_FRAME,
     assets::{Asset, Snapshot},
@@ -413,6 +413,20 @@ impl Indexes {
         let mut page = self.batch(id, offset, 1)?;
         page.row = page.rows.pop();
         Ok(page)
+    }
+    pub fn reselect(&self, id: u64, previous: u64, offset: usize) -> Result<Option<usize>> {
+        let (result, previous) = {
+            let mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
+            let get = |id| {
+                mailbox
+                    .searches
+                    .get(&id)
+                    .and_then(|state| state.result.clone())
+                    .context("搜索结果不可用")
+            };
+            (get(id)?, get(previous)?)
+        };
+        result.reselect(&previous, offset)
     }
     pub fn batch(&self, id: u64, offset: usize, limit: usize) -> Result<SearchPage> {
         let mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());

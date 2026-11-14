@@ -9,7 +9,7 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub const PROTOCOL_VERSION: u32 = 11;
+pub const PROTOCOL_VERSION: u32 = 12;
 pub const MAX_FRAME: usize = 16 * 1024;
 pub const SNAPSHOT_EXPIRED: &str = "设备快照已更新，请刷新";
 
@@ -87,6 +87,11 @@ pub enum Action {
     SearchCancel {
         id: u64,
     },
+    SearchReselect {
+        id: u64,
+        previous: u64,
+        offset: usize,
+    },
     SearchBatch {
         id: u64,
         offset: usize,
@@ -129,6 +134,7 @@ pub enum Response {
     Accepted,
     Index(index::IndexStatus),
     SearchStarted(u64),
+    SearchPosition(Option<usize>),
     Directory(Box<browse::DirectoryPage>),
     SearchPage(Box<index::SearchPage>),
     Tasks(Box<tasks::TaskPage>),

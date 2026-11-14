@@ -326,6 +326,34 @@ impl ResultSet {
             })
             .collect())
     }
+    pub fn reselect(&self, previous: &Self, offset: usize) -> Result<Option<usize>> {
+        let row = previous.rows.get(offset).context("所选搜索位置无效")?;
+        let source = &previous.sources[row.source as usize];
+        let entry = &source.index.entries[row.entry as usize].row;
+        let Some(source_index) = self.sources.iter().position(|candidate| {
+            candidate.id == source.id && candidate.filesystem == source.filesystem
+        }) else {
+            return Ok(None);
+        };
+        let index = &self.sources[source_index].index;
+        let matches = |row: &Row| {
+            if row.source as usize != source_index {
+                return false;
+            }
+            let other = &index.entries[row.entry as usize].row;
+            other.entry == entry.entry
+                && other.object == entry.object
+                && other.kind == entry.kind
+                && (index.generation == source.index.generation
+                    || entry.entry != entry.object
+                    || entry.created.is_some() && other.created == entry.created)
+        };
+        if self.rows.get(offset).is_some_and(matches) {
+            Ok(Some(offset))
+        } else {
+            Ok(self.rows.iter().position(matches))
+        }
+    }
     pub fn reference(&self, offset: usize) -> Result<stashfinder_core::file_operations::EntryRef> {
         let row = self.rows.get(offset).context("所选搜索位置无效")?;
         let source = &self.sources[row.source as usize];

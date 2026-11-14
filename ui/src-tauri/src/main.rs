@@ -107,6 +107,7 @@ async fn index_request(
         | stashfinder_core::Action::SearchStart(_)
         | stashfinder_core::Action::Directory(_)
         | stashfinder_core::Action::SearchPage { .. }
+        | stashfinder_core::Action::SearchReselect { .. }
         | stashfinder_core::Action::SearchBatch { .. }
         | stashfinder_core::Action::SearchCancel { .. } => {
             let reply = runtime::request(action)

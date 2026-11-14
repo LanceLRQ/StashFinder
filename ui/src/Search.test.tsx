@@ -10,6 +10,7 @@ import {
 import { afterEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import Search from "./Search";
+import type { SearchHit } from "./index-api";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => {
@@ -447,6 +448,14 @@ function refreshFixture() {
     total: 1600,
     fail: false,
     delay: (..._batch: [id: number, offset: number]) => 0,
+    row: (id: number, offset: number): SearchHit => ({
+      ...hit,
+      revision: id,
+      file: { ...hit.file, name: `query-${id}-${offset}.txt` },
+    }),
+    reselect: (
+      ..._query: [id: number, previous: number, offset: number]
+    ): number | null => null,
   };
   vi.mocked(invoke).mockImplementation(async (_, args: any) => {
     if (args.action.search_start) {
@@ -459,6 +468,13 @@ function refreshFixture() {
       cancels.push(args.action.search_cancel.id);
       return { kind: "accepted" };
     }
+    if (args.action.search_reselect) {
+      const { id, previous, offset } = args.action.search_reselect;
+      return {
+        kind: "search_position",
+        data: fixture.reselect(id, previous, offset),
+      };
+    }
     const batch = args.action.search_batch;
     batches.push(batch);
     const total = fixture.total;
@@ -469,10 +485,9 @@ function refreshFixture() {
     );
     const delay = fixture.delay(batch.id, batch.offset);
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-    const rows = Array.from({ length: count }, (_, i) => ({
-      ...hit,
-      file: { ...hit.file, name: `query-${batch.id}-${batch.offset + i}.txt` },
-    }));
+    const rows = Array.from({ length: count }, (_, i) =>
+      fixture.row(batch.id, batch.offset + i),
+    );
     return {
       kind: "search_page",
       data: {
@@ -486,6 +501,88 @@ function refreshFixture() {
   });
   return fixture;
 }
+
+test("preserves the selected entry and its preview snapshot when a new result moves it", async () => {
+  const fixture = refreshFixture();
+  const defaultRow = fixture.row;
+  fixture.row = (id, offset) => {
+    if (offset !== (id === 1 ? 1 : 3)) return defaultRow(id, offset);
+    return {
+      ...hit,
+      revision: id,
+      file: { ...hit.file, size: id === 1 ? "10" : "25" },
+    };
+  };
+  fixture.reselect = (id, previous, offset) =>
+    id === 2 && previous === 1 && offset === 1 ? 3 : null;
+  const search = (revision: number) => (
+    <Search
+      partitions={[]}
+      initialPreview
+      indexes={{ p: publication(revision) }}
+    />
+  );
+  const view = render(search(1));
+  await tick(0);
+  const list = screen.getByLabelText("搜索结果列表");
+  const preview = screen.getByLabelText("预览窗格");
+  fireEvent.click(within(list).getByText("movie.txt"));
+  expect(within(preview).getByText("10 B")).toBeTruthy();
+
+  view.rerender(search(2));
+  await tick(250);
+  const row = within(list).getByText("movie.txt").closest("tr")!;
+  expect(row.getAttribute("data-index")).toBe("3");
+  expect(row.getAttribute("aria-selected")).toBe("true");
+  expect(within(preview).getByText("10 B")).toBeTruthy();
+  fireEvent.click(row);
+  expect(within(preview).getByText("25 B")).toBeTruthy();
+});
+
+test("defers applying an index publication while multiple results are selected", async () => {
+  const fixture = refreshFixture();
+  const search = (revision: number) => (
+    <Search partitions={[]} indexes={{ p: publication(revision) }} />
+  );
+  const view = render(search(1));
+  await tick(0);
+  fireEvent.click(screen.getByText("query-1-0.txt"));
+  fireEvent.click(screen.getByText("query-1-1.txt"), { ctrlKey: true });
+  view.rerender(search(2));
+  await tick(500);
+  expect(screen.getByText("已选择 2 项")).toBeTruthy();
+  expect(fixture.starts).toHaveLength(1);
+
+  fireEvent.click(screen.getByText("query-1-0.txt"));
+  await tick(250);
+  expect(screen.getByText("query-2-0.txt")).toBeTruthy();
+});
+
+test("refreshes the preview on demand without clearing a surviving selection", async () => {
+  const fixture = refreshFixture();
+  const defaultRow = fixture.row;
+  fixture.row = (id, offset) =>
+    offset === 0
+      ? { ...hit, revision: id, file: { ...hit.file, size: String(id * 10) } }
+      : defaultRow(id, offset);
+  fixture.reselect = () => 0;
+  const onCommands = vi.fn();
+  render(<Search partitions={[]} initialPreview onCommands={onCommands} />);
+  await tick(0);
+  const list = screen.getByLabelText("搜索结果列表");
+  fireEvent.click(within(list).getByText("movie.txt"));
+  act(() => onCommands.mock.lastCall?.[0].refresh());
+  await tick(250);
+  expect(
+    within(list)
+      .getByText("movie.txt")
+      .closest("tr")
+      ?.getAttribute("aria-selected"),
+  ).toBe("true");
+  expect(
+    within(screen.getByLabelText("预览窗格")).getByText("20 B"),
+  ).toBeTruthy();
+});
 
 test("defers and combines relevant index versions until the visible search stops scrolling", async () => {
   const { starts } = refreshFixture();

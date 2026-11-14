@@ -71,6 +71,7 @@ type Action =
       };
     }
   | { search_page: { id: number; offset: number } }
+  | { search_reselect: { id: number; previous: number; offset: number } }
   | {
       search_batch: {
         id: number;
@@ -84,6 +85,7 @@ type Reply =
   | { kind: "accepted" }
   | { kind: "index"; data: IndexStatus }
   | { kind: "search_started"; data: number }
+  | { kind: "search_position"; data: number | null }
   | { kind: "search_page"; data: SearchPage };
 export function indexRequest(action: Action) {
   return invoke<Reply>("index_request", { action });
