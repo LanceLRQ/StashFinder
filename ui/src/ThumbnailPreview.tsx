@@ -27,8 +27,14 @@ export default function ThumbnailPreview({
   const image = visual.image;
   const url = image?.data_url;
   const visible = url && url !== broken;
+  const outdated = [
+    "索引记录已变化，请刷新重选",
+    "索引代次已变化，请刷新重选",
+    "文件记录已不存在，请刷新",
+  ].includes(visual.error);
   const error =
-    visual.error || (url && url === broken ? "缩略图缓存无法显示" : "");
+    (outdated ? "" : visual.error) ||
+    (url && url === broken ? "缩略图缓存无法显示" : "");
   const status =
     error ||
     visualPhases[visual.phase] ||
@@ -54,7 +60,7 @@ export default function ThumbnailPreview({
           <FileIcon
             name={file.name}
             folder={folder}
-            reference={reference}
+            reference={outdated ? undefined : reference}
             connection={connection || "unconfirmed"}
             size={64}
           />

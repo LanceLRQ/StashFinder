@@ -208,6 +208,30 @@ test("a late thumbnail cannot replace the new selection and obsolete work is can
   expect(listen).toHaveBeenCalledWith("visual-progress", expect.any(Function));
 });
 
+test("falls back to the type icon when the preview's index revision expires", async () => {
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "visual_preview") throw Error("索引记录已变化，请刷新重选");
+    return image();
+  });
+  const view = render(
+    <Visuals>
+      <FileDetails
+        rows={[row("temporary.mp4", 2)]}
+        partition="Movies"
+        connection="online"
+        indexedAt={null}
+        reference={reference}
+      />
+    </Visuals>,
+  );
+  await act(async () => {});
+  expect(
+    view.container.querySelector(".thumbnail-image img")?.getAttribute("src"),
+  ).toBe(png);
+  expect(screen.getByText("10 B")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
 test("offline cached thumbnails are marked historical while native failures leave metadata readable", async () => {
   vi.mocked(invoke).mockResolvedValue({
     ...image(),
