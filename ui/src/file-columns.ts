@@ -4,7 +4,7 @@ import {
   type DirectorySortField,
   type FileRow,
 } from "./browse-api";
-import type { MenuCommand } from "./AppMenu";
+import type { FileMenuActions } from "./file-operations";
 
 export type FileColumnId =
   | DirectorySortField
@@ -77,9 +77,9 @@ export function sortCommands(
   field: string,
   descending: boolean,
   change: (field: FileColumnId, descending: boolean) => void,
-): MenuCommand[] {
-  return [
-    ...columns
+): Pick<FileMenuActions, "sorting" | "sortDirection"> {
+  return {
+    sorting: columns
       .filter((column) => column.sortable)
       .map(({ id, label }) => ({
         label,
@@ -87,13 +87,13 @@ export function sortCommands(
         radio: true,
         run: () => change(id, descending),
       })),
-    ...[false, true].map((next) => ({
+    sortDirection: [false, true].map((next) => ({
       label: next ? "降序" : "升序",
       checked: next === descending,
       radio: true,
       run: () => change(field as FileColumnId, next),
     })),
-  ];
+  };
 }
 
 const attributeFlags = [

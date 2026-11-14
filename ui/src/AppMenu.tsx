@@ -14,19 +14,25 @@ type MenuItem =
   | MenuCommand
   | {
       label: string;
-      items: MenuCommand[];
+      sections: MenuCommand[][];
       disabled?: boolean;
     };
 
 export type MenuGroup = {
   label: string;
   accessKey: string;
-  items: MenuItem[];
+  sections: MenuItem[][];
 };
+
+function separate<T>(sections: T[][]) {
+  return sections
+    .filter((section) => section.length)
+    .flatMap((section, index) => (index ? [null, ...section] : section));
+}
 
 export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
   const [open, setOpen] = useState<number | null>(null);
-  const [child, setChild] = useState<number | null>(null);
+  const [child, setChild] = useState<string | null>(null);
   const [tabStop, setTabStop] = useState(0);
   const root = useRef<HTMLElement>(null);
   const popup = useRef<HTMLDivElement>(null);
@@ -170,7 +176,7 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
         target.dataset.submenu !== undefined
       ) {
         if (target.getAttribute("aria-disabled") !== "true")
-          setChild(Number(target.dataset.submenu));
+          setChild(target.dataset.submenu);
       } else if (!nested)
         show(
           (groupIndex + (key === "ArrowRight" ? 1 : groups.length - 1)) %
@@ -285,25 +291,27 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
               tabIndex={-1}
               onKeyDown={(event) => handleMenuKey(event, false, index)}
             >
-              {group.items.map((item, position) =>
-                "items" in item ? (
+              {separate(group.sections).map((item, position) =>
+                item === null ? (
+                  <hr key={`separator-${position}`} />
+                ) : "sections" in item ? (
                   <div className="app-menu-branch" key={item.label} role="none">
                     <button
                       type="button"
                       role="menuitem"
                       tabIndex={-1}
-                      data-submenu={position}
+                      data-submenu={item.label}
                       aria-haspopup="menu"
-                      aria-expanded={child === position}
+                      aria-expanded={child === item.label}
                       aria-disabled={item.disabled}
                       onClick={() => {
-                        if (!item.disabled) setChild(position);
+                        if (!item.disabled) setChild(item.label);
                       }}
                     >
                       {item.label}
                       <span className="app-menu-arrow" aria-hidden="true" />
                     </button>
-                    {child === position && !item.disabled && (
+                    {child === item.label && !item.disabled && (
                       <div
                         ref={submenu}
                         className="app-menu-popup app-menu-submenu"
@@ -312,7 +320,13 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
                         tabIndex={-1}
                         onKeyDown={(event) => handleMenuKey(event, true, index)}
                       >
-                        {item.items.map(command)}
+                        {separate(item.sections).map((entry, position) =>
+                          entry === null ? (
+                            <hr key={`separator-${position}`} />
+                          ) : (
+                            command(entry)
+                          ),
+                        )}
                       </div>
                     )}
                   </div>

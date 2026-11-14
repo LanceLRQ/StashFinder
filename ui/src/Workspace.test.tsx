@@ -113,6 +113,73 @@ function choosePartition(name = "Movies") {
   fireEvent.click(within(tree).getByRole("button", { name }));
 }
 
+test("separates clipboard, selection and file actions, and skips separators during navigation", async () => {
+  setup();
+  choosePartition();
+  fireEvent.click(await screen.findByRole("row", { name: /notes.txt/ }));
+  const edit = screen.getByRole("button", { name: "编辑" });
+  fireEvent.click(edit);
+  const menu = within(screen.getByRole("menu", { name: "编辑" }));
+  const path = menu.getByRole("menuitem", { name: "复制路径" });
+  const selectAll = menu.getByRole("menuitem", { name: "全选" });
+  const invert = menu.getByRole("menuitem", { name: "反选" });
+  const rename = menu.getByRole("menuitem", { name: "重命名" });
+  const separators = menu.getAllByRole("separator");
+  expect(separators).toHaveLength(2);
+  expect(path.nextElementSibling).toBe(separators[0]);
+  expect(separators[0].nextElementSibling).toBe(selectAll);
+  expect(invert.nextElementSibling).toBe(separators[1]);
+  expect(separators[1].nextElementSibling).toBe(rename);
+  invert.focus();
+  fireEvent.keyDown(invert, { key: "ArrowUp" });
+  expect(document.activeElement).toBe(path);
+  fireEvent.keyDown(path, { key: "ArrowDown" });
+  expect(document.activeElement).toBe(invert);
+  fireEvent.keyDown(invert, { key: "Escape" });
+
+  fireEvent.click(screen.getByRole("button", { name: "查看" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "排序" }));
+  const sort = within(screen.getByRole("menu", { name: "排序" }));
+  const ascending = sort.getByRole("menuitemradio", { name: "升序" });
+  expect(sort.getByRole("separator").nextElementSibling).toBe(ascending);
+  ascending.focus();
+  fireEvent.keyDown(ascending, { key: "ArrowUp" });
+  expect(document.activeElement).toBe(
+    sort.getByRole("menuitemradio", { name: "属性" }),
+  );
+  fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+  expect(document.activeElement).toBe(ascending);
+  fireEvent.keyDown(ascending, { key: "ArrowDown" });
+  fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+  await waitFor(() =>
+    expect(readDirectory).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sort: { field: "name", descending: true } }),
+    ),
+  );
+});
+
+test("omits separators for empty menu sections", () => {
+  render(
+    <Workspace
+      assets={[]}
+      includePath
+      request={{ text: "", revision: 0 }}
+      onExit={vi.fn()}
+      onSaveBookmarks={async () => null}
+      panels={{ overview: <div /> }}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "书签" }));
+  expect(
+    within(screen.getByRole("menu", { name: "书签" })).queryByRole("separator"),
+  ).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "文件" }));
+  const file = within(screen.getByRole("menu", { name: "文件" }));
+  expect(file.getByRole("separator").nextElementSibling).toBe(
+    file.getByRole("menuitem", { name: "退出" }),
+  );
+});
+
 test("opens scoped bookmarks in separate tabs and blocks a replaced filesystem until range is chosen", async () => {
   setup().unmount();
   const requests = () =>
@@ -171,7 +238,11 @@ test("opens scoped bookmarks in separate tabs and blocks a replaced filesystem u
   );
   const open = (name: string) => {
     fireEvent.click(screen.getByRole("button", { name: "书签" }));
-    fireEvent.click(screen.getByRole("menuitem", { name }));
+    const menu = within(screen.getByRole("menu", { name: "书签" }));
+    expect(
+      menu.getByRole("menuitem", { name: "管理书签…" }).nextElementSibling,
+    ).toBe(menu.getByRole("separator"));
+    fireEvent.click(menu.getByRole("menuitem", { name }));
   };
   open("电影盘");
   await waitFor(() => expect(requests()).toHaveLength(1));
@@ -964,6 +1035,7 @@ test("keeps each search tab's filters, sorting and scroll while another query ru
   const firstPanel = screen.getByRole("tabpanel");
   await within(firstPanel).findByText("first-0.txt");
   const firstResults = within(firstPanel).getByLabelText("搜索结果列表");
+  await waitFor(() => expect(firstResults.closest("[inert]")).toBeNull());
   fireEvent.scroll(firstResults, {
     target: { scrollTop: 3400, scrollLeft: 120 },
   });

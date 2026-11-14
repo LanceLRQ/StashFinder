@@ -29,7 +29,7 @@ function SearchWithView(props: ComponentProps<typeof Search>) {
     <>
       <AppMenu
         groups={[
-          { label: "查看", accessKey: "v", items: commands?.views ?? [] },
+          { label: "查看", accessKey: "v", sections: [commands?.views ?? []] },
         ]}
       />
       <Search {...props} onCommands={setCommands} />

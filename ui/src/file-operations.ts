@@ -141,6 +141,7 @@ export type FileMenuActions = {
   export?: MenuCommand[];
   selection?: MenuCommand[];
   sorting?: MenuCommand[];
+  sortDirection?: MenuCommand[];
   navigation?: MenuCommand[];
   search?: MenuCommand[];
   presets?: MenuCommand[];

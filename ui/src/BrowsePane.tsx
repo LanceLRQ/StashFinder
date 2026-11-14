@@ -446,7 +446,7 @@ export default function BrowsePane({
           run: () => setAllSelected((all) => !all),
         },
       ],
-      sorting: sortCommands(
+      ...sortCommands(
         directoryColumns,
         sort?.field ?? "name",
         sort?.descending ?? false,

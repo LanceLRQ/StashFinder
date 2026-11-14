@@ -12,11 +12,15 @@ test("enters and leaves a submenu one level at a time", () => {
         {
           label: "查看",
           accessKey: "v",
-          items: [
-            {
-              label: "布局",
-              items: [{ label: "详情", run, checked: true, radio: true }],
-            },
+          sections: [
+            [
+              {
+                label: "布局",
+                sections: [
+                  [{ label: "详情", run, checked: true, radio: true }],
+                ],
+              },
+            ],
           ],
         },
       ]}
@@ -49,10 +53,12 @@ test("opens Edit with Alt+E, navigates enabled commands and restores focus", () 
           {
             label: "编辑",
             accessKey: "e",
-            items: [
-              { label: "剪切", run: unavailable, disabled: true },
-              { label: "复制名称", run },
-              { label: "复制路径", run },
+            sections: [
+              [
+                { label: "剪切", run: unavailable, disabled: true },
+                { label: "复制名称", run },
+                { label: "复制路径", run },
+              ],
             ],
           },
         ]}

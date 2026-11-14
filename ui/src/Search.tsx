@@ -771,7 +771,7 @@ export default function Search({
             setSelection((current) => toggleSpans(current, [0, total])),
         },
       ],
-      sorting: sortCommands(
+      ...sortCommands(
         searchColumns,
         options.sort,
         options.descending,

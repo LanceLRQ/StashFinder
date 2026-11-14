@@ -204,6 +204,11 @@
   text-align: left;
   font-size: 13px;
 }
+.app-menu-popup > hr {
+  margin: 4px 6px;
+  border: 0;
+  border-top: 1px solid #bdc5ce;
+}
 .app-menu-popup button[aria-disabled="true"] {
   color: #697685;
   cursor: default;
@@ -233,6 +238,9 @@
   }
   .app-menu-popup button[aria-disabled="true"] {
     color: GrayText;
+  }
+  .app-menu-popup > hr {
+    border-top-color: ButtonText;
   }
 }
 .browse-body > .search-empty {

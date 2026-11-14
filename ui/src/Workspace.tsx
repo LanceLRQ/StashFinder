@@ -621,92 +621,110 @@ export default function Workspace({
     {
       label: "文件",
       accessKey: "f",
-      items: [
-        mainCommands.browse,
-        mainCommands.search,
-        mainCommands.close,
-        ...(currentTab?.kind === "browse"
-          ? [
-              {
-                label: "切换浏览分区…",
-                disabled: !assets.length,
-                run: () => setPartitionPickerOpen(true),
-              },
-            ]
-          : []),
-        ...(device
-          ? [
-              {
-                label: "登记分区…",
-                run: device.register,
-                disabled: startupReady !== true || device.busy,
-              },
-            ]
-          : []),
-        ...(currentTab?.kind === "search"
+      sections: [
+        [mainCommands.browse, mainCommands.search, mainCommands.close],
+        [
+          ...(currentTab?.kind === "browse"
+            ? [
+                {
+                  label: "切换浏览分区…",
+                  disabled: !assets.length,
+                  run: () => setPartitionPickerOpen(true),
+                },
+              ]
+            : []),
+          ...(device
+            ? [
+                {
+                  label: "登记分区…",
+                  run: device.register,
+                  disabled: startupReady !== true || device.busy,
+                },
+              ]
+            : []),
+        ],
+        currentTab?.kind === "search"
           ? (actions?.export ?? [workspaceCommand("export", () => {}, true)])
-          : []),
-        ...(onExit ? [mainCommands.exit] : []),
+          : [],
+        onExit ? [mainCommands.exit] : [],
       ],
     },
     {
       label: "编辑",
       accessKey: "e",
-      items: [
-        ...editCommands.slice(0, 5).map(editCommand),
-        ...(actions?.selection ?? [
-          workspaceCommand("selectAll", () => {}, true),
-        ]),
-        ...editCommands.slice(5).map(editCommand),
+      sections: [
+        editCommands.slice(0, 5).map(editCommand),
+        actions?.selection ?? [workspaceCommand("selectAll", () => {}, true)],
+        editCommands.slice(5).map(editCommand),
       ],
     },
     {
       label: "查看",
       accessKey: "v",
-      items: [
-        mainCommands.refresh,
-        ...(commands?.views.filter((item) => !item.radio) ?? []),
-        ...(layouts.length ? [{ label: "布局", items: layouts }] : []),
-        ...(actions?.sorting?.length
-          ? [{ label: "排序", items: actions.sorting }]
-          : []),
-        ...(actions?.navigation?.length
-          ? [{ label: "前往", items: actions.navigation }]
-          : []),
-        ...(onShowStatus
-          ? [
-              {
-                label: "显示状态栏",
-                checked: showStatus,
-                run: () => onShowStatus(!showStatus),
-              },
-            ]
-          : []),
-        ...(windowPin
-          ? [
-              {
-                label: "窗口置顶",
-                checked: pinned,
-                disabled: pinPending,
-                run: () => void togglePin(),
-              },
-            ]
-          : []),
+      sections: [
+        [mainCommands.refresh],
+        [
+          ...(commands?.views.filter((item) => !item.radio) ?? []),
+          ...(layouts.length ? [{ label: "布局", sections: [layouts] }] : []),
+        ],
+        [
+          ...(actions?.sorting?.length
+            ? [
+                {
+                  label: "排序",
+                  sections: [actions.sorting, actions.sortDirection ?? []],
+                },
+              ]
+            : []),
+          ...(actions?.navigation?.length
+            ? [{ label: "前往", sections: [actions.navigation] }]
+            : []),
+        ],
+        [
+          ...(onShowStatus
+            ? [
+                {
+                  label: "显示状态栏",
+                  checked: showStatus,
+                  run: () => onShowStatus(!showStatus),
+                },
+              ]
+            : []),
+          ...(windowPin
+            ? [
+                {
+                  label: "窗口置顶",
+                  checked: pinned,
+                  disabled: pinPending,
+                  run: () => void togglePin(),
+                },
+              ]
+            : []),
+        ],
       ],
     },
     {
       label: "搜索",
       accessKey: "s",
-      items: [
-        mainCommands.focus,
-        ...(actions?.search ?? []),
-        ...(presets.length
-          ? [{ label: "筛选预设", items: presets.filter((item) => item.radio) }]
-          : []),
-        ...presets.filter((item) => !item.radio),
-        ...(onSettings
-          ? [{ label: "管理筛选预设…", run: () => onSettings("presets") }]
-          : []),
+      sections: [
+        [mainCommands.focus],
+        actions?.search?.filter((item) => item.checked !== undefined) ?? [],
+        [
+          ...(actions?.search?.filter((item) => item.checked === undefined) ??
+            []),
+          ...(presets.length
+            ? [
+                {
+                  label: "筛选预设",
+                  sections: [presets.filter((item) => item.radio)],
+                },
+              ]
+            : []),
+          ...presets.filter((item) => !item.radio),
+          ...(onSettings
+            ? [{ label: "管理筛选预设…", run: () => onSettings("presets") }]
+            : []),
+        ],
       ],
     },
     ...(onSaveBookmarks
@@ -714,12 +732,14 @@ export default function Workspace({
           {
             label: "书签",
             accessKey: "b",
-            items: [
-              ...(actions?.bookmark ?? [
-                workspaceCommand("bookmark", () => {}, true),
-              ]),
-              { label: "管理书签…", run: () => setManageBookmarks(true) },
-              ...bookmarks.map(({ id, name, query }) => ({
+            sections: [
+              [
+                ...(actions?.bookmark ?? [
+                  workspaceCommand("bookmark", () => {}, true),
+                ]),
+                { label: "管理书签…", run: () => setManageBookmarks(true) },
+              ],
+              bookmarks.map(({ id, name, query }) => ({
                 id,
                 label: name,
                 run: () => search(query.text, undefined, query),
@@ -731,14 +751,14 @@ export default function Workspace({
     {
       label: "工具",
       accessKey: "t",
-      items: [
-        ...(onSettings ? [mainCommands.settings] : []),
-        ...(device
+      sections: [
+        onSettings ? [mainCommands.settings] : [],
+        device
           ? [{ label: "刷新设备", run: device.refresh, disabled: device.busy }]
-          : []),
-        ...(panels?.development
+          : [],
+        panels?.development
           ? [{ label: "开发验证", run: () => openPage("development") }]
-          : []),
+          : [],
       ],
     },
     ...(onSettings
@@ -746,10 +766,12 @@ export default function Workspace({
           {
             label: "帮助",
             accessKey: "h",
-            items: [
-              mainCommands.help,
-              { label: "快捷键", run: () => onSettings("shortcuts") },
-              { label: "关于与诊断", run: () => onSettings("about") },
+            sections: [
+              [
+                mainCommands.help,
+                { label: "快捷键", run: () => onSettings("shortcuts") },
+              ],
+              [{ label: "关于与诊断", run: () => onSettings("about") }],
             ],
           },
         ]
