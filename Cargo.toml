@@ -18,3 +18,7 @@ tempfile = "3"
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
+
+# Keep dev builds responsive when publishing large search indexes.
+[profile.dev.package.stashfinder-store]
+opt-level = 2
