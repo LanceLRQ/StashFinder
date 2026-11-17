@@ -123,27 +123,48 @@ impl Volume {
         ensure!(valid_root, "初始路径根目录不唯一或无效");
         let invalid_object: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM temp.initial_paths p LEFT JOIN objects o ON o.generation=?1 AND o.id=p.object WHERE o.id IS NULL)", [generation], |r|r.get(0))?;
         ensure!(!invalid_object, "初始路径缺少文件对象");
-        let missing_parent: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM temp.initial_paths p LEFT JOIN temp.initial_paths parent ON parent.id=p.parent WHERE p.parent IS NOT NULL AND parent.id IS NULL)", [], |r|r.get(0))?;
+        // Only directories with children need a node in the reachability graph.
+        tx.execute_batch("CREATE TEMP TABLE initial_parents(id BLOB PRIMARY KEY, parent BLOB, folder INTEGER, traversable INTEGER) WITHOUT ROWID;
+            CREATE INDEX temp.initial_parents_parent ON initial_parents(parent);")?;
+        tx.execute("INSERT INTO temp.initial_parents
+            SELECT used.id,p.parent,o.kind='folder',(o.attributes & 1024)=0
+            FROM (SELECT DISTINCT parent AS id FROM temp.initial_paths WHERE parent IS NOT NULL) used
+            LEFT JOIN temp.initial_paths p ON p.id=used.id
+            LEFT JOIN objects o ON o.generation=?1 AND o.id=p.object", [generation])?;
+        let missing_parent: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM temp.initial_parents WHERE folder IS NULL)",
+            [],
+            |r| r.get(0),
+        )?;
         if missing_parent {
             return Err(InitialPathsIncomplete.into());
         }
-        let non_directory_parent: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM temp.initial_paths p JOIN temp.initial_paths parent ON parent.id=p.parent JOIN objects o ON o.generation=?1 AND o.id=parent.object WHERE o.kind!='folder')", [generation], |r|r.get(0))?;
+        let non_directory_parent: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM temp.initial_parents WHERE NOT folder)",
+            [],
+            |r| r.get(0),
+        )?;
         ensure!(!non_directory_parent, "初始路径父节点不是目录");
 
-        // Every path has one parent. A disconnected cycle cannot be reached from the root.
-        tx.execute_batch("CREATE TEMP TABLE initial_reachable(id BLOB PRIMARY KEY, visible INTEGER NOT NULL) WITHOUT ROWID;")?;
-        tx.execute("WITH RECURSIVE tree(id,attributes,visible) AS (
-            SELECT p.id,o.attributes,1 FROM temp.initial_paths p JOIN objects o ON o.generation=?1 AND o.id=p.object WHERE p.id=?2
+        tx.execute_batch("CREATE TEMP TABLE initial_reachable(id BLOB PRIMARY KEY, descend INTEGER NOT NULL) WITHOUT ROWID;")?;
+        tx.execute(
+            "WITH RECURSIVE tree(id,descend) AS (
+            SELECT p.id,(o.attributes & 1024)=0 FROM temp.initial_paths p
+            JOIN objects o ON o.generation=?1 AND o.id=p.object WHERE p.id=?2
             UNION ALL
-            SELECT child.id,o.attributes,tree.visible AND (tree.attributes & 1024)=0 FROM tree
-            JOIN temp.initial_paths child ON child.parent=tree.id JOIN objects o ON o.generation=?1 AND o.id=child.object
-        ) INSERT INTO temp.initial_reachable SELECT id,visible FROM tree", params![generation,root])?;
-        let complete: bool = tx.query_row("SELECT (SELECT count(*) FROM temp.initial_reachable)=(SELECT count(*) FROM temp.initial_paths)", [], |r|r.get(0))?;
+            SELECT child.id,tree.descend AND child.traversable FROM tree
+            JOIN temp.initial_parents child ON child.parent=tree.id
+        ) INSERT INTO temp.initial_reachable SELECT id,descend FROM tree",
+            params![generation, root],
+        )?;
+        // A disconnected cycle contains a referenced parent that is unreachable.
+        let complete: bool = tx.query_row("SELECT NOT EXISTS(SELECT 1 FROM temp.initial_parents p LEFT JOIN temp.initial_reachable r ON r.id=p.id WHERE r.id IS NULL)", [], |r|r.get(0))?;
         ensure!(complete, "初始路径父链存在循环");
         tx.execute("INSERT INTO paths(generation,id,object,parent,name) SELECT ?1,p.id,p.object,p.parent,p.name
-            FROM temp.initial_paths p JOIN temp.initial_reachable r ON r.id=p.id WHERE r.visible ORDER BY p.id", [generation])?;
+            FROM temp.initial_paths p LEFT JOIN temp.initial_reachable r ON r.id=p.parent
+            WHERE p.parent IS NULL OR r.descend ORDER BY p.id", [generation])?;
         tx.execute("DELETE FROM objects WHERE generation=?1 AND id NOT IN (SELECT object FROM paths WHERE generation=?1)", [generation])?;
-        tx.execute_batch("DROP TABLE temp.initial_reachable; DROP TABLE temp.initial_paths;")?;
+        tx.execute_batch("DROP TABLE temp.initial_reachable; DROP TABLE temp.initial_parents; DROP TABLE temp.initial_paths;")?;
         tx.commit()?;
         Ok(())
     }

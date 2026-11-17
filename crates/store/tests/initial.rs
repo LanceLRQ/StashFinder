@@ -111,17 +111,50 @@ fn reparse_directory_is_visible_but_its_descendants_are_not() {
     let (root, root_link) = node(1, None, true);
     let (mut reparse, reparse_link) = node(2, Some(1), true);
     reparse.attributes |= 0x400;
-    let (child, child_link) = node(3, Some(2), false);
+    let (child, child_link) = node(3, Some(2), true);
+    let (file, file_link) = node(4, Some(3), false);
+    let alias = Entry {
+        id: vec![5],
+        object: vec![4],
+        parent: Some(vec![1]),
+        name: vec![0x4e2d],
+    };
     db.write_initial_batch(
         generation,
-        &[root, reparse, child],
-        &[root_link, reparse_link, child_link],
+        &[root, reparse, child, file],
+        &[root_link, reparse_link, child_link, file_link, alias],
     )
     .unwrap();
     db.finish_initial_paths(generation, &[1]).unwrap();
     assert!(db.has_path(generation, &[2]).unwrap());
     assert!(!db.has_path(generation, &[3]).unwrap());
-    assert_eq!(db.object_count(generation).unwrap(), 2);
+    assert!(!db.has_path(generation, &[4]).unwrap());
+    assert!(db.has_path(generation, &[5]).unwrap());
+    assert_eq!(db.object_count(generation).unwrap(), 3);
+}
+
+#[test]
+fn a_file_cannot_be_a_parent_even_under_a_hidden_subtree() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = Volume::create(&dir.path().join("volume.sqlite"), "{}").unwrap();
+    let generation = db.begin_generation().unwrap();
+    db.begin_initial_paths(generation).unwrap();
+    let (root, root_link) = node(1, None, true);
+    let (mut reparse, reparse_link) = node(2, Some(1), true);
+    reparse.attributes |= 0x400;
+    let (file, file_link) = node(3, Some(2), false);
+    let (child, child_link) = node(4, Some(3), false);
+    db.write_initial_batch(
+        generation,
+        &[root, reparse, file, child],
+        &[root_link, reparse_link, file_link, child_link],
+    )
+    .unwrap();
+
+    let error = db.finish_initial_paths(generation, &[1]).unwrap_err();
+    assert!(!error.is::<InitialPathsIncomplete>());
+    assert!(db.active_generation().unwrap().is_none());
+    assert!(!db.has_path(generation, &[2]).unwrap());
 }
 
 #[test]
