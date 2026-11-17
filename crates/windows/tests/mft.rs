@@ -6,6 +6,49 @@ mod fixture;
 use fixture::*;
 
 #[test]
+fn inventory_pipeline_reads_ahead_and_joins_after_consumer_failure() {
+    use stashfinder_windows::ntfs::mft::{FastScanStats, pipeline_inventory};
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+
+    let (scanned, ready) = channel();
+    let mut calls = 0;
+    let result = pipeline_inventory(
+        move |consume| {
+            consume(&[])?;
+            scanned.send(())?;
+            for _ in 0..256 {
+                consume(&[])?;
+            }
+            Ok(Some(FastScanStats::default()))
+        },
+        &mut |_| {
+            ready
+                .recv_timeout(Duration::from_secs(2))
+                .expect("reader must advance while consumer is busy");
+            calls += 1;
+            Err(std::io::Error::other("consumer failed").into())
+        },
+    );
+    assert_eq!(calls, 1);
+    assert!(result.unwrap_err().is::<std::io::Error>());
+}
+
+#[test]
+fn inventory_pipeline_keeps_producer_errors() {
+    use stashfinder_windows::ntfs::mft::pipeline_inventory;
+    let error = pipeline_inventory(
+        |consume| {
+            consume(&[])?;
+            Err(std::io::Error::other("read failed").into())
+        },
+        &mut |_| Ok(()),
+    )
+    .unwrap_err();
+    assert!(error.is::<std::io::Error>());
+}
+
+#[test]
 fn volume_geometry_requires_supported_version_and_bounded_lengths() {
     let mut data = vec![0; 104];
     put64(&mut data, 16, 1024);
@@ -68,7 +111,178 @@ fn fragmented_mft_emits_base_objects_once_with_earlier_and_later_extensions() {
             .any(|&(offset, count)| offset == 8 * 512 && count > 1024)
     );
     assert_eq!(stats.objects, 3);
+    // Both extensions were already read in the current MFT block.
+    assert_eq!(stats.auxiliary_reads, 0);
+}
+
+#[test]
+fn prefetched_extension_block_is_reused_by_the_sequential_scan_and_checks_identity() {
+    use stashfinder_windows::ntfs::mft::scan_mft;
+    use std::sync::atomic::AtomicBool;
+    for wrong_sequence in [false, true] {
+        let (geometry, mut disk) = fragmented_disk();
+        let old = 160 * 512 + 20 * 1024;
+        let relocated = 8 * 512 + 70 * 1024 - 131 * 512;
+        let extension = disk.bytes[old..old + 1024].to_vec();
+        disk.bytes[relocated..relocated + 1024].copy_from_slice(&extension);
+        if wrong_sequence {
+            put16(&mut disk.bytes, relocated + 16, 2);
+        }
+        let base = 160 * 512 + 18 * 1024;
+        for i in base..base + 1016 {
+            if disk.bytes[i..i + 8] == 0x1000000000014u64.to_le_bytes() {
+                put64(&mut disk.bytes, i, 0x1000000000046);
+            }
+        }
+        let mut links = 0;
+        let result = scan_mft(
+            &mut disk,
+            &geometry,
+            0x1000000000005,
+            &AtomicBool::new(false),
+            &mut |rows| {
+                links += rows
+                    .iter()
+                    .filter(|r| r.entry.id == 0x2000000000012)
+                    .map(|r| r.links.len())
+                    .sum::<usize>();
+                Ok(())
+            },
+        );
+        if wrong_sequence {
+            assert!(result.is_err());
+        } else {
+            assert_eq!(links, 2);
+            assert_eq!(result.unwrap().auxiliary_reads, 0);
+            // The second physical run is read once for the prefetched logical block.
+            assert_eq!(
+                disk.reads
+                    .iter()
+                    .filter(|(offset, length)| *offset == 8 * 512 && *length > 1024)
+                    .count(),
+                1
+            );
+        }
+    }
+}
+
+#[test]
+fn read_ahead_remains_bounded_with_far_extensions_and_cache_eviction() {
+    use stashfinder_windows::ntfs::mft::scan_mft;
+    use std::sync::atomic::AtomicBool;
+    let length = 6 * 1024 * 1024;
+    let mut disk = MemoryDisk {
+        bytes: vec![0; length + 8 * 512],
+        reads: Vec::new(),
+    };
+    let root = 0x1000000000005;
+    let base = 0x2000000000012;
+    let first = 0x1000000000000 + 1100;
+    let last = 0x1000000000000 + 5800;
+    let list = [
+        list_entry(0x10, 0, base, 0),
+        list_entry(0x30, 1, first, 0),
+        list_entry(0x30, 2, last, 0),
+        list_entry(0x80, 3, last, 0),
+    ]
+    .concat();
+    for (slot, bytes) in [
+        (
+            0,
+            record(
+                1024,
+                1,
+                1,
+                0,
+                &[nonresident(
+                    0x80,
+                    1,
+                    0,
+                    0,
+                    length as u64,
+                    12288,
+                    &[0x12, 0, 0x30, 8, 0],
+                )],
+            ),
+        ),
+        (
+            5,
+            record(
+                1024,
+                1,
+                3,
+                0,
+                &[
+                    resident(0x10, 0, &[], &[0; 48]),
+                    filename(1, root, 1, &[46]),
+                ],
+            ),
+        ),
+        (
+            18,
+            record(
+                1024,
+                2,
+                1,
+                0,
+                &[
+                    resident(0x10, 0, &[], &[0; 48]),
+                    resident(0x20, 4, &[], &list),
+                ],
+            ),
+        ),
+        (
+            1100,
+            record(1024, 1, 1, base, &[filename(1, root, 1, &[65])]),
+        ),
+        (
+            5800,
+            record(
+                1024,
+                1,
+                1,
+                base,
+                &[filename(2, root, 1, &[66]), resident(0x80, 3, &[], &[0; 3])],
+            ),
+        ),
+    ] {
+        let offset = 8 * 512 + slot * 1024;
+        disk.bytes[offset..offset + 1024].copy_from_slice(&bytes);
+    }
+    let geometry = Geometry::new(512, 512, 1024, 12296, 8, length as u64).unwrap();
+    let mut files = Vec::new();
+    let stats = scan_mft(
+        &mut disk,
+        &geometry,
+        root,
+        &AtomicBool::new(false),
+        &mut |rows| {
+            files.extend(rows.iter().filter(|row| row.entry.id == base).cloned());
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].entry.size, 3);
+    assert_eq!(files[0].links, [(root, vec![65]), (root, vec![66])]);
     assert_eq!(stats.auxiliary_reads, 2);
+    assert!(
+        stats.read_calls < 20,
+        "sequential reads were not coalesced: {}",
+        stats.read_calls
+    );
+    assert!(stats.peak_cache_bytes <= 4 * 1024 * 1024);
+    disk.bytes.truncate(length);
+    assert!(
+        scan_mft(
+            &mut disk,
+            &geometry,
+            root,
+            &AtomicBool::new(false),
+            &mut |_| Ok(())
+        )
+        .is_err()
+    );
 }
 
 #[test]

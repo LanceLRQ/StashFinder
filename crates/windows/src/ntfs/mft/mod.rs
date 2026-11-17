@@ -1,7 +1,11 @@
+#[cfg(feature = "mft-prototype")]
+pub mod capture;
 mod reader;
 mod record;
 
-pub use reader::{FastScanStats, ReadAt, read_mft_object, scan_mft};
+#[cfg(feature = "mft-prototype")]
+pub use reader::scan_mft_deferred;
+pub use reader::{FastScanStats, ReadAt, ReadStats, pipeline_inventory, read_mft_object, scan_mft};
 pub use record::{
     Attribute, AttributeValue, ControlRecordTailMismatch, DataRun, Record, decode_record,
     decode_runs, prepare_control_record,

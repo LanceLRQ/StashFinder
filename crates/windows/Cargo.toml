@@ -19,5 +19,12 @@ png = "=0.18.1"
 [dev-dependencies]
 tempfile.workspace = true
 
+[features]
+mft-prototype = []
+
+[[example]]
+name = "mft-compare"
+required-features = ["mft-prototype"]
+
 [lints]
 workspace = true

@@ -75,6 +75,58 @@ fn children_before_parents_remain_hidden_until_relationship_import() {
 }
 
 #[test]
+fn failed_bulk_import_restores_indexes_and_can_be_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("volume.sqlite");
+    let mut db = Volume::create(&file, "{}").unwrap();
+    let generation = db.begin_generation().unwrap();
+    db.begin_initial_paths(generation).unwrap();
+    let (root, root_link) = node(1, None, true);
+    let (child, child_link) = node(2, Some(1), false);
+    db.write_initial_batch(generation, &[root, child], &[root_link, child_link])
+        .unwrap();
+    let sql = rusqlite::Connection::open(&file).unwrap();
+    sql.execute_batch("CREATE TRIGGER fail_import BEFORE INSERT ON paths BEGIN SELECT RAISE(ABORT,'injected failure'); END;").unwrap();
+    assert!(db.finish_initial_paths(generation, &[1]).is_err());
+    assert!(!db.has_path(generation, &[1]).unwrap());
+    for index in ["paths_parent", "paths_object"] {
+        assert_eq!(
+            sql.query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE type='index' AND name=?1",
+                [index],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+    }
+    sql.execute_batch("DROP TRIGGER fail_import").unwrap();
+    db.finish_initial_paths(generation, &[1]).unwrap();
+    db.complete(generation).unwrap();
+    db.publish(generation).unwrap();
+    assert!(db.has_path(generation, &[2]).unwrap());
+    for index in ["paths_parent", "paths_object"] {
+        assert_eq!(
+            sql.query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE type='index' AND name=?1",
+                [index],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+    }
+    assert_eq!(
+        sql.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r
+            .get::<_, i64>(
+            0
+        ))
+        .unwrap(),
+        0
+    );
+}
+
+#[test]
 fn invalid_candidate_is_discarded_without_touching_the_active_generation() {
     let dir = tempfile::tempdir().unwrap();
     let mut db = Volume::create(&dir.path().join("volume.sqlite"), "{}").unwrap();

@@ -22,6 +22,7 @@ workspace = true
 
 [features]
 query-bench = []
+memory-index-bench = ["rusqlite/backup"]
 
 [[bin]]
 name = "query-baseline"

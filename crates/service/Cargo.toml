@@ -18,5 +18,9 @@ serde_json.workspace = true
 tempfile.workspace = true
 rusqlite = { version = "=0.41.1", features = ["bundled"] }
 
+[features]
+memory-index-bench = ["stashfinder-store/memory-index-bench"]
+deferred-mft-bench = ["memory-index-bench", "stashfinder-windows/mft-prototype"]
+
 [lints]
 workspace = true

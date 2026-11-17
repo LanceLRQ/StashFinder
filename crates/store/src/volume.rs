@@ -40,7 +40,7 @@ pub struct Changes<'a> {
 
 pub(crate) fn configure(db: &Connection) -> Result<()> {
     db.busy_timeout(Duration::from_secs(2))?;
-    db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA cache_size=-65536;")?;
+    db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA cache_size=-65536; PRAGMA temp_store=FILE;")?;
     Ok(())
 }
 
@@ -88,7 +88,17 @@ impl Volume {
             .write(true)
             .create_new(true)
             .open(path)?;
-        let mut db = Connection::open(path)?;
+        Self::initialize(Connection::open(path)?, manifest)
+    }
+
+    #[cfg(feature = "memory-index-bench")]
+    pub fn create_in_memory(manifest: &str) -> Result<Self> {
+        let volume = Self::initialize(Connection::open_in_memory()?, manifest)?;
+        volume.db.pragma_update(None, "temp_store", "MEMORY")?;
+        Ok(volume)
+    }
+
+    fn initialize(mut db: Connection, manifest: &str) -> Result<Self> {
         configure(&db)?;
         let tx = db.transaction()?;
         tx.execute_batch("CREATE TABLE manifest (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);

@@ -26,8 +26,7 @@ impl std::error::Error for InitialPathConflict {}
 
 impl Volume {
     pub fn begin_initial_paths(&mut self, generation: i64) -> Result<()> {
-        self.db
-            .execute_batch("PRAGMA temp_store=FILE; PRAGMA temp.cache_size=-8192;")?;
+        self.db.execute_batch("PRAGMA temp.cache_size=-65536;")?;
         let tx = self
             .db
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -162,9 +161,28 @@ impl Volume {
         ensure!(complete, "初始路径父链存在循环");
         // Scan the append-only staging table sequentially and sort full rows in bulk.
         // Scanning the ID index would seek back into the table for every path.
+        let empty: bool =
+            tx.query_row("SELECT NOT EXISTS(SELECT 1 FROM paths)", [], |r| r.get(0))?;
+        let bulk_parent =
+            empty && !tx.pragma_query_value(None, "foreign_keys", |r| r.get::<_, bool>(0))?;
+        if empty {
+            // Rebuild the object lookup index only for a completely empty catalog.
+            // Keep paths_parent: deferred foreign-key checks need it during insertion.
+            // The schema changes roll back together with a failed import.
+            tx.execute_batch("DROP INDEX paths_object;")?;
+        }
+        if bulk_parent {
+            tx.execute_batch("DROP INDEX paths_parent;")?;
+        }
         tx.execute("INSERT INTO paths(generation,id,object,parent,name) SELECT ?1,p.id,p.object,p.parent,p.name
             FROM temp.initial_paths p NOT INDEXED LEFT JOIN temp.initial_reachable r ON r.id=p.parent
             WHERE p.parent IS NULL OR r.descend ORDER BY p.id", [generation])?;
+        if empty {
+            tx.execute_batch("CREATE INDEX paths_object ON paths(generation,object);")?;
+        }
+        if bulk_parent {
+            tx.execute_batch("CREATE INDEX paths_parent ON paths(generation,parent);")?;
+        }
         tx.execute("DELETE FROM objects WHERE generation=?1 AND id NOT IN (SELECT object FROM paths WHERE generation=?1)", [generation])?;
         tx.execute_batch("DROP TABLE temp.initial_reachable; DROP TABLE temp.initial_parents; DROP TABLE temp.initial_paths;")?;
         tx.commit()?;

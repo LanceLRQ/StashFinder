@@ -11,6 +11,167 @@ struct FastFixture {
     journals: Cell<usize>,
 }
 
+#[cfg(feature = "memory-index-bench")]
+#[test]
+fn direct_memory_matches_disk_search_and_persisted_cursor() {
+    use stashfinder_service::index::direct::build_direct;
+    for (failure, records, next) in [
+        (None, 3, 100),
+        (Some("replay"), 1, 200),
+        (Some("paged_delete"), 1, 300),
+        (Some("exclude"), 1, 100),
+        (Some("reparse"), 2, 100),
+        (Some("directory_delete"), 1, 200),
+        (Some("move"), 3, 200),
+    ] {
+        let source = || FastFixture {
+            failure,
+            fast: Cell::new(0),
+            legacy: Cell::new(0),
+            journals: Cell::new(0),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut baseline = Volume::create(&dir.path().join("baseline.sqlite"), "{}").unwrap();
+        let before = build(
+            &source(),
+            &mut baseline,
+            IndexMode::Journal,
+            &cancel,
+            &mut |_| {},
+        )
+        .unwrap();
+        let candidate = build_direct(&source(), &cancel, &mut |_| {}).unwrap();
+        let query = Query::parse("", false).unwrap();
+        let rows = |index: &SearchIndex| {
+            serde_json::to_value(index.search(&query, &[], 100, &cancel).unwrap().rows).unwrap()
+        };
+        assert_eq!(candidate.cursor.next, next);
+        assert_eq!(
+            candidate
+                .index
+                .search(&query, &[], 100, &cancel)
+                .unwrap()
+                .rows
+                .len(),
+            records
+        );
+        assert_eq!(rows(&candidate.index), rows(&before));
+        let path = dir.path().join("direct.sqlite");
+        candidate.persist(&path, &cancel, &mut || Ok(())).unwrap();
+        let offline = Volume::open(&path).unwrap();
+        let generation = offline.active_generation().unwrap().unwrap();
+        assert_eq!(offline.cursor(generation).unwrap().unwrap().next, next);
+        assert_eq!(
+            rows(&SearchIndex::load(&offline).unwrap().unwrap()),
+            rows(&before)
+        );
+    }
+}
+
+#[cfg(feature = "memory-index-bench")]
+#[test]
+fn direct_memory_remains_searchable_while_its_writer_is_running() {
+    use stashfinder_service::index::direct::build_direct;
+    let source = FastFixture {
+        failure: None,
+        fast: Cell::new(0),
+        legacy: Cell::new(0),
+        journals: Cell::new(0),
+    };
+    let cancel = AtomicBool::new(false);
+    let candidate = build_direct(&source, &cancel, &mut |_| {}).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("index.sqlite");
+    std::thread::scope(|scope| {
+        let (started, writing) = std::sync::mpsc::sync_channel(0);
+        let (resume, searched) = std::sync::mpsc::sync_channel(0);
+        let snapshot = &candidate;
+        let target = &path;
+        let cancelled = &cancel;
+        let writer = scope.spawn(move || {
+            let mut first = true;
+            snapshot.persist(target, cancelled, &mut || {
+                if std::mem::take(&mut first) {
+                    started.send(())?;
+                    searched.recv()?;
+                }
+                Ok(())
+            })
+        });
+        writing.recv().unwrap();
+        let unpublished = !path.exists();
+        let found =
+            candidate
+                .index
+                .search(&Query::parse("alias.txt", false).unwrap(), &[], 1, &cancel);
+        resume.send(()).unwrap();
+        writer.join().unwrap().unwrap();
+        assert!(unpublished);
+        assert_eq!(found.unwrap().rows[0].size.as_deref(), Some("42"));
+        assert!(path.exists());
+    });
+}
+
+#[cfg(feature = "memory-index-bench")]
+#[test]
+fn direct_memory_rejects_incomplete_or_ambiguous_scans() {
+    use stashfinder_service::index::direct::build_direct;
+    for failure in [
+        "orphan",
+        "duplicate",
+        "path_conflict",
+        "io",
+        "missing",
+        "reused",
+        "cycle",
+        "file_parent",
+    ] {
+        let source = FastFixture {
+            failure: Some(failure),
+            fast: Cell::new(0),
+            legacy: Cell::new(0),
+            journals: Cell::new(0),
+        };
+        assert!(
+            build_direct(&source, &AtomicBool::new(false), &mut |_| {}).is_err(),
+            "{failure}"
+        );
+    }
+}
+
+#[cfg(feature = "memory-index-bench")]
+#[test]
+fn direct_memory_cancelled_save_never_publishes_or_overwrites_a_file() {
+    use stashfinder_service::index::direct::build_direct;
+    use std::sync::atomic::Ordering;
+    let source = FastFixture {
+        failure: None,
+        fast: Cell::new(0),
+        legacy: Cell::new(0),
+        journals: Cell::new(0),
+    };
+    let cancel = AtomicBool::new(false);
+    let candidate = build_direct(&source, &cancel, &mut |_| {}).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("index.sqlite");
+    assert!(
+        candidate
+            .persist(&path, &cancel, &mut || {
+                cancel.store(true, Ordering::Relaxed);
+                Ok(())
+            })
+            .is_err()
+    );
+    assert!(!path.exists());
+    cancel.store(false, Ordering::Relaxed);
+    std::fs::write(&path, b"old snapshot").unwrap();
+    assert!(candidate.persist(&path, &cancel, &mut || Ok(())).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), b"old snapshot");
+    cancel.store(true, Ordering::Relaxed);
+    assert!(build_direct(&source, &cancel, &mut |_| {}).is_err());
+}
+
 impl Source for FastFixture {
     fn excluded_roots(&self) -> Vec<u64> {
         if self.failure == Some("exclude") {
@@ -31,7 +192,9 @@ impl Source for FastFixture {
                 && self.journals.get() > 1
             {
                 300
-            } else if self.failure == Some("replay") && self.journals.get() > 1 {
+            } else if matches!(self.failure, Some("replay" | "directory_delete" | "move"))
+                && self.journals.get() > 1
+            {
                 200
             } else {
                 100
@@ -79,8 +242,20 @@ impl Source for FastFixture {
             }])?,
             Some("orphan") => (),
             _ => consume(&[NativeObject {
-                entry: entry(20, "folder", true, 0),
-                links: vec![(5, link("folder"))],
+                entry: {
+                    let mut folder = entry(20, "folder", true, 0);
+                    if self.failure == Some("reparse") {
+                        folder.attributes |= 0x400;
+                    }
+                    if self.failure == Some("file_parent") {
+                        folder.attributes = 32;
+                    }
+                    folder
+                },
+                links: vec![(
+                    if self.failure == Some("cycle") { 20 } else { 5 },
+                    link("folder"),
+                )],
             }])?,
         }
         Ok(Some(Default::default()))
@@ -103,6 +278,23 @@ impl Source for FastFixture {
         consume(&[entry(40, "legacy.txt", false, 7)])
     }
     fn object(&self, id: u64) -> anyhow::Result<Option<NativeObject>> {
+        if self.failure == Some("directory_delete") && id == 20 {
+            return Ok(None);
+        }
+        if self.failure == Some("move") {
+            if id == 21 {
+                return Ok(Some(NativeObject {
+                    entry: entry(21, "moved.txt", false, 99),
+                    links: vec![(30, "moved.txt".encode_utf16().collect())],
+                }));
+            }
+            if id == 30 {
+                return Ok(Some(NativeObject {
+                    entry: entry(30, "new", true, 0),
+                    links: vec![(5, "new".encode_utf16().collect())],
+                }));
+            }
+        }
         if matches!(
             self.failure,
             Some("replay" | "paged_delete" | "missing" | "reused")
@@ -140,11 +332,19 @@ impl Source for FastFixture {
                 },
             });
         }
-        assert_eq!((self.failure, id, start), (Some("replay"), 1, 100));
+        assert!(matches!(
+            self.failure,
+            Some("replay" | "directory_delete" | "move")
+        ));
+        assert_eq!((id, start), (1, 100));
         Ok(UsnPage {
             next: 200,
             records: vec![UsnRecord {
-                id: 21,
+                id: if self.failure == Some("directory_delete") {
+                    20
+                } else {
+                    21
+                },
                 parent: 20,
                 usn: 150,
                 reason: 0x200,
@@ -361,6 +561,71 @@ fn sequential_replay_removes_all_links_of_a_deleted_file_before_publication() {
     assert_eq!(db.index_status().unwrap().records, 1);
     assert_eq!(db.object_count(generation).unwrap(), 2);
     assert_eq!(source.legacy.get(), 0);
+}
+
+#[cfg(feature = "memory-index-bench")]
+#[test]
+fn memory_benchmark_search_and_offline_copy_use_the_same_replayed_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("offline.sqlite");
+    let mut memory = Volume::create_in_memory("{}").unwrap();
+    let source = FastFixture {
+        failure: Some("replay"),
+        fast: Cell::new(0),
+        legacy: Cell::new(0),
+        journals: Cell::new(0),
+    };
+    let cancelled = AtomicBool::new(false);
+    let index = build(
+        &source,
+        &mut memory,
+        IndexMode::Journal,
+        &cancelled,
+        &mut |_| {},
+    )
+    .unwrap();
+    let alias = Query::parse("alias.txt", false).unwrap();
+    let folder = Query::parse("folder", false).unwrap();
+    assert!(
+        index
+            .search(&alias, &[], 1, &cancelled)
+            .unwrap()
+            .rows
+            .is_empty()
+    );
+    assert_eq!(
+        index
+            .search(&folder, &[], 1, &cancelled)
+            .unwrap()
+            .rows
+            .len(),
+        1
+    );
+    assert!(!path.exists());
+    memory
+        .backup_completed_index(&path, &cancelled, &mut || Ok(()))
+        .unwrap();
+    drop(memory);
+
+    let db = Volume::open(&path).unwrap();
+    let generation = db.active_generation().unwrap().unwrap();
+    assert_eq!(db.cursor(generation).unwrap().unwrap().next, 200);
+    let offline = SearchIndex::load(&db).unwrap().unwrap();
+    assert!(
+        offline
+            .search(&alias, &[], 1, &cancelled)
+            .unwrap()
+            .rows
+            .is_empty()
+    );
+    assert_eq!(
+        offline
+            .search(&folder, &[], 1, &cancelled)
+            .unwrap()
+            .rows
+            .len(),
+        1
+    );
 }
 
 struct Delta {

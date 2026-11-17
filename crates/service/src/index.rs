@@ -14,6 +14,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "memory-index-bench")]
+pub mod direct;
+
 #[derive(Debug)]
 pub(crate) struct JournalMissing;
 
@@ -300,7 +303,8 @@ fn path(row: &DirectoryEntry, parent: Option<u64>, name: &[u16]) -> Entry {
     let id = if row.attributes & 16 != 0 {
         directory_key(row.id)
     } else {
-        let mut key = vec![1];
+        let mut key = Vec::with_capacity(17 + name.len() * 2);
+        key.push(1);
         key.extend_from_slice(&parent.unwrap_or(0).to_le_bytes());
         key.extend_from_slice(&row.id.to_le_bytes());
         for c in name {

@@ -50,6 +50,7 @@ pub struct Journal {
     pub first: i64,
     pub next: i64,
 }
+#[derive(Clone)]
 pub struct NativeObject {
     pub entry: DirectoryEntry,
     pub links: Vec<(u64, Vec<u16>)>,
@@ -392,6 +393,47 @@ impl VolumeReader {
         cancelled: &AtomicBool,
         consume: &mut dyn FnMut(&[NativeObject]) -> Result<()>,
     ) -> Result<Option<mft::FastScanStats>> {
+        self.full_inventory_mode(cancelled, consume, false)
+    }
+
+    #[cfg(feature = "mft-prototype")]
+    pub fn full_inventory_deferred(
+        &self,
+        cancelled: &AtomicBool,
+        consume: &mut dyn FnMut(&[NativeObject]) -> Result<()>,
+    ) -> Result<Option<mft::FastScanStats>> {
+        self.full_inventory_mode(cancelled, consume, true)
+    }
+
+    fn full_inventory_mode(
+        &self,
+        cancelled: &AtomicBool,
+        consume: &mut dyn FnMut(&[NativeObject]) -> Result<()>,
+        deferred: bool,
+    ) -> Result<Option<mft::FastScanStats>> {
+        let root = self.root.to_string_lossy().into_owned();
+        let serial = self.serial64;
+        let root_id = self.root_id;
+        mft::pipeline_inventory(
+            move |consume| {
+                // Open on the reader thread so synchronous file positions are never shared.
+                let reader = Self::open(&root)?;
+                ensure!(
+                    reader.serial64 == serial && reader.root_id == root_id,
+                    "卷文件系统身份已变化"
+                );
+                reader.full_inventory_serial(cancelled, consume, deferred)
+            },
+            consume,
+        )
+    }
+
+    fn full_inventory_serial(
+        &self,
+        cancelled: &AtomicBool,
+        consume: &mut dyn FnMut(&[NativeObject]) -> Result<()>,
+        deferred: bool,
+    ) -> Result<Option<mft::FastScanStats>> {
         ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
         // Take the geometry after the caller captures the journal boundary.
         let data = self.handle.ioctl(FSCTL_GET_NTFS_VOLUME_DATA, &[])?;
@@ -407,7 +449,35 @@ impl VolumeReader {
             sector: geometry.sector_bytes,
             scratch: Vec::new(),
         };
+        #[cfg(feature = "mft-prototype")]
+        if deferred {
+            return mft::scan_mft_deferred(&mut disk, &geometry, self.root_id, cancelled, consume)
+                .map(Some);
+        }
+        let _ = deferred;
         mft::scan_mft(&mut disk, &geometry, self.root_id, cancelled, consume).map(Some)
+    }
+
+    #[cfg(feature = "mft-prototype")]
+    pub fn capture_mft(
+        &self,
+        cancelled: &AtomicBool,
+    ) -> Result<(mft::capture::Capture, mft::FastScanStats)> {
+        self.verify()?;
+        let data = self.handle.ioctl(FSCTL_GET_NTFS_VOLUME_DATA, &[])?;
+        ensure!(
+            read_field::<u64>(&data, 0)? == self.serial64,
+            "卷文件系统身份已变化"
+        );
+        let geometry = mft::Geometry::from_volume_data(&data)?.context("不支持原始 MFT 捕获")?;
+        let mut disk = RawMetadata {
+            handle: &self.handle,
+            sector: geometry.sector_bytes,
+            scratch: Vec::new(),
+        };
+        let result = mft::capture::Capture::record(&mut disk, geometry, self.root_id, cancelled)?;
+        self.verify()?;
+        Ok(result)
     }
     pub fn verify(&self) -> Result<()> {
         let access = self.root.as_os_str().to_string_lossy();

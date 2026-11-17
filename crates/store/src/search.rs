@@ -122,6 +122,8 @@ impl CachedRow {
     }
 }
 
+type PathConsumer<'a> = dyn FnMut(&[u8], &[u8], Option<&[u8]>, String) -> Result<()> + 'a;
+
 impl SearchIndex {
     pub fn load(volume: &Volume) -> Result<Option<Self>> {
         Self::load_cancelled(volume, &AtomicBool::new(false))
@@ -188,6 +190,82 @@ impl SearchIndex {
                 },
             );
         }
+        let mut stmt = volume
+            .db
+            .prepare("SELECT id,object,parent,name FROM paths NOT INDEXED WHERE generation=?1")?;
+        let mut rows = stmt.query([generation])?;
+        Self::assemble(
+            (
+                generation,
+                revision,
+                partial,
+                completed.map(u64::try_from).transpose()?,
+                phase != "ready",
+            ),
+            objects,
+            cancelled,
+            |add| {
+                while let Some(row) = rows.next()? {
+                    add(
+                        row.get_ref(0)?.as_blob()?,
+                        row.get_ref(1)?.as_blob()?,
+                        row.get_ref(2)?.as_blob_or_null()?,
+                        decode_name(row.get_ref(3)?.as_blob()?)?,
+                    )?;
+                }
+                Ok(())
+            },
+        )
+    }
+
+    #[cfg(feature = "memory-index-bench")]
+    pub fn from_initial(
+        objects: &[crate::volume::Object],
+        paths: &[crate::volume::Entry],
+        cancelled: &AtomicBool,
+    ) -> Result<Self> {
+        let mut metadata = HashMap::with_capacity(objects.len());
+        for object in objects {
+            ensure!(!cancelled.load(Ordering::Relaxed), "搜索已取消");
+            metadata.insert(
+                object.id.as_slice(),
+                ObjectMetadata {
+                    folder: object.kind == "folder",
+                    size: object.size.map(|n| n as u64),
+                    created: object.created.map(u64::from_le_bytes),
+                    modified: object.modified.map(u64::from_le_bytes),
+                    attributes: object.attributes,
+                    seen: false,
+                },
+            );
+        }
+        let mut paths: Vec<_> = paths.iter().collect();
+        paths.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+        Self::assemble((0, 0, false, None, true), metadata, cancelled, |add| {
+            for path in paths {
+                add(
+                    &path.id,
+                    &path.object,
+                    path.parent.as_deref(),
+                    decode_units(path.name.iter().copied(), path.name.len()),
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    fn assemble<K: std::borrow::Borrow<[u8]> + Eq + std::hash::Hash>(
+        (generation, revision, partial, indexed_at, needs_validation): (
+            i64,
+            i64,
+            bool,
+            Option<u64>,
+            bool,
+        ),
+        mut objects: HashMap<K, ObjectMetadata>,
+        cancelled: &AtomicBool,
+        feed: impl FnOnce(&mut PathConsumer<'_>) -> Result<()>,
+    ) -> Result<Self> {
         let mut ids = HashMap::new();
         let mut nodes: Vec<Option<DirectoryNode>> = Vec::new();
         let mut directory_id = |id: &[u8], nodes: &mut Vec<_>| {
@@ -202,20 +280,10 @@ impl SearchIndex {
         };
         let mut entries = Vec::with_capacity(objects.len().saturating_sub(1));
         let mut links = HashSet::new();
-        let mut stmt = volume
-            .db
-            .prepare("SELECT id,object,parent,name FROM paths NOT INDEXED WHERE generation=?1")?;
-        let mut rows = stmt.query([generation])?;
-        while let Some(row) = rows.next()? {
+        feed(&mut |id, object_id, parent, name| {
             ensure!(!cancelled.load(Ordering::Relaxed), "搜索已取消");
-            let id = row.get_ref(0)?.as_blob()?;
-            let object_id = row.get_ref(1)?.as_blob()?;
             let object = objects.get_mut(object_id).context("路径缺少文件对象")?;
-            let parent = row
-                .get_ref(2)?
-                .as_blob_or_null()?
-                .map(|id| directory_id(id, &mut nodes));
-            let name = decode_name(row.get_ref(3)?.as_blob()?)?;
+            let parent = parent.map(|id| directory_id(id, &mut nodes));
             if object.folder {
                 let index = directory_id(id, &mut nodes);
                 nodes[index] = Some(DirectoryNode {
@@ -224,7 +292,7 @@ impl SearchIndex {
                 });
             }
             let Some(parent) = parent else {
-                continue;
+                return Ok(());
             };
             if std::mem::replace(&mut object.seen, true) && !links.contains(object_id) {
                 links.insert(object_id.to_vec());
@@ -247,9 +315,12 @@ impl SearchIndex {
                     attributes: object.attributes,
                 },
             });
-        }
+            Ok(())
+        })?;
         drop(objects);
-        entries.sort_unstable_by(|a, b| a.row.entry.cmp(&b.row.entry));
+        if !entries.is_sorted_by(|a, b| a.row.entry <= b.row.entry) {
+            entries.sort_unstable_by(|a, b| a.row.entry.cmp(&b.row.entry));
+        }
         let mut directories = vec![None::<String>; nodes.len()];
         let mut visited = vec![false; nodes.len()];
         let mut chain = Vec::new();
@@ -300,8 +371,8 @@ impl SearchIndex {
             links,
             generation,
             partial,
-            indexed_at: completed.map(u64::try_from).transpose()?,
-            needs_validation: phase != "ready",
+            indexed_at,
+            needs_validation,
             directories,
             entries,
         })
@@ -348,7 +419,11 @@ pub(crate) fn decode_name(bytes: &[u8]) -> Result<String> {
     let units = bytes
         .chunks_exact(2)
         .map(|b| u16::from_le_bytes([b[0], b[1]]));
-    let mut value = String::with_capacity(bytes.len() / 2);
+    Ok(decode_units(units, bytes.len() / 2))
+}
+
+fn decode_units(units: impl Iterator<Item = u16>, capacity: usize) -> String {
+    let mut value = String::with_capacity(capacity);
     for character in char::decode_utf16(units) {
         match character {
             Ok(c) if !c.is_control() => value.push(c),
@@ -356,7 +431,7 @@ pub(crate) fn decode_name(bytes: &[u8]) -> Result<String> {
             Err(error) => value.push_str(&format!("\\u{{{:04x}}}", error.unpaired_surrogate())),
         }
     }
-    Ok(value)
+    value
 }
 
 pub(crate) fn decode_time(bytes: Option<Vec<u8>>) -> Result<Option<String>> {
