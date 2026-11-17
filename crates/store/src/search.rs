@@ -28,6 +28,16 @@ pub struct SearchIndex {
     links: HashSet<Vec<u8>>,
 }
 
+impl std::fmt::Debug for SearchIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SearchIndex")
+            .field("generation", &self.generation)
+            .field("revision", &self.revision)
+            .field("entries", &self.entries.len())
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CachedEntry {
     parent: usize,
@@ -139,9 +149,13 @@ impl SearchIndex {
         )?))
     }
 
-    pub fn load_generation(volume: &Volume, generation: i64, partial: bool) -> Result<Self> {
+    pub fn load_candidate(
+        volume: &Volume,
+        generation: i64,
+        cancelled: &AtomicBool,
+    ) -> Result<Self> {
         let _snapshot = volume.db.unchecked_transaction()?;
-        Self::load_generation_inner(volume, generation, partial, &AtomicBool::new(false))
+        Self::load_generation_inner(volume, generation, false, cancelled)
     }
     fn load_generation_inner(
         volume: &Volume,

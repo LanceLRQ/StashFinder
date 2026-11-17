@@ -608,6 +608,11 @@ impl Shared {
         } else {
             SearchIndex::load_cancelled(db, &self.stop)?
         };
+        self.install_index(partition, status, index);
+        Ok(())
+    }
+
+    fn install_index(&self, partition: &str, status: IndexStatus, index: Option<SearchIndex>) {
         if let Some(index) = index {
             self.caches
                 .lock()
@@ -618,7 +623,6 @@ impl Shared {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(partition.into(), status);
-        Ok(())
     }
 }
 
@@ -987,8 +991,9 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                                 Ok(())
                             },
                         )
+                        .map(Some)
                     } else {
-                        scan::build(watcher.as_mut(), &mut db, &cancel)
+                        scan::build(watcher.as_mut(), &mut db, &cancel).map(|_| None)
                     };
                     if result.is_ok() {
                         dirty.remove(id);
@@ -1004,7 +1009,7 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                         states.entry(task.partition_id.clone()).or_default().phase =
                             "syncing".into();
                     }
-                    index::synchronize(source.as_ref(), &mut db, &cancel).map(|_| ())
+                    index::synchronize(source.as_ref(), &mut db, &cancel).map(|_| None)
                 } else {
                     let source = factory(&asset)?;
                     let mode = if task.automatic && task.kind == "rebuild" {
@@ -1042,6 +1047,7 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                             state.phase = phase.into();
                             state.error = None;
                         })
+                        .map(Some)
                     })
                 };
                 if result
@@ -1059,8 +1065,16 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                 {
                     db.mark_stale(g, &error.to_string())?;
                 }
-                shared.publish(&task.partition_id, &db, false)?;
-                result
+                match result {
+                    Ok(Some(index)) => {
+                        shared.install_index(&task.partition_id, db.index_status()?, Some(index));
+                        Ok(())
+                    }
+                    result => {
+                        shared.publish(&task.partition_id, &db, false)?;
+                        result.map(drop)
+                    }
+                }
             })();
             let mut active = shared.active.lock().unwrap_or_else(|e| e.into_inner());
             let _ = shared.with_tasks(|t| {

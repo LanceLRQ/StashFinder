@@ -1,4 +1,5 @@
-use anyhow::{Result, ensure};
+use crate::search::SearchIndex;
+use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use std::{path::Path, time::Duration};
 
@@ -383,7 +384,7 @@ impl Volume {
             "活动代次已变化"
         );
         self.complete(generation)?;
-        self.publish_mode(generation, "ready", true)
+        self.publish_mode(generation, "ready", true, None).map(drop)
     }
 
     pub fn complete(&self, generation: i64) -> Result<()> {
@@ -398,14 +399,33 @@ impl Volume {
     }
 
     pub fn publish(&mut self, generation: i64) -> Result<()> {
-        self.publish_mode(generation, "ready", false)
+        self.publish_mode(generation, "ready", false, None)
+            .map(drop)
     }
 
     pub fn publish_snapshot(&mut self, generation: i64) -> Result<()> {
-        self.publish_mode(generation, "snapshot", false)
+        self.publish_mode(generation, "snapshot", false, None)
+            .map(drop)
     }
 
-    fn publish_mode(&mut self, generation: i64, phase: &str, incremental: bool) -> Result<()> {
+    pub fn publish_index(&mut self, mut index: SearchIndex, snapshot: bool) -> Result<SearchIndex> {
+        ensure!(!index.partial, "不能发布不完整的搜索索引");
+        let phase = if snapshot { "snapshot" } else { "ready" };
+        let (revision, completed) =
+            self.publish_mode(index.generation, phase, false, Some(index.revision))?;
+        index.revision = revision;
+        index.indexed_at = Some(completed);
+        index.needs_validation = snapshot;
+        Ok(index)
+    }
+
+    fn publish_mode(
+        &mut self,
+        generation: i64,
+        phase: &str,
+        incremental: bool,
+        expected_revision: Option<i64>,
+    ) -> Result<(i64, u64)> {
         let tx = self
             .db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -425,12 +445,18 @@ impl Volume {
             "UPDATE index_state SET active_generation=?1 WHERE id=1",
             [generation],
         )?;
-        tx.execute(
-            "UPDATE generations SET phase=?3,completed=?2,error=NULL,revision=revision+1 WHERE id=?1",
-            params![generation, stashfinder_core::assets::now() as i64, phase],
-        )?;
+        let completed = stashfinder_core::assets::now();
+        let revision = tx
+            .query_row(
+                "UPDATE generations SET phase=?3,completed=?2,error=NULL,revision=revision+1
+             WHERE id=?1 AND (?4 IS NULL OR revision=?4) RETURNING revision",
+                params![generation, completed as i64, phase, expected_revision],
+                |r| r.get(0),
+            )
+            .optional()?
+            .context("搜索索引构建后分区代次已变化")?;
         tx.commit()?;
-        Ok(())
+        Ok((revision, completed))
     }
 
     pub fn has_pending_metadata(&self, generation: i64) -> Result<bool> {

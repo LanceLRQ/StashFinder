@@ -1,4 +1,25 @@
-use stashfinder_store::volume::*;
+use stashfinder_store::{search::SearchIndex, volume::*};
+use std::sync::atomic::AtomicBool;
+
+#[test]
+fn stale_search_candidate_does_not_replace_the_active_generation() {
+    let root = tempfile::tempdir().unwrap();
+    let mut db = Volume::create(&root.path().join("volume.sqlite"), "{}").unwrap();
+    let active = db.begin_generation().unwrap();
+    db.complete(active).unwrap();
+    db.publish(active).unwrap();
+
+    let candidate = db.begin_generation().unwrap();
+    db.complete(candidate).unwrap();
+    let index = SearchIndex::load_candidate(&db, candidate, &AtomicBool::new(false)).unwrap();
+    db.write_batch(candidate, &[], &[], &[], None).unwrap();
+    db.complete(candidate).unwrap();
+
+    assert!(db.publish_index(index, false).is_err());
+    assert_eq!(db.active_generation().unwrap(), Some(active));
+    let reopened = SearchIndex::load(&db).unwrap().unwrap();
+    assert_eq!(reopened.generation, active);
+}
 
 #[test]
 fn existing_catalog_gains_an_object_link_index_without_changing_records() {

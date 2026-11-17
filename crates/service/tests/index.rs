@@ -189,6 +189,7 @@ fn replay_requires_deletion_evidence_across_pages_for_the_same_full_file_id() {
                     &AtomicBool::new(false),
                     &mut |_| {},
                 )
+                .map(drop)
             };
             if failure == "paged_delete" {
                 result.unwrap();
@@ -220,7 +221,7 @@ fn sequential_build_keeps_hard_links_without_legacy_enumeration() {
         legacy: Cell::new(0),
         journals: Cell::new(0),
     };
-    let report = build_with_strategy(
+    let (report, _) = build_with_strategy(
         &source,
         &mut db,
         IndexMode::Journal,
@@ -260,6 +261,33 @@ fn default_build_prefers_sequential_and_uses_legacy_only_when_needed() {
 }
 
 #[test]
+fn full_build_returns_the_committed_search_snapshot() {
+    for mode in [IndexMode::Journal, IndexMode::ScanOnly] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Volume::create(&dir.path().join("v.sqlite"), "{}").unwrap();
+        let source = FastFixture {
+            failure: None,
+            fast: Cell::new(0),
+            legacy: Cell::new(0),
+            journals: Cell::new(0),
+        };
+        let cancelled = AtomicBool::new(false);
+        let cached = build(&source, &mut db, mode, &cancelled, &mut |_| {}).unwrap();
+        let fresh = SearchIndex::load(&db).unwrap().unwrap();
+        assert_eq!(db.active_generation().unwrap(), Some(cached.generation));
+        assert_eq!(cached.revision, fresh.revision);
+        assert_eq!(cached.indexed_at, fresh.indexed_at);
+        assert_eq!(cached.needs_validation, matches!(mode, IndexMode::ScanOnly));
+        assert!(!cached.partial);
+        let query = Query::parse("", false).unwrap();
+        let as_json = |index: &SearchIndex| {
+            serde_json::to_value(index.search(&query, &[], 200, &cancelled).unwrap()).unwrap()
+        };
+        assert_eq!(as_json(&cached), as_json(&fresh));
+    }
+}
+
+#[test]
 fn fallback_restarts_a_clean_generation_only_for_eligible_failures() {
     use stashfinder_service::index::{BuildStrategy, build_with_strategy};
     for (failure, strategy, fallback) in [
@@ -292,7 +320,7 @@ fn fallback_restarts_a_clean_generation_only_for_eligible_failures() {
         assert_eq!(source.legacy.get(), usize::from(fallback));
         assert_eq!(db.object_count(1).unwrap(), 0);
         if fallback {
-            let report = result.unwrap();
+            let (report, _) = result.unwrap();
             assert_eq!(report.strategy, BuildStrategy::Legacy);
             assert!(report.fallback.is_some());
             assert_eq!(db.active_generation().unwrap(), Some(2));

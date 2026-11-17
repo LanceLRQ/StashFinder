@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, ensure};
 pub use stashfinder_core::index::IndexMode;
 use stashfinder_store::initial::{InitialPathConflict, InitialPathsIncomplete};
+use stashfinder_store::search::SearchIndex;
 use stashfinder_store::volume::{Changes, Cursor, Entry, Object, Volume};
 use stashfinder_windows::ntfs::{
     DirectoryEntry, Journal, METADATA_ONLY_USN_REASONS, NativeObject, UsnPage, UsnRecord,
@@ -321,7 +322,7 @@ pub fn build(
     mode: IndexMode,
     cancelled: &AtomicBool,
     progress: &mut dyn FnMut(&str),
-) -> Result<()> {
+) -> Result<SearchIndex> {
     build_checked(source, db, mode, cancelled, progress, &mut || Ok(()))
 }
 
@@ -332,7 +333,7 @@ pub fn build_checked(
     cancelled: &AtomicBool,
     progress: &mut dyn FnMut(&str),
     validate: &mut dyn FnMut() -> Result<()>,
-) -> Result<()> {
+) -> Result<SearchIndex> {
     build_strategy_checked(
         source,
         db,
@@ -342,7 +343,7 @@ pub fn build_checked(
         progress,
         validate,
     )
-    .map(|_| ())
+    .map(|(_, index)| index)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -370,7 +371,7 @@ pub fn build_with_strategy(
     strategy: BuildStrategy,
     cancelled: &AtomicBool,
     progress: &mut dyn FnMut(&str),
-) -> Result<BuildReport> {
+) -> Result<(BuildReport, SearchIndex)> {
     build_strategy_checked(source, db, mode, strategy, cancelled, progress, &mut || {
         Ok(())
     })
@@ -384,7 +385,7 @@ fn build_strategy_checked(
     cancelled: &AtomicBool,
     progress: &mut dyn FnMut(&str),
     validate: &mut dyn FnMut() -> Result<()>,
-) -> Result<BuildReport> {
+) -> Result<(BuildReport, SearchIndex)> {
     ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
     ensure!(
         !matches!(mode, IndexMode::ScanOnly) || strategy != BuildStrategy::Sequential,
@@ -397,7 +398,7 @@ fn build_strategy_checked(
     };
     let mut generation = db.begin_generation()?;
     let mut sequential = journal.is_some() && strategy != BuildStrategy::Legacy;
-    let result = (|| -> Result<BuildReport> {
+    let result = (|| -> Result<(BuildReport, SearchIndex)> {
         let mut report = BuildReport {
             strategy: BuildStrategy::Legacy,
             fallback: None,
@@ -646,15 +647,12 @@ fn build_strategy_checked(
         db.prune_inventory(generation)?;
         validate()?;
         db.complete(generation)?;
-        stashfinder_store::search::SearchIndex::load_generation(db, generation, false)?;
+        let index = SearchIndex::load_candidate(db, generation, cancelled)?;
         source.verify()?;
         ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
-        match mode {
-            IndexMode::ScanOnly => db.publish_snapshot(generation)?,
-            _ => db.publish(generation)?,
-        }
+        let index = db.publish_index(index, matches!(mode, IndexMode::ScanOnly))?;
         report.validate_time = validate_started.elapsed();
-        Ok(report)
+        Ok((report, index))
     })();
     if let Err(error) = &result {
         if sequential {

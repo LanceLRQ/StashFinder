@@ -2,7 +2,7 @@
 use anyhow::{Context, Result, ensure};
 use stashfinder_core::search::Query;
 use stashfinder_service::index::{BuildStrategy, IndexMode, Source, build_with_strategy};
-use stashfinder_store::{search::SearchIndex, volume::Volume};
+use stashfinder_store::volume::Volume;
 use stashfinder_windows::ntfs::{
     DirectoryEntry, Journal, NativeObject, UsnPage, UsnRecord, VolumeReader, mft::FastScanStats,
 };
@@ -162,7 +162,7 @@ fn main() -> Result<()> {
         "{}",
         serde_json::json!({"event":"build", "elapsed_ms":started.elapsed().as_millis(), "directories":source.directories.get(), "entries":source.entries.get(), "native_ms":source.native.get().as_millis(), "consumer_ms":source.consume.get().as_millis(), "error":result.as_ref().err().map(|e|format!("{e:#}"))})
     );
-    let report = result?;
+    let (report, index) = result?;
     let scan = report.scan.map(|scan| {
         serde_json::json!({
             "read_calls":scan.read_calls, "read_bytes":scan.read_bytes,
@@ -181,11 +181,9 @@ fn main() -> Result<()> {
             "validate_ms":report.validate_time.as_millis(),
         })
     );
-    let loaded = Instant::now();
-    let index = SearchIndex::load(&db)?.context("No published index")?;
     println!(
         "{}",
-        serde_json::json!({"event":"load", "elapsed_ms":loaded.elapsed().as_millis(), "total_ms":started.elapsed().as_millis(), "records":db.index_status()?.records})
+        serde_json::json!({"event":"load", "elapsed_ms":0, "reused_search_snapshot":true, "total_ms":started.elapsed().as_millis(), "records":db.index_status()?.records})
     );
     for query in ["", "ext:jpg", "StashFinder"] {
         let search = Instant::now();
