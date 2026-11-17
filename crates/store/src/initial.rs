@@ -34,9 +34,8 @@ impl Volume {
         ensure!(tx.execute("UPDATE generations SET phase='initial_paths' WHERE id=?1 AND phase='building' AND complete=0
             AND NOT EXISTS(SELECT 1 FROM index_state WHERE active_generation=?1)
             AND NOT EXISTS(SELECT 1 FROM objects WHERE generation=?1)", [generation])? == 1, "初始路径需要空的未发布代次");
-        tx.execute_batch("CREATE TEMP TABLE initial_paths (id BLOB PRIMARY KEY, object BLOB NOT NULL, parent BLOB, name BLOB NOT NULL) WITHOUT ROWID;
-            CREATE INDEX temp.initial_paths_parent ON initial_paths(parent);
-            CREATE UNIQUE INDEX temp.initial_paths_name ON initial_paths(parent,name);")?;
+        // Append in scan order. The import builds the validation indexes in bulk.
+        tx.execute_batch("CREATE TEMP TABLE initial_paths (id BLOB NOT NULL, object BLOB NOT NULL, parent BLOB, name BLOB NOT NULL);")?;
         tx.commit()?;
         Ok(())
     }
@@ -95,16 +94,7 @@ impl Volume {
                     .iter()
                     .flat_map(|unit| unit.to_le_bytes())
                     .collect();
-                match path_insert.execute(params![entry.id, entry.object, entry.parent, name]) {
-                    Err(rusqlite::Error::SqliteFailure(code, _))
-                        if code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
-                    {
-                        return Err(InitialPathConflict.into());
-                    }
-                    result => {
-                        result?;
-                    }
-                }
+                path_insert.execute(params![entry.id, entry.object, entry.parent, name])?;
             }
         }
         tx.commit()?;
@@ -116,6 +106,18 @@ impl Volume {
             .db
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure!(tx.execute("UPDATE generations SET phase='building',revision=revision+1 WHERE id=?1 AND phase='initial_paths'", [generation])? == 1, "初始路径代次未打开");
+        tx.execute_batch("CREATE UNIQUE INDEX temp.initial_paths_id ON initial_paths(id);")?;
+        // This index also serves the parent lookups during the tree walk.
+        match tx.execute_batch(
+            "CREATE UNIQUE INDEX temp.initial_paths_name ON initial_paths(parent,name);",
+        ) {
+            Err(rusqlite::Error::SqliteFailure(code, _))
+                if code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+            {
+                return Err(InitialPathConflict.into());
+            }
+            result => result?,
+        }
         let valid_root: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM temp.initial_paths p JOIN objects o ON o.generation=?1 AND o.id=p.object
             WHERE p.id=?2 AND p.parent IS NULL AND o.kind='folder') AND NOT EXISTS(SELECT 1 FROM temp.initial_paths WHERE parent IS NULL AND id!=?2)", params![generation,root], |r|r.get(0))?;
         ensure!(valid_root, "初始路径根目录不唯一或无效");

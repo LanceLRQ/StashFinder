@@ -1,5 +1,5 @@
 use stashfinder_store::{
-    initial::InitialPathsIncomplete,
+    initial::{InitialPathConflict, InitialPathsIncomplete},
     volume::{Entry, Object, Volume},
 };
 
@@ -145,6 +145,40 @@ fn duplicate_object_rolls_back_batch_and_reopening_cannot_publish_unfinished_pat
     assert!(reopened.complete(generation).is_err());
     assert!(reopened.publish(generation).is_err());
     assert!(reopened.active_generation().unwrap().is_none());
+}
+
+#[test]
+fn name_conflicts_across_batches_are_caught_before_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = Volume::create(&dir.path().join("volume.sqlite"), "{}").unwrap();
+    let generation = db.begin_generation().unwrap();
+    db.begin_initial_paths(generation).unwrap();
+    let (root, root_link) = node(1, None, true);
+    let (first, first_link) = node(2, Some(1), false);
+    let (second, mut second_link) = node(3, Some(1), false);
+    second_link.name.clone_from(&first_link.name);
+    db.write_initial_batch(generation, &[root, first], &[root_link, first_link])
+        .unwrap();
+    db.write_initial_batch(generation, &[second], &[second_link])
+        .unwrap();
+
+    assert!(
+        db.finish_initial_paths(generation, &[1])
+            .unwrap_err()
+            .is::<InitialPathConflict>()
+    );
+    assert!(db.complete(generation).is_err());
+    assert!(!db.has_path(generation, &[1]).unwrap());
+    db.discard_initial(generation, "conflicting names").unwrap();
+    assert_eq!(db.object_count(generation).unwrap(), 0);
+    let next = db.begin_generation().unwrap();
+    db.begin_initial_paths(next).unwrap();
+    let (root, root_link) = node(1, None, true);
+    db.write_initial_batch(next, &[root], &[root_link]).unwrap();
+    db.finish_initial_paths(next, &[1]).unwrap();
+    db.complete(next).unwrap();
+    db.publish(next).unwrap();
+    assert_eq!(db.active_generation().unwrap(), Some(next));
 }
 
 #[test]
