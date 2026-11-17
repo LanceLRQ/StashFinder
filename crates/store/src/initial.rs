@@ -160,8 +160,10 @@ impl Volume {
         // A disconnected cycle contains a referenced parent that is unreachable.
         let complete: bool = tx.query_row("SELECT NOT EXISTS(SELECT 1 FROM temp.initial_parents p LEFT JOIN temp.initial_reachable r ON r.id=p.id WHERE r.id IS NULL)", [], |r|r.get(0))?;
         ensure!(complete, "初始路径父链存在循环");
+        // Scan the append-only staging table sequentially and sort full rows in bulk.
+        // Scanning the ID index would seek back into the table for every path.
         tx.execute("INSERT INTO paths(generation,id,object,parent,name) SELECT ?1,p.id,p.object,p.parent,p.name
-            FROM temp.initial_paths p LEFT JOIN temp.initial_reachable r ON r.id=p.parent
+            FROM temp.initial_paths p NOT INDEXED LEFT JOIN temp.initial_reachable r ON r.id=p.parent
             WHERE p.parent IS NULL OR r.descend ORDER BY p.id", [generation])?;
         tx.execute("DELETE FROM objects WHERE generation=?1 AND id NOT IN (SELECT object FROM paths WHERE generation=?1)", [generation])?;
         tx.execute_batch("DROP TABLE temp.initial_reachable; DROP TABLE temp.initial_parents; DROP TABLE temp.initial_paths;")?;
