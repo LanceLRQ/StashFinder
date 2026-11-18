@@ -199,7 +199,7 @@ input[type="radio"] {
 }
 @media (prefers-reduced-motion: reduce) {
   .index-spinner {
-    animation: none;
+    animation-duration: 2.4s;
   }
 }
 .desktop .assets-app small {
