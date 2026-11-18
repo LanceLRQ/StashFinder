@@ -197,6 +197,9 @@ pub fn thumbnail_candidates(
     path: &Path,
     request: &ThumbnailPageRequest,
 ) -> Result<ThumbnailCandidates> {
+    let mut types = request.types.clone();
+    types.normalize()?;
+    let extensions = types.selected_extensions();
     let mut db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let tx = db.transaction()?;
     let (generation, revision): (i64, i64) = tx.query_row(
@@ -271,7 +274,11 @@ pub fn thumbnail_candidates(
         }
         if kind == "file"
             && attributes & 1024 == 0
-            && thumbnail_candidate(&crate::search::decode_name(&name)?)
+            && extensions.contains(
+                crate::search::extension(&crate::search::decode_name(&name)?)
+                    .to_lowercase()
+                    .as_str(),
+            )
         {
             reference.entry.clone_from(&id);
             match resolve_in(&tx, &reference, false, false) {
@@ -293,30 +300,4 @@ pub fn thumbnail_candidates(
         last = Some(rowid);
     }
     Ok(result)
-}
-
-fn thumbnail_candidate(name: &str) -> bool {
-    matches!(
-        crate::search::extension(name).to_ascii_lowercase().as_str(),
-        "jpg"
-            | "jpeg"
-            | "png"
-            | "webp"
-            | "gif"
-            | "bmp"
-            | "tiff"
-            | "tif"
-            | "heic"
-            | "heif"
-            | "avif"
-            | "svg"
-            | "mp4"
-            | "mkv"
-            | "mov"
-            | "avi"
-            | "webm"
-            | "wmv"
-            | "m4v"
-            | "pdf"
-    )
 }

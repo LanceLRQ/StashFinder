@@ -3,12 +3,26 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useVisuals } from "./Visuals";
 import Modal from "./Modal";
-import { cacheBytes, type CacheProgress, type CacheStatus } from "./visual-api";
+import {
+  cacheBytes,
+  type CacheProgress,
+  type CacheStatus,
+  type ThumbnailTypes,
+} from "./visual-api";
+
+const fileTypes = [
+  ["images", "图片"],
+  ["videos", "视频"],
+  ["documents", "文档（PDF）"],
+] as const;
 
 export default function CacheSettings() {
   const visuals = useVisuals();
   const [status, setStatus] = useState<CacheStatus | null>(null);
   const [limit, setLimit] = useState("");
+  const [unlimited, setUnlimited] = useState(false);
+  const [types, setTypes] = useState<ThumbnailTypes | null>(null);
+  const [extensions, setExtensions] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
@@ -26,7 +40,12 @@ export default function CacheSettings() {
         if (!live.current || id !== sequence.current) return;
         setStatus(next);
         if (!initialized.current) {
-          setLimit(String(next.limit_bytes / 1e9));
+          setLimit(
+            next.limit_bytes === null ? "2" : String(next.limit_bytes / 1e9),
+          );
+          setUnlimited(next.limit_bytes === null);
+          setTypes(next.thumbnail_types);
+          setExtensions(next.thumbnail_types.extensions.join(", "));
           initialized.current = true;
         }
       },
@@ -83,11 +102,17 @@ export default function CacheSettings() {
   useEffect(() => {
     if (confirm) return () => clearButton.current?.focus();
   }, [confirm]);
-  function update(command: "visual_cache_limit" | "visual_cache_clear") {
+  function update(
+    command:
+      | "visual_cache_limit"
+      | "visual_cache_clear"
+      | "visual_thumbnail_types",
+  ) {
     if (working.current) return;
     const bytes = Math.round(Number(limit) * 1e9);
     if (
       command === "visual_cache_limit" &&
+      !unlimited &&
       (!Number.isSafeInteger(bytes) || bytes <= 0)
     ) {
       setError("请输入有效的正数容量");
@@ -104,14 +129,32 @@ export default function CacheSettings() {
     void invoke<CacheStatus>(
       command,
       command === "visual_cache_limit"
-        ? { limitBytes: bytes, requestId }
-        : { requestId },
+        ? { limitBytes: unlimited ? null : bytes, requestId }
+        : command === "visual_thumbnail_types"
+          ? {
+              types: {
+                ...types,
+                extensions: extensions
+                  .split(/[,;，；\n]/)
+                  .map((ext) => ext.trim())
+                  .filter(Boolean),
+              },
+            }
+          : { requestId },
     )
       .then(
         (next) => {
           if (!live.current || id !== sequence.current) return;
           setStatus(next);
-          setLimit(String(next.limit_bytes / 1e9));
+          if (command === "visual_cache_limit") {
+            setUnlimited(next.limit_bytes === null);
+            if (next.limit_bytes !== null)
+              setLimit(String(next.limit_bytes / 1e9));
+          }
+          if (command === "visual_thumbnail_types") {
+            setTypes(next.thumbnail_types);
+            setExtensions(next.thumbnail_types.extensions.join(", "));
+          }
           if (command === "visual_cache_clear") {
             setConfirm(false);
             visuals?.invalidate();
@@ -132,60 +175,119 @@ export default function CacheSettings() {
       {!status ? (
         <p role="status">{error ? "" : "读取缓存…"}</p>
       ) : (
-        <div className="cache-toolbar">
-          <div className="cache-limit-row">
-            <label htmlFor="visual-cache-limit">容量上限</label>
-            <input
-              id="visual-cache-limit"
-              aria-label="图片缓存上限（GB）"
-              type="number"
-              min="0.000000001"
-              step="any"
-              value={limit}
-              disabled={busy}
-              onChange={(event) => setLimit(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") update("visual_cache_limit");
-              }}
-            />
-            <span>GB</span>
-            <button
-              disabled={busy}
-              onClick={() => update("visual_cache_limit")}
-            >
-              应用
-            </button>
-            <button
-              ref={clearButton}
-              disabled={busy}
-              onClick={() => {
-                setError("");
-                setConfirm(true);
-              }}
-            >
-              清空缓存
-            </button>
+        <>
+          <div className="cache-toolbar">
+            <div className="cache-limit-row">
+              <label htmlFor="visual-cache-limit">容量上限</label>
+              <input
+                id="visual-cache-limit"
+                aria-label="图片缓存上限（GB）"
+                type="number"
+                min="0.000000001"
+                step="any"
+                value={limit}
+                disabled={busy || unlimited}
+                onChange={(event) => setLimit(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") update("visual_cache_limit");
+                }}
+              />
+              <span>GB</span>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={unlimited}
+                  disabled={busy}
+                  onChange={(event) => setUnlimited(event.target.checked)}
+                />
+                不限容量
+              </label>
+              <button
+                disabled={busy}
+                onClick={() => update("visual_cache_limit")}
+              >
+                应用
+              </button>
+              <button
+                ref={clearButton}
+                disabled={busy}
+                onClick={() => {
+                  setError("");
+                  setConfirm(true);
+                }}
+              >
+                清空缓存
+              </button>
+            </div>
+            <div className="cache-usage-row">
+              <span>
+                {cacheBytes(status.used_bytes)} /{" "}
+                {status.limit_bytes === null
+                  ? "不限容量"
+                  : cacheBytes(status.limit_bytes)}
+              </span>
+              {status.limit_bytes !== null && (
+                <progress
+                  aria-label="图片缓存占用"
+                  value={status.used_bytes}
+                  max={status.limit_bytes}
+                />
+              )}
+              <span>
+                {status.free_bytes === null
+                  ? "磁盘剩余空间未知"
+                  : `磁盘剩余 ${cacheBytes(status.free_bytes)}`}
+              </span>
+            </div>
+            {(busy || status.waiting > 0 || status.active > 0) && (
+              <p className="cache-activity" role="status">
+                {busy
+                  ? maintenance && maintenance.total > 0
+                    ? `正在整理 ${maintenance.processed} / ${maintenance.total}`
+                    : "正在更新缓存…"
+                  : `等待 ${status.waiting} · 处理中 ${status.active}`}
+              </p>
+            )}
           </div>
-          <div className="cache-usage-row">
-            <span>
-              {cacheBytes(status.used_bytes)} / {cacheBytes(status.limit_bytes)}
-            </span>
-            <progress
-              aria-label="图片缓存占用"
-              value={status.used_bytes}
-              max={status.limit_bytes}
-            />
-          </div>
-          {(busy || status.waiting > 0 || status.active > 0) && (
-            <p className="cache-activity" role="status">
-              {busy
-                ? maintenance && maintenance.total > 0
-                  ? `正在整理 ${maintenance.processed} / ${maintenance.total}`
-                  : "正在整理缓存…"
-                : `等待 ${status.waiting} · 处理中 ${status.active}`}
-            </p>
+          {types && (
+            <fieldset className="thumbnail-types" disabled={busy}>
+              <legend>预生成文件类型</legend>
+              <div className="thumbnail-type-options">
+                {fileTypes.map(([key, label]) => (
+                  <label key={key}>
+                    <input
+                      type="checkbox"
+                      checked={types[key]}
+                      onChange={(event) =>
+                        setTypes({ ...types, [key]: event.target.checked })
+                      }
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              <label htmlFor="thumbnail-extensions">自定义扩展名</label>
+              <input
+                id="thumbnail-extensions"
+                type="text"
+                value={extensions}
+                maxLength={4096}
+                placeholder="例如 jxl, docx"
+                aria-describedby="thumbnail-extensions-help"
+                onChange={(event) => setExtensions(event.target.value)}
+              />
+              <small id="thumbnail-extensions-help">
+                用逗号分隔。生成结果取决于 Windows 对该格式的支持。
+              </small>
+              <button
+                type="button"
+                onClick={() => update("visual_thumbnail_types")}
+              >
+                保存文件类型
+              </button>
+            </fieldset>
           )}
-        </div>
+        </>
       )}
       {error && !confirm && (
         <p className="desktop-error" role="alert">
@@ -217,7 +319,7 @@ export default function CacheSettings() {
             </button>
           }
         >
-          <p>保留文件索引和容量设置。</p>
+          <p>保留文件索引、容量和预生成设置。</p>
           {error && (
             <p role="alert" className="desktop-error">
               {error}

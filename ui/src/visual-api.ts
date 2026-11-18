@@ -6,16 +6,24 @@ export type VisualImage = {
 };
 export type CacheStatus = {
   used_bytes: number;
-  limit_bytes: number;
+  limit_bytes: number | null;
+  free_bytes: number | null;
   files: number;
   waiting: number;
   active: number;
+  thumbnail_types: ThumbnailTypes;
+};
+export type ThumbnailTypes = {
+  images: boolean;
+  videos: boolean;
+  documents: boolean;
+  extensions: string[];
 };
 export type CacheProgress = {
   processed: number;
   total: number;
   used_bytes: number;
-  limit_bytes: number;
+  limit_bytes: number | null;
 };
 export const visualPhases: Record<string, string> = {
   waiting: "等待系统处理…",

@@ -14,7 +14,8 @@ const states = {
   running: "正在生成",
   paused: "已暂停",
   offline: "等待分区重新连接",
-  full: "缓存空间不足",
+  quota: "已达图片缓存上限",
+  full: "缓存磁盘空间不足",
   cancelling: "正在取消",
   cancelled: "已取消",
   completed: "已完成",
@@ -112,7 +113,7 @@ export default function ThumbnailJobs({
             <option value="rebuild">全部重建</option>
           </select>
         </label>
-        <p>处理常见图片、视频和 PDF。</p>
+        <p>按「设置 → 图片缓存」里的文件类型生成。</p>
         {error && <p role="alert">{error}</p>}
       </Modal>
     );
@@ -120,7 +121,7 @@ export default function ThumbnailJobs({
   const terminal =
     job &&
     ["completed", "cancelled", "failed", "cancelling"].includes(job.state);
-  const paused = job && ["paused", "full"].includes(job.state);
+  const paused = job && ["paused", "quota", "full"].includes(job.state);
   const processed =
     job && job.saved + job.skipped + job.unsupported + job.failed;
   return (
@@ -172,6 +173,10 @@ export default function ThumbnailJobs({
             {job.failed.toLocaleString()}
           </p>
           {job.error && <p>{job.error}</p>}
+          {job.state === "quota" && (
+            <p>提高图片缓存上限或设为不限容量后继续。</p>
+          )}
+          {job.state === "full" && <p>释放缓存磁盘空间后继续。</p>}
         </>
       ) : (
         <p>{job === null ? "暂无缩略图任务" : "正在读取任务…"}</p>

@@ -22,6 +22,59 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
+test("saves unlimited capacity and selected types with custom extensions", async () => {
+  let status = {
+    used_bytes: 42,
+    limit_bytes: 2_000_000_000 as number | null,
+    free_bytes: 100_000_000,
+    files: 1,
+    waiting: 0,
+    active: 0,
+    thumbnail_types: {
+      images: true,
+      videos: true,
+      documents: true,
+      extensions: [] as string[],
+    },
+  };
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "visual_cache_limit")
+      status = {
+        ...status,
+        limit_bytes: (args as { limitBytes: number | null }).limitBytes,
+      };
+    if (command === "visual_thumbnail_types")
+      status = {
+        ...status,
+        thumbnail_types: (args as { types: typeof status.thumbnail_types })
+          .types,
+      };
+    return status;
+  });
+  render(<CacheSettings />);
+  await screen.findByText("42 B / 2 GB");
+  fireEvent.click(screen.getByRole("checkbox", { name: "不限容量" }));
+  fireEvent.click(screen.getByRole("button", { name: "应用" }));
+  await screen.findByText("42 B / 不限容量");
+  expect(screen.queryByRole("progressbar")).toBeNull();
+  expect(screen.getByText("磁盘剩余 100 MB")).toBeTruthy();
+  fireEvent.click(screen.getByRole("checkbox", { name: "视频" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "自定义扩展名" }), {
+    target: { value: ".JXL, abc" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "保存文件类型" }));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("visual_thumbnail_types", {
+      types: {
+        images: true,
+        videos: false,
+        documents: true,
+        extensions: [".JXL", "abc"],
+      },
+    }),
+  );
+});
+
 test("maintenance progress uses its own operation and never presents an old response as current usage", async () => {
   let progress!: (event: any) => void;
   let finish!: (value: unknown) => void;
@@ -40,6 +93,13 @@ test("maintenance progress uses its own operation and never presents an old resp
     return Promise.resolve({
       used_bytes: 100_000_000,
       limit_bytes: 2_000_000_000,
+      free_bytes: null,
+      thumbnail_types: {
+        images: true,
+        videos: true,
+        documents: true,
+        extensions: [],
+      },
       files: 5,
       waiting: 0,
       active: 0,
@@ -82,6 +142,13 @@ test("maintenance progress uses its own operation and never presents an old resp
     finish({
       used_bytes: 0,
       limit_bytes: 1_000_000_000,
+      free_bytes: null,
+      thumbnail_types: {
+        images: true,
+        videos: true,
+        documents: true,
+        extensions: [],
+      },
       files: 0,
       waiting: 0,
       active: 0,
@@ -108,6 +175,13 @@ test("cache controls show real bytes, resize immediately and clear without losin
   let status = {
     used_bytes: 100_000_000,
     limit_bytes: 2_000_000_000,
+    free_bytes: null,
+    thumbnail_types: {
+      images: true,
+      videos: true,
+      documents: true,
+      extensions: [],
+    },
     files: 5,
     waiting: 1,
     active: 1,

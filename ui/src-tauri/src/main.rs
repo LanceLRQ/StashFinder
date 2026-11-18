@@ -410,6 +410,7 @@ fn run() -> Result<(), anyhow::Error> {
             visuals::visual_cache_status,
             visuals::visual_cache_limit,
             visuals::visual_cache_clear,
+            visuals::visual_thumbnail_types,
             visuals::batch::thumbnail_start,
             visuals::batch::thumbnail_status,
             visuals::batch::thumbnail_control,

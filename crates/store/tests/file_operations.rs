@@ -98,6 +98,7 @@ fn thumbnail_pages_cover_the_selected_scope_and_keep_the_generation() {
         generation: None,
         folder: Some(vec![2]),
         after: None,
+        types: ThumbnailTypes::default(),
     };
     for (folder, expected) in [(Some(vec![2]), 81), (None, 82)] {
         request.folder = folder;
@@ -122,6 +123,35 @@ fn thumbnail_pages_cover_the_selected_scope_and_keep_the_generation() {
     }
     request.generation = Some("999".into());
     assert!(file_operations::thumbnail_candidates(&path, &request).is_err());
+
+    sql.execute(
+        "UPDATE paths SET name=?1 WHERE id=?2",
+        rusqlite::params![
+            "outer.JXL"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>(),
+            [4u8]
+        ],
+    )
+    .unwrap();
+    request.generation = Some(reference.generation.clone());
+    request.types = ThumbnailTypes {
+        images: false,
+        videos: false,
+        documents: false,
+        extensions: vec![".JXL".into()],
+    };
+    let mut custom = Vec::new();
+    loop {
+        let page = file_operations::thumbnail_candidates(&path, &request).unwrap();
+        custom.extend(page.files.into_iter().map(|f| f.reference.entry));
+        request.after = page.next;
+        if request.after.is_none() {
+            break;
+        }
+    }
+    assert_eq!(custom, vec![vec![4]]);
 }
 
 #[test]

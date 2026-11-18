@@ -10,6 +10,14 @@ use windows::{
     core::{GUID, HSTRING},
 };
 
+pub fn available_disk_space(path: &std::path::Path) -> Result<u64> {
+    let path = HSTRING::from(path.as_os_str());
+    let mut free = 0;
+    // SAFETY: The directory name and output remain valid for the duration of the call.
+    unsafe { GetDiskFreeSpaceExW(&path, Some(&mut free), None, None) }?;
+    Ok(free)
+}
+
 pub trait Scalar: Sized {
     fn decode(bytes: &[u8]) -> Result<Self>;
     fn width() -> usize;

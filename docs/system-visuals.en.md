@@ -10,13 +10,15 @@ Offline previews read only the local image cache. Cached previews are labeled as
 
 ## Pre-generate thumbnails
 
-Choose **Pre-generate thumbnails** in the overview details for an online partition or in a folder's context menu. Folder jobs include subfolders and read common image, video, and PDF entries from the existing index. By default the job skips existing thumbnails. Choose **Rebuild all** to have Windows extract new images. Each old image is replaced after its new image is saved successfully.
+Choose **Pre-generate thumbnails** in the overview details for an online partition or in a folder's context menu. Folder jobs include subfolders and filter entries from the existing index. By default the job skips existing thumbnails. Choose **Rebuild all** to have Windows extract new images. Each old image is replaced after its new image is saved successfully.
 
-Open **Tools → Thumbnail jobs** to see discovered, processed, saved, skipped, and failed counts, or to pause, resume, and cancel the job. A disconnected partition waits for reconnection and a full cache pauses the job. Exiting ends the job and retains saved images, which can be reused by choosing **Skip existing** next time.
+Open **Tools → Thumbnail jobs** to see discovered, processed, saved, skipped, and failed counts, or to pause, resume, and cancel the job. A disconnected partition waits for reconnection. The job keeps its progress when it reaches the cache limit or runs low on disk space. After adjusting the limit or freeing space, choose **Resume** to retry the current file. Exiting ends the job and retains saved images, which can be reused by choosing **Skip existing** next time.
 
 ## Cache settings
 
-Open **Settings → Cache** to view usage, the limit, and current activity. The default limit is **2 GB (2,000,000,000 bytes)** and can be changed.
+Open **Settings → Image cache** to view cache usage, free space on the cache drive, and current activity. The default limit is **2 GB (2,000,000,000 bytes)**. Apply **Unlimited** to disable eviction based on the cache limit.
+
+Images, videos, and documents (PDF) are enabled for pre-generation by default. Disable any category or add comma-separated custom extensions such as `jxl, docx`. Changes apply to new jobs. The installed Windows thumbnail providers determine whether an added format can produce a thumbnail.
 
 - Icons and thumbnails are separate PNG files, outside the SQLite indexes.
 - Least recently used images are evicted when necessary. Lowering the limit immediately trims the cache. An image larger than the limit can be displayed without being stored.

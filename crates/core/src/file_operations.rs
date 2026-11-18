@@ -74,6 +74,59 @@ pub struct VisualRecord {
     pub online: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ThumbnailTypes {
+    pub images: bool,
+    pub videos: bool,
+    pub documents: bool,
+    pub extensions: Vec<String>,
+}
+
+impl Default for ThumbnailTypes {
+    fn default() -> Self {
+        Self {
+            images: true,
+            videos: true,
+            documents: true,
+            extensions: Vec::new(),
+        }
+    }
+}
+
+impl ThumbnailTypes {
+    pub fn normalize(&mut self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.extensions.iter().map(String::len).sum::<usize>() <= 4096,
+            "自定义扩展名过长"
+        );
+        self.extensions = crate::search::normalize_extensions(&self.extensions)?;
+        anyhow::ensure!(self.extensions.len() <= 64, "最多添加 64 个自定义扩展名");
+        Ok(())
+    }
+
+    pub fn selected_extensions(&self) -> std::collections::HashSet<&str> {
+        let mut selected = self
+            .extensions
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::HashSet<_>>();
+        if self.images {
+            selected.extend([
+                "jpg", "jpeg", "png", "webp", "gif", "bmp", "tiff", "tif", "heic", "heif", "avif",
+                "svg",
+            ]);
+        }
+        if self.videos {
+            selected.extend(["mp4", "mkv", "mov", "avi", "webm", "wmv", "m4v"]);
+        }
+        if self.documents {
+            selected.insert("pdf");
+        }
+        selected
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ThumbnailPageRequest {
     pub partition_id: String,
@@ -81,6 +134,7 @@ pub struct ThumbnailPageRequest {
     pub generation: Option<String>,
     pub folder: Option<Vec<u8>>,
     pub after: Option<i64>,
+    pub types: ThumbnailTypes,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use stashfinder_core::file_operations::ThumbnailTypes;
 use std::{
     collections::HashMap,
     fs,
@@ -38,17 +39,25 @@ impl Key {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
     version: u32,
-    limit_bytes: u64,
+    #[serde(default = "default_limit")]
+    limit_bytes: Option<u64>,
+    #[serde(default)]
+    thumbnail_types: ThumbnailTypes,
+}
+
+fn default_limit() -> Option<u64> {
+    Some(DEFAULT_LIMIT)
 }
 
 #[derive(Clone, Serialize)]
 pub struct Stats {
     pub used_bytes: u64,
-    pub limit_bytes: u64,
+    pub limit_bytes: Option<u64>,
+    pub free_bytes: Option<u64>,
     pub files: usize,
 }
 #[derive(Clone, Serialize)]
@@ -56,7 +65,7 @@ pub struct Progress {
     pub processed: usize,
     pub total: usize,
     pub used_bytes: u64,
-    pub limit_bytes: u64,
+    pub limit_bytes: Option<u64>,
 }
 
 struct Entry {
@@ -66,22 +75,27 @@ struct Entry {
 pub struct Cache {
     root: PathBuf,
     config: PathBuf,
-    limit: u64,
+    settings: Config,
     used: u64,
     entries: HashMap<Key, Entry>,
     clock: SystemTime,
 }
 impl Cache {
     pub fn open(root: PathBuf, config: PathBuf) -> Result<Self> {
-        let limit = match fs::read(&config) {
+        let settings = match fs::read(&config) {
             Ok(bytes) => {
-                let stored: Config =
+                let mut stored: Config =
                     serde_json::from_slice(&bytes).context("图片缓存设置损坏，请检查缓存配置")?;
                 ensure!(stored.version == 1, "图片缓存设置版本不受支持");
                 validate_limit(stored.limit_bytes)?;
-                stored.limit_bytes
+                stored.thumbnail_types.normalize()?;
+                stored
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => DEFAULT_LIMIT,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Config {
+                version: 1,
+                limit_bytes: default_limit(),
+                thumbnail_types: ThumbnailTypes::default(),
+            },
             Err(error) => return Err(error).context("无法读取图片缓存设置"),
         };
         fs::create_dir_all(&root).context("无法创建图片缓存目录")?;
@@ -108,20 +122,29 @@ impl Cache {
         let mut cache = Self {
             root,
             config,
-            limit,
+            settings,
             used,
             entries,
             clock: SystemTime::now(),
         };
-        cache.trim(limit, |_| {})?;
+        if let Some(limit) = cache.settings.limit_bytes {
+            cache.trim(limit, |_| {})?;
+        }
         Ok(cache)
     }
     pub fn stats(&self) -> Stats {
         Stats {
             used_bytes: self.used,
-            limit_bytes: self.limit,
+            limit_bytes: self.settings.limit_bytes,
+            free_bytes: self.free_bytes(),
             files: self.entries.len(),
         }
+    }
+    pub fn free_bytes(&self) -> Option<u64> {
+        stashfinder_windows::volumes::available_disk_space(&self.root).ok()
+    }
+    pub fn thumbnail_types(&self) -> &ThumbnailTypes {
+        &self.settings.thumbnail_types
     }
     pub fn get(&mut self, key: Key) -> Result<Option<Vec<u8>>> {
         if !self.entries.contains_key(&key) {
@@ -145,7 +168,11 @@ impl Cache {
         Ok(Some(bytes))
     }
     pub fn put(&mut self, key: Key, bytes: &[u8]) -> Result<bool> {
-        if bytes.len() as u64 > self.limit {
+        if self
+            .settings
+            .limit_bytes
+            .is_some_and(|limit| bytes.len() as u64 > limit)
+        {
             self.remove(key)?;
             return Ok(false);
         }
@@ -168,29 +195,47 @@ impl Cache {
                 touched: self.clock,
             },
         );
-        self.trim(self.limit, |_| {})?;
+        if let Some(limit) = self.settings.limit_bytes {
+            self.trim(limit, |_| {})?;
+        }
         Ok(true)
     }
     pub fn fits_without_eviction(&self, key: Key, bytes: usize) -> bool {
         let replaced = self.entries.get(&key).map_or(0, |entry| entry.bytes);
-        self.used - replaced + bytes as u64 <= self.limit
+        self.settings
+            .limit_bytes
+            .is_none_or(|limit| self.used - replaced + bytes as u64 <= limit)
     }
-    pub fn set_limit(&mut self, limit: u64, progress: impl FnMut(Progress)) -> Result<()> {
+    pub fn set_limit(&mut self, limit: Option<u64>, progress: impl FnMut(Progress)) -> Result<()> {
         validate_limit(limit)?;
+        self.write_config(Config {
+            limit_bytes: limit,
+            ..self.settings.clone()
+        })?;
+        if let Some(limit) = limit {
+            self.trim(limit, progress)?;
+        }
+        Ok(())
+    }
+    pub fn set_thumbnail_types(&mut self, mut types: ThumbnailTypes) -> Result<()> {
+        types.normalize()?;
+        self.write_config(Config {
+            thumbnail_types: types,
+            ..self.settings.clone()
+        })
+    }
+    fn write_config(&mut self, settings: Config) -> Result<()> {
         let parent = self.config.parent().context("缓存配置路径无父目录")?;
         fs::create_dir_all(parent)?;
         let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-        temporary.write_all(&serde_json::to_vec(&Config {
-            version: 1,
-            limit_bytes: limit,
-        })?)?;
+        temporary.write_all(&serde_json::to_vec(&settings)?)?;
         temporary.as_file().sync_all()?;
         temporary
             .persist(&self.config)
             .map_err(|e| e.error)
             .context("无法保存图片缓存设置")?;
-        self.limit = limit;
-        self.trim(limit, progress)
+        self.settings = settings;
+        Ok(())
     }
     pub fn clear(&mut self, progress: impl FnMut(Progress)) -> Result<()> {
         self.trim(0, progress)
@@ -213,7 +258,7 @@ impl Cache {
                 processed: 0,
                 total: 0,
                 used_bytes: self.used,
-                limit_bytes: self.limit,
+                limit_bytes: self.settings.limit_bytes,
             });
             return Ok(());
         }
@@ -240,7 +285,7 @@ impl Cache {
             processed: 0,
             total,
             used_bytes: self.used,
-            limit_bytes: self.limit,
+            limit_bytes: self.settings.limit_bytes,
         });
         for (index, key) in victims.into_iter().enumerate() {
             self.remove(key)?;
@@ -248,15 +293,15 @@ impl Cache {
                 processed: index + 1,
                 total,
                 used_bytes: self.used,
-                limit_bytes: self.limit,
+                limit_bytes: self.settings.limit_bytes,
             });
         }
         Ok(())
     }
 }
-fn validate_limit(limit: u64) -> Result<()> {
+fn validate_limit(limit: Option<u64>) -> Result<()> {
     ensure!(
-        limit > 0 && limit <= 9_007_199_254_740_991,
+        limit.is_none_or(|bytes| bytes > 0 && bytes <= 9_007_199_254_740_991),
         "缓存上限必须是可精确表示的正整数字节数"
     );
     Ok(())
@@ -265,6 +310,39 @@ fn validate_limit(limit: u64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn persisted_unlimited_keeps_preexisting_pngs() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("cache");
+        let config = temp.path().join("visual-cache.json");
+        let key = Key::new(b"phase-one-preview");
+        fs::write(&config, br#"{"version":1,"limit_bytes":2000000000}"#).unwrap();
+        let mut cache = Cache::open(root.clone(), config.clone()).unwrap();
+        assert_eq!(cache.thumbnail_types(), &ThumbnailTypes::default());
+        assert_eq!(cache.stats().limit_bytes, Some(DEFAULT_LIMIT));
+        let image = stashfinder_windows::visuals::type_icon("existing.png", false, 32).unwrap();
+        cache.put(key, &image).unwrap();
+        let mut types = ThumbnailTypes {
+            videos: false,
+            extensions: vec![".JXL, jxl".into()],
+            ..Default::default()
+        };
+        cache.set_thumbnail_types(types.clone()).unwrap();
+        cache.set_limit(None, |_| {}).unwrap();
+        drop(cache);
+        let mut cache = Cache::open(root.clone(), config.clone()).unwrap();
+        assert_eq!(cache.stats().limit_bytes, None);
+        types.extensions = vec!["jxl".into()];
+        assert_eq!(cache.thumbnail_types(), &types);
+        assert_eq!(cache.get(key).unwrap().unwrap(), image);
+        assert!(cache.fits_without_eviction(Key::new(b"next"), 2_000_000_001));
+        cache.clear(|_| {}).unwrap();
+        let reopened = Cache::open(root, config).unwrap();
+        assert_eq!(reopened.stats().files, 0);
+        assert_eq!(reopened.stats().limit_bytes, None);
+        assert_eq!(reopened.thumbnail_types(), &types);
+    }
 
     #[test]
     fn maintenance_progress_counts_the_actual_batch_and_remaining_bytes() {
@@ -276,7 +354,7 @@ mod tests {
         cache.put(Key::new(b"third"), b"12345").unwrap();
         let mut events = Vec::new();
         cache
-            .set_limit(7, |progress| events.push(progress))
+            .set_limit(Some(7), |progress| events.push(progress))
             .unwrap();
         assert_eq!(events.first().unwrap().processed, 0);
         assert_eq!(events.last().unwrap().processed, 2);
@@ -297,20 +375,20 @@ mod tests {
         let index = temp.path().join("index.sqlite");
         std::fs::write(&index, b"index must survive").unwrap();
         let mut cache = Cache::open(root.clone(), config.clone()).unwrap();
-        assert_eq!(cache.stats().limit_bytes, 2_000_000_000);
+        assert_eq!(cache.stats().limit_bytes, Some(2_000_000_000));
         let a = Key::new(b"a");
         let b = Key::new(b"b");
         cache.put(a, b"first").unwrap();
         cache.put(b, b"second").unwrap();
         assert_eq!(cache.get(a).unwrap().unwrap(), b"first");
-        cache.set_limit(6, |_| {}).unwrap();
+        cache.set_limit(Some(6), |_| {}).unwrap();
         assert!(cache.get(b).unwrap().is_none());
         assert_eq!(cache.stats().used_bytes, 5);
         assert!(!cache.put(b, b"too large").unwrap());
         assert_eq!(cache.stats().files, 1);
         drop(cache);
         let mut cache = Cache::open(root, config.clone()).unwrap();
-        assert_eq!(cache.stats().limit_bytes, 6);
+        assert_eq!(cache.stats().limit_bytes, Some(6));
         assert_eq!(cache.get(a).unwrap().unwrap(), b"first");
         cache.clear(|_| {}).unwrap();
         assert_eq!(cache.stats().used_bytes, 0);
@@ -322,7 +400,7 @@ mod tests {
                 .unwrap()
                 .stats()
                 .limit_bytes,
-            6
+            Some(6)
         );
     }
 
@@ -339,7 +417,7 @@ mod tests {
         let outside = root.join("unrelated.txt");
         std::fs::write(&outside, b"keep").unwrap();
         cache.put(Key::new(b"known"), b"image").unwrap();
-        assert!(cache.set_limit(0, |_| {}).is_err());
+        assert!(cache.set_limit(Some(0), |_| {}).is_err());
         cache.clear(|_| {}).unwrap();
         assert_eq!(std::fs::read(outside).unwrap(), b"keep");
     }

@@ -18,6 +18,7 @@ pub enum BatchState {
     Running,
     Paused,
     Offline,
+    Quota,
     Full,
     Cancelling,
     Cancelled,
@@ -67,13 +68,22 @@ pub enum BatchAction {
 }
 
 #[tauri::command]
-pub fn thumbnail_start(
+pub async fn thumbnail_start(
     app: tauri::AppHandle,
     state: State<'_, Visuals>,
     options: BatchOptions,
 ) -> Result<(), String> {
     let paths = Paths::from_app(&app).map_err(|error| error.to_string())?;
     let shared = state.0.clone();
+    let types = {
+        let shared = shared.clone();
+        let paths = paths.clone();
+        background(move || shared.cached(&paths, |cache| Ok(cache.thumbnail_types().clone())))
+            .await?
+    };
+    if types.selected_extensions().is_empty() {
+        return Err("请先在「设置 → 图片缓存」选择预生成的文件类型".into());
+    }
     let mut slot = shared.batch.lock();
     if slot.as_ref().is_some_and(|job| !job.state.finished()) {
         return Err("已有缩略图任务在运行".into());
@@ -101,6 +111,7 @@ pub fn thumbnail_start(
                 generation: options.generation,
                 folder: options.folder,
                 after: None,
+                types,
             },
             options.rebuild,
             epoch,
@@ -147,7 +158,9 @@ pub fn thumbnail_control(state: State<'_, Visuals>, action: BatchAction) {
     if let Some(job) = state.0.batch.lock().as_mut() {
         job.state = match (action, job.state) {
             (BatchAction::Pause, BatchState::Running | BatchState::Offline) => BatchState::Paused,
-            (BatchAction::Resume, BatchState::Paused | BatchState::Full) => BatchState::Running,
+            (BatchAction::Resume, BatchState::Paused | BatchState::Quota | BatchState::Full) => {
+                BatchState::Running
+            }
             (BatchAction::Cancel, current) if !current.finished() => BatchState::Cancelling,
             (_, current) => current,
         };
@@ -159,7 +172,7 @@ async fn wait(batch: &Batch) -> bool {
         let state = batch.lock().as_ref().unwrap().state;
         match state {
             BatchState::Running | BatchState::Offline => return true,
-            BatchState::Paused | BatchState::Full => {
+            BatchState::Paused | BatchState::Quota | BatchState::Full => {
                 tokio::time::sleep(Duration::from_millis(200)).await
             }
             _ => return false,
@@ -242,9 +255,13 @@ async fn run(
                         Ok(Outcome::Saved) => job.saved += 1,
                         Ok(Outcome::Skipped) => job.skipped += 1,
                         Ok(Outcome::Unsupported) => job.unsupported += 1,
-                        Ok(Outcome::Full) => {
+                        Ok(reason @ (Outcome::Quota | Outcome::Full)) => {
                             if job.state == BatchState::Running {
-                                job.state = BatchState::Full;
+                                job.state = if reason == Outcome::Quota {
+                                    BatchState::Quota
+                                } else {
+                                    BatchState::Full
+                                };
                             }
                             continue;
                         }
@@ -284,6 +301,7 @@ pub(super) enum Outcome {
     Saved,
     Skipped,
     Unsupported,
+    Quota,
     Full,
     Offline,
     Interrupted,
@@ -343,6 +361,12 @@ impl Shared {
                 return Ok(Outcome::Interrupted);
             }
             if !cache.fits_without_eviction(key, bytes.len()) {
+                return Ok(Outcome::Quota);
+            }
+            if cache
+                .free_bytes()
+                .is_some_and(|free| free < bytes.len() as u64)
+            {
                 return Ok(Outcome::Full);
             }
             match cache.put(key, &bytes) {

@@ -7,7 +7,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use stashfinder_core::{
     Action, Response,
-    file_operations::{EntryRef, PreparedTarget, VisualRecord},
+    file_operations::{EntryRef, PreparedTarget, ThumbnailTypes, VisualRecord},
 };
 use stashfinder_windows::{file_operations::verify, ipc};
 use std::{
@@ -297,9 +297,12 @@ impl Shared {
         self.cached(paths, |cache| cache.clear(progress))
     }
     fn status(&self, paths: &Paths) -> Result<CacheStatus> {
-        let stats = self.cached(paths, |cache| Ok(cache.stats()))?;
+        let (stats, thumbnail_types) = self.cached(paths, |cache| {
+            Ok((cache.stats(), cache.thumbnail_types().clone()))
+        })?;
         Ok(CacheStatus {
             stats,
+            thumbnail_types,
             waiting: self.waiting.load(Ordering::Relaxed),
             active: self.active.load(Ordering::Relaxed),
         })
@@ -315,6 +318,7 @@ impl Default for Visuals {
 pub struct CacheStatus {
     #[serde(flatten)]
     stats: Stats,
+    thumbnail_types: ThumbnailTypes,
     waiting: usize,
     active: usize,
 }
@@ -450,7 +454,7 @@ pub async fn visual_cache_status(
 pub async fn visual_cache_limit(
     app: AppHandle,
     state: State<'_, Visuals>,
-    limit_bytes: u64,
+    limit_bytes: Option<u64>,
     request_id: String,
 ) -> Result<CacheStatus, String> {
     let paths = Paths::from_app(&app).map_err(|e| e.to_string())?;
@@ -458,6 +462,21 @@ pub async fn visual_cache_limit(
     let progress = maintenance_progress(app, request_id);
     background(move || {
         shared.cached(&paths, |cache| cache.set_limit(limit_bytes, progress))?;
+        shared.status(&paths)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn visual_thumbnail_types(
+    app: AppHandle,
+    state: State<'_, Visuals>,
+    types: ThumbnailTypes,
+) -> Result<CacheStatus, String> {
+    let paths = Paths::from_app(&app).map_err(|e| e.to_string())?;
+    let shared = state.0.clone();
+    background(move || {
+        shared.cached(&paths, |cache| cache.set_thumbnail_types(types))?;
         shared.status(&paths)
     })
     .await
