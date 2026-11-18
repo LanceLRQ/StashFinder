@@ -582,6 +582,13 @@ test("shows a running build ahead of an older failure and resolves other indexin
   fireEvent.click(screen.getByRole("button", { name: "工具" }));
   fireEvent.click(screen.getByRole("menuitem", { name: "任务" }));
   fireEvent.click(await screen.findByRole("button", { name: /需处理/ }));
+  const table = screen.getByRole("table");
+  const rowCount = table.querySelectorAll("tr").length;
+  fireEvent.click(within(table).getByRole("button", { name: "Movies" }));
+  const details = await screen.findByRole("dialog", { name: "任务详情" });
+  expect(within(details).getByText("failed-task")).toBeTruthy();
+  expect(table.querySelectorAll("tr")).toHaveLength(rowCount);
+  fireEvent.click(within(details).getByRole("button", { name: "关闭" }));
   fireEvent.click(await screen.findByRole("button", { name: "重试 Movies" }));
   expect(invoke).toHaveBeenCalledWith("index_request", {
     action: { task_retry: { id: "failed-task" } },

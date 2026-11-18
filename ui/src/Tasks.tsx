@@ -1,5 +1,6 @@
-import { Fragment, useState } from "react";
+import { useState } from "react";
 import { indexLabels } from "./IndexControls";
+import Modal from "./Modal";
 import { ThumbnailProgress } from "./ThumbnailJobs";
 import { useVisuals } from "./Visuals";
 import "./tasks.css";
@@ -33,7 +34,7 @@ export default function Tasks({
   const revision = useVisuals()?.thumbnailTaskRevision ?? 0;
   const [group, setGroup] = useState("recent");
   const [partition, setPartition] = useState("");
-  const [expanded, setExpanded] = useState("");
+  const [detailsId, setDetailsId] = useState("");
   const [sending, setSending] = useState(false);
   const [actionError, setActionError] = useState("");
   const rows = (data?.tasks || []).filter(
@@ -43,6 +44,7 @@ export default function Tasks({
     group === "recent"
       ? rows.sort((a, b) => b.updated - a.updated).slice(0, 5)
       : rows.filter((task) => taskGroup(task) === group);
+  const details = data?.tasks.find((task) => task.id === detailsId);
   async function command(action: Parameters<typeof taskCommand>[0]) {
     if (sending) return;
     setSending(true);
@@ -120,15 +122,20 @@ export default function Tasks({
           ))}
         </div>
       )}
-      <div className="task-table-wrap">
+      <div
+        className="task-table-wrap"
+        role="region"
+        aria-label="索引任务列表"
+        tabIndex={0}
+      >
         <table className="task-table">
           <thead>
             <tr>
-              <th>分区</th>
-              <th>任务</th>
-              <th>状态</th>
-              <th>更新时间</th>
-              <th>操作</th>
+              <th scope="col">分区</th>
+              <th scope="col">任务</th>
+              <th scope="col">状态</th>
+              <th scope="col">更新时间</th>
+              <th scope="col">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -138,125 +145,94 @@ export default function Tasks({
               const online = part?.connection === "online";
               const current = taskGroup(task) === "current";
               return (
-                <Fragment key={task.id}>
-                  <tr>
-                    <td>
-                      <button
-                        className="task-name"
-                        aria-expanded={expanded === task.id}
-                        onClick={() =>
-                          setExpanded(expanded === task.id ? "" : task.id)
-                        }
-                      >
-                        {name}
-                      </button>
-                      <small>
-                        {online
-                          ? "在线"
-                          : part?.connection === "historical"
-                            ? "历史记录"
-                            : "未接入"}
+                <tr key={task.id}>
+                  <td>
+                    <button
+                      className="task-name"
+                      aria-haspopup="dialog"
+                      onClick={() => setDetailsId(task.id)}
+                    >
+                      {name}
+                    </button>
+                    <small>
+                      {online
+                        ? "在线"
+                        : part?.connection === "historical"
+                          ? "历史记录"
+                          : "未接入"}
+                    </small>
+                  </td>
+                  <td>{taskKinds[task.kind] || task.kind}</td>
+                  <td>
+                    <span className={`task-state ${task.state}`}>
+                      {task.phase
+                        ? indexLabels[task.phase] || task.phase
+                        : taskLabels[task.state] || task.state}
+                    </span>
+                    {(task.state === "needs_confirmation" || task.error) && (
+                      <small className="task-error">
+                        {task.error || "此分区没有 USN 日志"}
                       </small>
-                    </td>
-                    <td>{taskKinds[task.kind] || task.kind}</td>
-                    <td>
-                      <span className={`task-state ${task.state}`}>
-                        {task.phase
-                          ? indexLabels[task.phase] || task.phase
-                          : taskLabels[task.state] || task.state}
-                      </span>
-                      {(task.state === "needs_confirmation" || task.error) && (
-                        <small className="task-error">
-                          {task.error || "此分区没有 USN 日志"}
-                        </small>
-                      )}
-                    </td>
-                    <td className="task-time">
-                      {new Date(task.updated * 1000).toLocaleString()}
-                    </td>
-                    <td className="task-actions">
-                      {current ? (
-                        <>
-                          <button
-                            aria-label={`取消 ${name}`}
-                            disabled={sending || !!error}
-                            onClick={() =>
-                              void command({ task_cancel: { id: task.id } })
-                            }
-                          >
-                            取消
-                          </button>
-                          <button
-                            aria-label={`暂停 ${name}`}
-                            disabled={
-                              sending ||
-                              !!error ||
-                              data?.paused.includes(task.partition_id)
-                            }
-                            onClick={() =>
-                              void command({
-                                partition_pause: {
-                                  partition_id: task.partition_id,
-                                  paused: true,
-                                },
-                              })
-                            }
-                          >
-                            暂停
-                          </button>
-                        </>
-                      ) : task.state === "needs_confirmation" ? (
+                    )}
+                  </td>
+                  <td className="task-time">
+                    {new Date(task.updated * 1000).toLocaleString()}
+                  </td>
+                  <td className="task-actions">
+                    {current ? (
+                      <>
                         <button
-                          aria-label={`选择索引方式 ${name}`}
-                          disabled={sending || !!error || !part?.canChooseIndex}
-                          onClick={() => onChooseIndex(task.partition_id)}
-                        >
-                          选择索引方式…
-                        </button>
-                      ) : ["failed", "interrupted", "cancelled"].includes(
-                          task.state,
-                        ) ? (
-                        <button
-                          aria-label={`重试 ${name}`}
-                          title={online ? "重新执行" : "接入并确认分区后可重试"}
-                          disabled={sending || !!error || !part?.canRetry}
+                          aria-label={`取消 ${name}`}
+                          disabled={sending || !!error}
                           onClick={() =>
-                            void command({ task_retry: { id: task.id } })
+                            void command({ task_cancel: { id: task.id } })
                           }
                         >
-                          重试
+                          取消
                         </button>
-                      ) : null}
-                    </td>
-                  </tr>
-                  {expanded === task.id && (
-                    <tr className="task-detail">
-                      <td colSpan={5}>
-                        <dl>
-                          <div>
-                            <dt>触发方式</dt>
-                            <dd>
-                              {task.automatic ? "后台自动更新" : "手动操作"}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>创建时间</dt>
-                            <dd>
-                              {new Date(task.created * 1000).toLocaleString()}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>任务 ID</dt>
-                            <dd>{task.id}</dd>
-                          </div>
-                        </dl>
-                        {task.state === "cancelled" && (
-                          <p>保留已提交索引；继续更新需恢复这个分区。</p>
-                        )}
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
+                        <button
+                          aria-label={`暂停 ${name}`}
+                          disabled={
+                            sending ||
+                            !!error ||
+                            data?.paused.includes(task.partition_id)
+                          }
+                          onClick={() =>
+                            void command({
+                              partition_pause: {
+                                partition_id: task.partition_id,
+                                paused: true,
+                              },
+                            })
+                          }
+                        >
+                          暂停
+                        </button>
+                      </>
+                    ) : task.state === "needs_confirmation" ? (
+                      <button
+                        aria-label={`选择索引方式 ${name}`}
+                        disabled={sending || !!error || !part?.canChooseIndex}
+                        onClick={() => onChooseIndex(task.partition_id)}
+                      >
+                        选择索引方式…
+                      </button>
+                    ) : ["failed", "interrupted", "cancelled"].includes(
+                        task.state,
+                      ) ? (
+                      <button
+                        aria-label={`重试 ${name}`}
+                        title={online ? "重新执行" : "接入并确认分区后可重试"}
+                        disabled={sending || !!error || !part?.canRetry}
+                        onClick={() =>
+                          void command({ task_retry: { id: task.id } })
+                        }
+                      >
+                        重试
+                      </button>
+                    ) : null}
+                  </td>
+                </tr>
               );
             })}
             {!shown.length && (
@@ -275,6 +251,27 @@ export default function Tasks({
           </tbody>
         </table>
       </div>
+      {details && (
+        <Modal title="任务详情" onClose={() => setDetailsId("")}>
+          <dl className="task-detail">
+            <div>
+              <dt>触发方式</dt>
+              <dd>{details.automatic ? "后台自动更新" : "手动操作"}</dd>
+            </div>
+            <div>
+              <dt>创建时间</dt>
+              <dd>{new Date(details.created * 1000).toLocaleString()}</dd>
+            </div>
+            <div>
+              <dt>任务 ID</dt>
+              <dd>{details.id}</dd>
+            </div>
+          </dl>
+          {details.state === "cancelled" && (
+            <p>保留已提交索引，恢复这个分区后可继续更新。</p>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }

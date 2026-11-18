@@ -41,11 +41,16 @@
   overflow: auto;
   padding: 0 24px;
 }
+.task-table-wrap:focus-visible {
+  outline: 2px solid #235f9e;
+  outline-offset: -2px;
+}
 .task-table {
   width: 100%;
   border-collapse: collapse;
   min-width: 710px;
   font-size: 13px;
+  white-space: nowrap;
 }
 .task-table th {
   text-align: left;
@@ -55,15 +60,15 @@
   border-bottom: 1px solid #dce1e7;
 }
 .task-table td {
-  padding: 14px 8px;
+  height: 44px;
+  padding: 4px 8px;
   border-bottom: 1px solid #e1e5eb;
-  vertical-align: top;
+  vertical-align: middle;
 }
 .task-table small {
-  display: block;
   color: #647082;
   font-size: 12px;
-  margin-top: 5px;
+  margin-inline-start: 8px;
 }
 .desktop .task-name {
   padding: 0;
@@ -73,19 +78,13 @@
   font-weight: 600;
 }
 .task-time {
-  white-space: nowrap;
   font-variant-numeric: tabular-nums;
-}
-.task-actions {
-  white-space: nowrap;
 }
 .task-actions button + button {
   margin-left: 6px;
 }
 .task-table .task-error {
   color: #9d4927;
-  max-width: 320px;
-  overflow-wrap: anywhere;
 }
 .task-state.failed,
 .task-state.needs_confirmation {
@@ -94,15 +93,12 @@
 .task-state.running {
   color: #356b9f;
 }
-.task-detail td {
-  background: #f8f9fa;
-}
-.task-detail dl {
+.task-detail {
   margin: 0;
   display: grid;
   gap: 8px;
 }
-.task-detail dl div {
+.task-detail div {
   display: flex;
   gap: 16px;
 }
