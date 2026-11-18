@@ -20,12 +20,13 @@ export default function FileIcon({
   active?: boolean;
   thumbnail?: boolean;
 }) {
-  const type = useTypeIcon(name, folder, size, active);
+  const iconSize = Math.min(256, Math.ceil(size * window.devicePixelRatio));
+  const type = useTypeIcon(name, folder, iconSize, active);
   const specific = folder || /\.(exe|dll|lnk|ico|cur)$/i.test(name);
   const file = useFileVisual(
     active && (thumbnail ? !folder : specific) ? reference : undefined,
     thumbnail ? "thumbnail" : "icon",
-    size,
+    thumbnail ? size : iconSize,
     connection,
     thumbnail,
   );
@@ -58,6 +59,9 @@ export default function FileIcon({
         <WorkspaceIcon name="folder" className="folder-placeholder" />
       ) : (
         <span className="file-mark" />
+      )}
+      {thumbnail && connection === "online" && file.phase && (
+        <span className="index-spinner thumbnail-pending" />
       )}
     </span>
   );

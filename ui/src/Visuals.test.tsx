@@ -20,6 +20,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
   vi.mocked(invoke).mockReset();
 });
@@ -127,7 +128,8 @@ test("thumbnail grids reuse versioned cache requests, cancel the old size and fa
   ).toHaveLength(4);
 });
 
-test("visible files share a system type-icon request without requiring source paths", async () => {
+test("visible files share a high DPI system type-icon request without requiring source paths", async () => {
+  vi.stubGlobal("devicePixelRatio", 2);
   vi.mocked(invoke).mockResolvedValue(image());
   const view = render(
     <Visuals>
@@ -142,7 +144,7 @@ test("visible files share a system type-icon request without requiring source pa
   expect(invoke).toHaveBeenCalledWith("visual_icon", {
     name: "first.txt",
     folder: false,
-    size: 32,
+    size: 64,
   });
 });
 

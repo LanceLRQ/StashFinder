@@ -12,7 +12,7 @@ use stashfinder_core::{
 };
 use stashfinder_windows::{file_operations::verify, ipc};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -54,6 +54,14 @@ impl Image {
             source,
             historical,
             warning,
+        }
+    }
+    fn unavailable(source: &'static str, historical: bool) -> Self {
+        Self {
+            data_url: None,
+            source,
+            historical,
+            warning: None,
         }
     }
 }
@@ -110,7 +118,6 @@ struct Shared {
     batch: batch::Batch,
     cache: Mutex<Option<Cache>>,
     provider: Arc<dyn Provider>,
-    fresh_types: Mutex<HashSet<Key>>,
     epoch: AtomicU64,
     sequence: AtomicU64,
     slots: Arc<tokio::sync::Semaphore>,
@@ -124,7 +131,6 @@ impl Shared {
             batch: batch::Batch::default(),
             cache: Mutex::new(None),
             provider,
-            fresh_types: Mutex::new(HashSet::new()),
             epoch: AtomicU64::new(0),
             sequence: AtomicU64::new(0),
             slots: Arc::new(tokio::sync::Semaphore::new(2)),
@@ -159,47 +165,11 @@ impl Shared {
             cache.put(key, bytes)
         })
     }
-    fn load_type(
-        &self,
-        paths: &Paths,
-        name: &str,
-        folder: bool,
-        size: u32,
-        cancel: &AtomicBool,
-    ) -> Result<Image> {
-        let extension = if folder {
-            String::new()
-        } else {
-            std::path::Path::new(name)
-                .extension()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_lowercase()
-        };
-        let key = Key::new(format!("type-v1:{folder}:{extension}:{size}").as_bytes());
-        let epoch = self.epoch.load(Ordering::Acquire);
-        let fresh = self
-            .fresh_types
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains(&key);
-        if fresh && let Ok(Some(bytes)) = self.cached(paths, |c| c.get(key)) {
-            return Ok(Image::png(&bytes, "local_cache", false, None));
-        }
+    fn load_type(&self, name: &str, folder: bool, size: u32, cancel: &AtomicBool) -> Result<Image> {
         ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
         let bytes = self.provider.type_icon(name, folder, size)?;
         ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
-        let warning = self
-            .store(paths, key, &bytes, epoch, cancel)
-            .err()
-            .map(|e| format!("{e:#}"));
-        if self.epoch.load(Ordering::Acquire) == epoch {
-            self.fresh_types
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(key);
-        }
-        Ok(Image::png(&bytes, "system_icon", false, warning))
+        Ok(Image::png(&bytes, "system_icon", false, None))
     }
     fn load_file(
         &self,
@@ -215,12 +185,16 @@ impl Shared {
             "图片尺寸无效"
         );
         ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
+        if matches!(kind, Kind::Icon) {
+            if !record.online {
+                return Ok(Image::unavailable("offline", true));
+            }
+            let bytes = self.provider.file_icon(&record.target, size)?;
+            ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
+            return Ok(Image::png(&bytes, "system_icon", false, None));
+        }
         let epoch = self.epoch.load(Ordering::Acquire);
-        let canonical_size = if matches!(kind, Kind::Thumbnail) {
-            THUMBNAIL_SIZE
-        } else {
-            size
-        };
+        let canonical_size = THUMBNAIL_SIZE;
         let key = file_key(record, kind, canonical_size)?;
         notify("local_cache");
         if let Some(bytes) = self.cached(paths, |cache| cache.get(key))? {
@@ -233,46 +207,28 @@ impl Shared {
             {
                 return Ok(Image::png(&bytes, "local_cache", true, None));
             }
-            return Ok(Image {
-                data_url: None,
-                source: "offline",
-                historical: true,
-                warning: None,
-            });
+            return Ok(Image::unavailable("offline", true));
         }
         ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
         notify("system_cache");
-        let (bytes, source) = match kind {
-            Kind::Icon => (
-                Some(self.provider.file_icon(&record.target, size)?),
-                "system_icon",
-            ),
-            Kind::Thumbnail => {
-                match self
-                    .provider
-                    .thumbnail(&record.target, canonical_size, true)?
-                {
-                    Some(bytes) => (Some(bytes), "system_cache"),
-                    None => {
-                        ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
-                        notify("system_generate");
-                        (
-                            self.provider
-                                .thumbnail(&record.target, canonical_size, false)?,
-                            "system_generated",
-                        )
-                    }
-                }
+        let (bytes, source) = match self
+            .provider
+            .thumbnail(&record.target, canonical_size, true)?
+        {
+            Some(bytes) => (Some(bytes), "system_cache"),
+            None => {
+                ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
+                notify("system_generate");
+                (
+                    self.provider
+                        .thumbnail(&record.target, canonical_size, false)?,
+                    "system_generated",
+                )
             }
         };
         ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
         let Some(bytes) = bytes else {
-            return Ok(Image {
-                data_url: None,
-                source: "unsupported",
-                historical: false,
-                warning: None,
-            });
+            return Ok(Image::unavailable("unsupported", false));
         };
         let warning = self
             .store(paths, key, &bytes, epoch, cancel)
@@ -291,10 +247,6 @@ impl Shared {
         {
             cancel.store(true, Ordering::Release);
         }
-        self.fresh_types
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
         self.cached(paths, |cache| cache.clear(progress))
     }
     fn status(&self, paths: &Paths) -> Result<CacheStatus> {
@@ -385,20 +337,18 @@ async fn background<T: Send + 'static>(
 }
 #[tauri::command]
 pub async fn visual_icon(
-    app: AppHandle,
     state: State<'_, Visuals>,
     name: String,
     folder: bool,
     size: u32,
 ) -> Result<Image, String> {
-    let paths = Paths::from_app(&app).map_err(|e| e.to_string())?;
     let shared = state.0.clone();
     let id = format!("icon-{}", shared.sequence.fetch_add(1, Ordering::Relaxed));
     let mut work = Work::new(shared.clone(), id).map_err(|e| e.to_string())?;
     let notify: Notify = Arc::new(|_| {});
     let _permit = work.enter(&notify).await.map_err(|e| e.to_string())?;
     let cancel = work.cancel.clone();
-    background(move || shared.load_type(&paths, &name, folder, size, &cancel)).await
+    background(move || shared.load_type(&name, folder, size, &cancel)).await
 }
 #[tauri::command]
 pub async fn visual_preview(
@@ -609,6 +559,21 @@ mod tests {
             root: temp.path().join("cache"),
             config: temp.path().join("config.json"),
         }
+    }
+
+    #[test]
+    fn system_icons_do_not_create_a_disk_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = paths(&temp);
+        let shared = Shared::new(Arc::new(Fake::default()));
+        let cancel = AtomicBool::new(false);
+        let type_icon = shared.load_type("movie.mp4", false, 128, &cancel).unwrap();
+        assert_eq!(type_icon.source, "system_icon");
+        let icon = shared
+            .load_file(&paths, &record(), Kind::Icon, 128, &cancel, &|_| {})
+            .unwrap();
+        assert_eq!(icon.source, "system_icon");
+        assert!(!paths.root.exists());
     }
 
     #[test]

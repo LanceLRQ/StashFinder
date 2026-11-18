@@ -14,6 +14,8 @@ import DirectoryTree from "./DirectoryTree";
 import { readDirectory, type DirectoryPage } from "./browse-api";
 import type { Asset } from "./asset-api";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import Visuals from "./Visuals";
 import { emptyOptions } from "./search-options";
 
 vi.mock("./browse-api", async (original) => ({
@@ -21,6 +23,9 @@ vi.mock("./browse-api", async (original) => ({
   readDirectory: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async () => vi.fn()),
+}));
 afterEach(() => {
   cleanup();
   localStorage.clear();
@@ -653,6 +658,53 @@ test("directory thumbnail modes preserve focus, selection and the tab's layout",
       .getAttribute("aria-selected"),
   ).toBe("true");
 }, 15000);
+
+test("requests a thumbnail after tree navigation even if progress events are unavailable", async () => {
+  const view = setup();
+  vi.mocked(listen).mockRejectedValue(new Error("进度事件不可用"));
+  let finishMovie: (image: object) => void = () => {};
+  vi.mocked(invoke).mockImplementation(async (command, args: any) =>
+    command === "visual_preview" && args?.reference.entry[0] === 4
+      ? new Promise<object>((resolve) => {
+          finishMovie = resolve;
+        })
+      : { data_url: null },
+  );
+  view.rerender(
+    <Visuals>
+      <Workspace
+        assets={[{ ...asset, connection: "online" }]}
+        includePath
+        defaultView="large"
+        request={{ text: "", revision: 0 }}
+      />
+    </Visuals>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "新建浏览标签页" }));
+  choosePartition();
+  const tree = within(screen.getByRole("navigation", { name: "目录树" }));
+  fireEvent.click(await tree.findByRole("button", { name: "Films" }));
+  const tile = await screen.findByRole("option", { name: "movie.mkv" });
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("visual_preview", {
+      requestId: expect.any(String),
+      kind: "thumbnail",
+      size: 128,
+      reference: {
+        partition_id: "p",
+        filesystem_id: "fs",
+        generation: "1",
+        revision: "2",
+        entry: [4],
+      },
+    }),
+  );
+  expect(tile.querySelector(".thumbnail-pending")).toBeTruthy();
+  const url = "data:image/png;base64,bW92aWU=";
+  await act(async () => finishMovie({ data_url: url }));
+  expect(tile.querySelector(".thumbnail-pending")).toBeNull();
+  expect(tile.querySelector("img")?.getAttribute("src")).toBe(url);
+});
 test("refreshes the current directory once from either workspace entry", async () => {
   setup();
   choosePartition();

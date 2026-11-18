@@ -2,9 +2,9 @@
 
 [简体中文](system-visuals.md)
 
-File lists display icons associated with file types in Windows. Folders, applications, shortcuts, and similar entries request their individual icons when online, with generic type icons as a fallback. Type icons do not require access to the source file and also work for offline records.
+File lists display icons associated with file types in Windows. Large layouts request larger Windows icons and account for display scaling. Folders, applications, shortcuts, and similar entries request their individual icons when online, with generic type icons as a fallback. Type icons do not require access to the source file and also work for offline records.
 
-The preview pane and thumbnail list check the local image cache, then the Windows thumbnail cache. On a miss, Windows may generate a thumbnail. Both views share the image requested at 512 pixels. Older small images remain readable at their original requested size when offline. Format support depends on the Windows thumbnail providers installed on the computer.
+The preview pane and thumbnail list check the local image cache, then the Windows thumbnail cache. On a miss, Windows may generate a thumbnail. Online tiles show a loading indicator alongside their type icon while waiting for a thumbnail. Both views share the image requested at 512 pixels. Older small images remain readable at their original requested size when offline. Format support depends on the Windows thumbnail providers installed on the computer.
 
 Offline previews read only the local image cache. Cached previews are labeled as historical; otherwise the pane shows a type icon and the offline state. Metadata still comes from the partition index, so a thumbnail failure does not interrupt browsing or searching. Multiple selections show metadata summaries without generating a batch of previews.
 
@@ -26,7 +26,7 @@ Open **Settings → Image cache** to view cache usage, free space on the cache d
 
 Images, videos, and documents (PDF) are enabled for pre-generation by default. Disable any category or add comma-separated custom extensions such as `jxl, docx`. Changes apply to new jobs. The installed Windows thumbnail providers determine whether an added format can produce a thumbnail.
 
-- Icons and thumbnails are separate PNG files, outside the SQLite indexes.
+- Thumbnails are stored as separate PNG files outside the SQLite indexes. System icons bypass the app's disk cache. Generic type icons are reused in memory for the current session.
 - Least recently used images are evicted when necessary. Lowering the limit immediately trims the cache. An image larger than the limit can be displayed without being stored.
 - Usage counts cached image file bytes, rather than allocated filesystem space. Atomic writes may temporarily require additional space for a temporary file.
 - Clearing requires confirmation in the application and removes only application images. The limit, partition registrations, indexes, and source files remain. Images are requested again when needed.

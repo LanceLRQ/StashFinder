@@ -172,7 +172,8 @@ export function useFileVisual(
     }
     const requestId = crypto.randomUUID();
     setState({ key, image: null, phase: "waiting", error: "" });
-    const request = () =>
+    const request = () => {
+      // Progress reporting is optional, even when the image request is queued.
       void listen<{ request_id: string; phase: string }>(
         "visual-progress",
         (event) => {
@@ -182,20 +183,21 @@ export function useFileVisual(
               phase: event.payload.phase,
             }));
         },
-      )
-        .then(async (stop) => {
-          if (!live) {
-            stop();
-            return;
-          }
-          unlisten = stop;
-          started = true;
-          const image = await invoke<VisualImage>("visual_preview", {
-            requestId,
-            reference,
-            kind,
-            size,
-          });
+      ).then(
+        (stop) => {
+          if (live && !done) unlisten = stop;
+          else stop();
+        },
+        () => {},
+      );
+      started = true;
+      void invoke<VisualImage>("visual_preview", {
+        requestId,
+        reference,
+        kind,
+        size,
+      })
+        .then((image) => {
           if (live) {
             done = true;
             stopListening();
@@ -220,6 +222,7 @@ export function useFileVisual(
             drainThumbnails();
           }
         });
+    };
     if (queued) {
       thumbnailQueue.add(request);
       drainThumbnails();

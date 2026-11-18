@@ -7,6 +7,7 @@ use windows::{
         Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL},
         System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance},
         UI::{
+            Controls::{IImageList, ILD_TRANSPARENT},
             Shell::*,
             WindowsAndMessaging::{DI_NORMAL, DestroyIcon, DrawIconEx, HICON},
         },
@@ -35,7 +36,7 @@ impl Drop for Dc {
 struct Icon(HICON);
 impl Drop for Icon {
     fn drop(&mut self) {
-        // SAFETY: SHGFI_ICON returns an owned icon handle.
+        // SAFETY: IImageList::GetIcon returns an owned icon handle.
         unsafe {
             let _ = DestroyIcon(self.0);
         }
@@ -96,17 +97,18 @@ pub fn type_icon(name: &str, folder: bool, size: u32) -> Result<Vec<u8>> {
                 },
                 Some(&mut info),
                 size_of::<SHFILEINFOW>() as u32,
-                SHGFI_ICON
-                    | SHGFI_USEFILEATTRIBUTES
-                    | if size <= 16 {
-                        SHGFI_SMALLICON
-                    } else {
-                        SHGFI_LARGEICON
-                    }
+                SHGFI_SYSICONINDEX | SHGFI_USEFILEATTRIBUTES,
             ) != 0,
             "Windows 未返回格式图标"
         );
-        let icon = Icon(info.hIcon);
+        let list_id = match size {
+            1..=16 => SHIL_SMALL,
+            17..=32 => SHIL_LARGE,
+            33..=48 => SHIL_EXTRALARGE,
+            _ => SHIL_JUMBO,
+        };
+        let list: IImageList = SHGetImageList(list_id as i32)?;
+        let icon = Icon(list.GetIcon(info.iIcon, ILD_TRANSPARENT.0)?);
         let dc = Dc(CreateCompatibleDC(None));
         ensure!(!dc.0.is_invalid(), "无法创建设备上下文");
         let bitmap_info = BITMAPINFO {
@@ -259,7 +261,7 @@ pub fn file_icon(path: &Path, size: u32) -> Result<Vec<u8>> {
                 cx: size as i32,
                 cy: size as i32,
             },
-            SIIGBF_ICONONLY,
+            SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK,
         )?);
         bitmap_png(bitmap.0, WTSAT_ARGB)
     }

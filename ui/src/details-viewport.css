@@ -184,6 +184,7 @@
   user-select: text;
 }
 .thumbnail-art {
+  position: relative;
   display: grid;
   place-items: center;
   max-width: 100%;
@@ -195,4 +196,9 @@
 }
 .thumbnail-art .file-mark {
   margin: 0;
+}
+.thumbnail-pending {
+  position: absolute;
+  inset-inline-end: 2px;
+  inset-block-end: 2px;
 }
