@@ -10,7 +10,7 @@ import {
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import Desktop from "./Desktop";
-import { emptyOptions } from "./search-options";
+import { defaultCategories, emptyOptions } from "./search-options";
 import type { Preferences } from "./settings-api";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -289,13 +289,18 @@ test("remembers the browse preset and copies it only into new search tabs", asyn
   });
   let desktop = render(<Desktop />);
   menu("文件", "新建浏览标签页");
-  menu("搜索", "筛选预设");
-  fireEvent.click(await screen.findByRole("menuitemradio", { name: "图片" }));
+  fireEvent.click(screen.getByRole("button", { name: "搜索" }));
+  const filters = within(screen.getByRole("menu", { name: "搜索" }));
+  expect(
+    filters.getByRole("menuitemradio", { name: "无筛选", checked: true }),
+  ).toBeTruthy();
+  expect(filters.queryByRole("menuitem", { name: "自定义筛选器" })).toBeNull();
+  fireEvent.click(await filters.findByRole("menuitemradio", { name: "图片" }));
   await waitFor(() => expect(saved.browse_filter).toBe("category:图片"));
   desktop.unmount();
   desktop = render(<Desktop />);
   menu("文件", "新建浏览标签页");
-  menu("搜索", "筛选预设");
+  fireEvent.click(screen.getByRole("button", { name: "搜索" }));
   await waitFor(() =>
     expect(
       screen.getByRole("menuitemradio", {
@@ -304,7 +309,6 @@ test("remembers the browse preset and copies it only into new search tabs", asyn
       }),
     ).toBeTruthy(),
   );
-  fireEvent.keyDown(document.activeElement!, { key: "Escape" });
   fireEvent.keyDown(document.activeElement!, { key: "Escape" });
   menu("文件", "新建搜索标签页");
   const starts = () =>
@@ -697,7 +701,13 @@ test("Ctrl+P restores search focus without restarting its query", async () => {
 
 test("manages personal presets in settings and applies them to new searches", async () => {
   const original = vi.mocked(invoke).getMockImplementation()!;
-  let saved: any = await original("preferences_get");
+  let saved: any = {
+    ...((await original("preferences_get")) as Preferences),
+    categories: [
+      ...defaultCategories,
+      { name: "工程源文件", extensions: ["rs", "tsx"] },
+    ],
+  };
   vi.mocked(invoke).mockImplementation(async (command, args: any) => {
     if (command === "preferences_get") return saved;
     if (command === "preferences_set") return (saved = args.preferences);
@@ -746,6 +756,25 @@ test("manages personal presets in settings and applies them to new searches", as
       },
     }),
   );
+  fireEvent.click(screen.getByRole("button", { name: "搜索" }));
+  const menuItems = within(screen.getByRole("menu", { name: "搜索" }));
+  expect(
+    menuItems.getByRole("menuitemradio", { name: "图片", checked: false }),
+  ).toBeTruthy();
+  expect(menuItems.queryByRole("menuitemradio", { name: "大图片" })).toBeNull();
+  expect(
+    menuItems.queryByRole("menuitemradio", { name: "工程源文件" }),
+  ).toBeNull();
+  fireEvent.keyDown(menuItems.getByRole("menuitem", { name: "自定义筛选器" }), {
+    key: "ArrowRight",
+  });
+  const custom = within(screen.getByRole("menu", { name: "自定义筛选器" }));
+  expect(
+    custom.getByRole("menuitemradio", { name: "工程源文件" }),
+  ).toBeTruthy();
+  expect(
+    custom.getByRole("menuitemradio", { name: "大图片", checked: true }),
+  ).toBeTruthy();
 });
 
 test("submitting the same overview query again refreshes results", async () => {

@@ -617,14 +617,18 @@ export default function Workspace({
   const layouts = (commands?.views ?? []).filter((item) => item.radio);
   const presets =
     currentTab?.kind === "browse" && onBrowseFilter
-      ? filterPresetEntries(categories, filterPresets).map(({ id, name }) => ({
-          label: name,
-          radio: true,
-          checked: id === browseFilter,
-          disabled: savingFilters,
-          run: () => onBrowseFilter(id),
-        }))
+      ? filterPresetEntries(categories, filterPresets).map(
+          ({ id, name, personalName }) => ({
+            label: personalName ?? name,
+            personal: personalName !== undefined,
+            radio: true,
+            checked: id === browseFilter,
+            disabled: savingFilters,
+            run: () => onBrowseFilter(id),
+          }),
+        )
       : (actions?.presets ?? []);
+  const personalPresets = presets.filter((item) => item.radio && item.personal);
   const groups: MenuGroup[] = [
     {
       label: "文件",
@@ -717,14 +721,14 @@ export default function Workspace({
       sections: [
         [mainCommands.focus],
         actions?.search?.filter((item) => item.checked !== undefined) ?? [],
+        actions?.search?.filter((item) => item.checked === undefined) ?? [],
+        presets.filter((item) => item.radio && !item.personal),
         [
-          ...(actions?.search?.filter((item) => item.checked === undefined) ??
-            []),
-          ...(presets.length
+          ...(personalPresets.length
             ? [
                 {
-                  label: "筛选预设",
-                  sections: [presets.filter((item) => item.radio)],
+                  label: "自定义筛选器",
+                  sections: [personalPresets],
                 },
               ]
             : []),

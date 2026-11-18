@@ -64,12 +64,22 @@ export const noPresets: FilterPreset[] = [];
 export function filterPresetEntries(
   categories: Category[],
   presets: FilterPreset[],
-) {
+): { id: string | null; name: string; personalName?: string }[] {
   return [
     { id: null, name: "无筛选" },
     { id: "@folder", name: "文件夹" },
-    ...categories.map(({ name }) => ({ id: `category:${name}`, name })),
-    ...presets.map(({ id, name }) => ({ id, name: `个人：${name}` })),
+    ...categories.map(({ name }) => ({
+      id: `category:${name}`,
+      name,
+      personalName: defaultCategories.some((category) => category.name === name)
+        ? undefined
+        : name,
+    })),
+    ...presets.map(({ id, name }) => ({
+      id,
+      name: `个人：${name}`,
+      personalName: name,
+    })),
   ];
 }
 export const emptyFileFilter: FileFilter = {

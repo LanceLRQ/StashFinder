@@ -144,7 +144,7 @@ export type FileMenuActions = {
   sortDirection?: MenuCommand[];
   navigation?: MenuCommand[];
   search?: MenuCommand[];
-  presets?: MenuCommand[];
+  presets?: (MenuCommand & { personal?: boolean })[];
 };
 export type FileCommandContext = {
   enabled: (action: MenuAction) => boolean;

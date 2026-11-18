@@ -912,8 +912,9 @@ export default function Search({
         { label: "高级搜索…", run: () => setFilterOpen("search") },
       ],
       presets: [
-        ...presetEntries.map(({ id, name, selection }) => ({
-          label: name,
+        ...presetEntries.map(({ id, name, personalName, selection }) => ({
+          label: personalName ?? name,
+          personal: personalName !== undefined,
           checked: selectedPreset?.id === id,
           radio: true,
           run: () => setFilter(selection),
@@ -922,6 +923,7 @@ export default function Search({
           ? [
               {
                 label: "自定义",
+                personal: true,
                 checked: true,
                 radio: true,
                 disabled: true,
