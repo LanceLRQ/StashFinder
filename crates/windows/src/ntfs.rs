@@ -396,7 +396,6 @@ impl VolumeReader {
         self.full_inventory_mode(cancelled, consume, false)
     }
 
-    #[cfg(feature = "mft-prototype")]
     pub fn full_inventory_deferred(
         &self,
         cancelled: &AtomicBool,
@@ -449,12 +448,10 @@ impl VolumeReader {
             sector: geometry.sector_bytes,
             scratch: Vec::new(),
         };
-        #[cfg(feature = "mft-prototype")]
         if deferred {
             return mft::scan_mft_deferred(&mut disk, &geometry, self.root_id, cancelled, consume)
                 .map(Some);
         }
-        let _ = deferred;
         mft::scan_mft(&mut disk, &geometry, self.root_id, cancelled, consume).map(Some)
     }
 

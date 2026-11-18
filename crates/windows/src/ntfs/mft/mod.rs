@@ -3,7 +3,6 @@ pub mod capture;
 mod reader;
 mod record;
 
-#[cfg(feature = "mft-prototype")]
 pub use reader::scan_mft_deferred;
 pub use reader::{FastScanStats, ReadAt, ReadStats, pipeline_inventory, read_mft_object, scan_mft};
 pub use record::{

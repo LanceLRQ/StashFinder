@@ -471,3 +471,57 @@ fn snapshot_write_cancellation_and_callback_failure_leave_no_published_file() {
         }
     }
 }
+
+#[test]
+fn snapshot_keeps_row_metadata_across_insert_groups() {
+    let objects: Vec<_> = (0..35u8)
+        .map(|id| Object {
+            id: vec![id],
+            identity: None,
+            source: "ntfs64".into(),
+            kind: if id == 0 { "folder" } else { "file" }.into(),
+            size: (id > 0).then_some(100 + i64::from(id)),
+            created: Some([id; 8]),
+            modified: Some([255 - id; 8]),
+            attributes: if id == 0 { 16 } else { 32 },
+        })
+        .collect();
+    let paths: Vec<_> = (0..35u8)
+        .map(|id| Entry {
+            id: vec![id],
+            object: vec![id],
+            parent: (id > 0).then(|| vec![0]),
+            name: vec![u16::from(id), 0xd800],
+        })
+        .collect();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("snapshot.sqlite");
+    Volume::persist_initial_snapshot(
+        &objects,
+        &paths,
+        &[0],
+        &Cursor {
+            journal: vec![7; 8],
+            next: 1,
+        },
+        &path,
+        &AtomicBool::new(false),
+        &mut || Ok(()),
+    )
+    .unwrap();
+    let db = rusqlite::Connection::open(path).unwrap();
+    let mut q=db.prepare("SELECT p.id,p.name,o.size,o.created,o.modified FROM paths p JOIN objects o ON p.generation=o.generation AND p.object=o.id ORDER BY p.id").unwrap();
+    let mut rows = q.query([]).unwrap();
+    for id in 0..35u8 {
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!(row.get::<_, Vec<u8>>(0).unwrap(), [id]);
+        assert_eq!(row.get::<_, Vec<u8>>(1).unwrap(), [id, 0, 0, 0xd8]);
+        assert_eq!(
+            row.get::<_, Option<i64>>(2).unwrap(),
+            objects[usize::from(id)].size
+        );
+        assert_eq!(row.get::<_, Vec<u8>>(3).unwrap(), [id; 8]);
+        assert_eq!(row.get::<_, Vec<u8>>(4).unwrap(), [255 - id; 8]);
+    }
+    assert!(rows.next().unwrap().is_none());
+}

@@ -17,6 +17,15 @@ struct Disk(
     Option<Arc<AtomicBool>>,
 );
 impl Source for Disk {
+    fn full_inventory_deferred(
+        &self,
+        _: &AtomicBool,
+        consume: &mut dyn FnMut(&[NativeObject]) -> anyhow::Result<()>,
+    ) -> anyhow::Result<Option<stashfinder_windows::ntfs::mft::FastScanStats>> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        consume(&[self.object(5)?.unwrap(), self.object(20)?.unwrap()])?;
+        Ok(Some(Default::default()))
+    }
     fn root_id(&self) -> u64 {
         5
     }
@@ -223,6 +232,26 @@ fn automatic_worker_requires_registration_online_identity_and_enabled_policy() {
             .any(|t| t.state == "completed")
     });
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(worker.status(&row.partition_id).records, 1);
+    let registered = catalog.get(&row.partition_id).unwrap();
+    let saved = catalog.open_volume(&registered).unwrap();
+    let offline = stashfinder_store::search::SearchIndex::load(&saved)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        offline
+            .search(
+                &stashfinder_core::search::Query::parse("updated.txt", false).unwrap(),
+                &[],
+                1,
+                &AtomicBool::new(false)
+            )
+            .unwrap()
+            .rows
+            .len(),
+        1
+    );
+    drop(saved);
     std::thread::sleep(Duration::from_millis(700));
     assert_eq!(worker.tasks().unwrap().len(), 1);
     let id = worker

@@ -3,7 +3,6 @@ pub mod browse;
 pub mod catalog;
 pub mod file_operations;
 pub mod initial;
-#[cfg(feature = "memory-index-bench")]
 mod memory_index;
 pub mod search;
 pub mod tasks;

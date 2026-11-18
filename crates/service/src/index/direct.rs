@@ -1,16 +1,24 @@
-//! Isolated first-search path. The candidate is searchable before its durable copy exists.
+//! First-generation NTFS indexing for registered volumes.
 use super::*;
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
+#[cfg(feature = "memory-index-bench")]
+use std::path::Path;
 
+#[cfg(feature = "memory-index-bench")]
 pub struct DirectIndex {
     pub index: SearchIndex,
     pub cursor: Cursor,
     pub report: BuildReport,
+    rows: Rows,
+}
+
+struct Rows {
     objects: Vec<Object>,
     entries: Vec<Entry>,
     root: Vec<u8>,
 }
 
+#[cfg(feature = "memory-index-bench")]
 impl DirectIndex {
     pub fn persist(
         &self,
@@ -19,9 +27,9 @@ impl DirectIndex {
         progress: &mut dyn FnMut() -> Result<()>,
     ) -> Result<()> {
         Volume::persist_initial_snapshot(
-            &self.objects,
-            &self.entries,
-            &self.root,
+            &self.rows.objects,
+            &self.rows.entries,
+            &self.rows.root,
             &self.cursor,
             path,
             cancelled,
@@ -30,20 +38,167 @@ impl DirectIndex {
     }
 }
 
+#[cfg(feature = "memory-index-bench")]
 pub fn build_direct(
     source: &dyn Source,
     cancelled: &AtomicBool,
     progress: &mut dyn FnMut(&str),
 ) -> Result<DirectIndex> {
+    let (rows, cursor, mut report) = collect_rows(
+        source,
+        &source.journal()?.ok_or(JournalMissing)?,
+        cancelled,
+        progress,
+    )?;
+    let started = Instant::now();
+    progress("search_build");
+    let index = SearchIndex::from_initial(&rows.objects, &rows.entries, cancelled)?;
+    progress("search_built");
+    source.verify()?;
+    ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
+    report.validate_time += started.elapsed();
+    Ok(DirectIndex {
+        index,
+        cursor,
+        report,
+        rows,
+    })
+}
+
+#[cfg(feature = "memory-index-bench")]
+pub fn build_direct_parallel(
+    source: &dyn Source,
+    cancelled: &AtomicBool,
+    path: &Path,
+    progress: &mut dyn FnMut(&str),
+    searchable: impl FnOnce(&SearchIndex) -> Result<()>,
+) -> Result<DirectIndex> {
+    ensure!(!path.try_exists()?, "目标索引路径已存在");
+    let (rows, cursor, mut report) = collect_rows(
+        source,
+        &source.journal()?.ok_or(JournalMissing)?,
+        cancelled,
+        progress,
+    )?;
+    let index = std::thread::scope(|scope| -> Result<_> {
+        let writer = scope.spawn(|| {
+            Volume::prepare_initial_snapshot(
+                &rows.objects,
+                &rows.entries,
+                &rows.root,
+                &cursor,
+                cancelled,
+                &mut || Ok(()),
+            )?
+            .stage_completed_index(path, cancelled, &mut || Ok(()))
+        });
+        let started = Instant::now();
+        progress("search_build");
+        let index = SearchIndex::from_initial(&rows.objects, &rows.entries, cancelled)?;
+        progress("search_built");
+        source.verify()?;
+        ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
+        report.validate_time += started.elapsed();
+        searchable(&index)?;
+        let backup = writer
+            .join()
+            .map_err(|_| anyhow::anyhow!("SQLite 建库线程异常退出"))??;
+        backup.publish(cancelled)?;
+        Ok(index)
+    })?;
+    Ok(DirectIndex {
+        index,
+        cursor,
+        report,
+        rows,
+    })
+}
+
+pub fn build_registered(
+    source: &dyn Source,
+    db: &mut Volume,
+    mode: IndexMode,
+    cancelled: &AtomicBool,
+    progress: &mut dyn FnMut(&str),
+) -> Result<SearchIndex> {
+    if matches!(mode, IndexMode::ScanOnly) || db.has_generations()? {
+        return build(source, db, mode, cancelled, progress);
+    }
     ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
     source.verify()?;
-    let journal = source.journal()?.ok_or(JournalMissing)?;
+    let journal = match mode {
+        IndexMode::CreateJournal => source.create_journal()?,
+        _ => source.journal()?.ok_or(JournalMissing)?,
+    };
+    let (rows, cursor, _) = match collect_rows(source, &journal, cancelled, progress) {
+        Ok(rows) => rows,
+        Err(e)
+            if e.is::<FastScanUnavailable>()
+                || e.is::<InitialPathsIncomplete>()
+                || e.is::<InitialPathConflict>() =>
+        {
+            source.verify()?;
+            let current = source.journal()?.ok_or(JournalMissing)?;
+            ensure!(
+                current.id == journal.id
+                    && current.first <= journal.next
+                    && journal.next <= current.next,
+                JournalCursorInvalid
+            );
+            return build_with_strategy(
+                source,
+                db,
+                IndexMode::Journal,
+                BuildStrategy::Legacy,
+                cancelled,
+                progress,
+            )
+            .map(|(_, index)| index);
+        }
+        Err(e) => return Err(e),
+    };
+    std::thread::scope(|scope| {
+        let search =
+            scope.spawn(|| SearchIndex::from_initial(&rows.objects, &rows.entries, cancelled));
+        let (mut index, generation, revision, completed) = db.commit_first_snapshot(
+            stashfinder_store::volume::InitialSnapshot {
+                objects: &rows.objects,
+                entries: &rows.entries,
+                root: &rows.root,
+                cursor: &cursor,
+            },
+            cancelled,
+            &mut || Ok(()),
+            || {
+                let index = search
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("搜索索引构建线程异常退出"))??;
+                source.verify()?;
+                Ok(index)
+            },
+        )?;
+        index.generation = generation;
+        index.revision = revision;
+        index.indexed_at = Some(completed);
+        index.needs_validation = false;
+        Ok(index)
+    })
+}
+
+fn collect_rows(
+    source: &dyn Source,
+    journal: &Journal,
+    cancelled: &AtomicBool,
+    progress: &mut dyn FnMut(&str),
+) -> Result<(Rows, Cursor, BuildReport)> {
+    ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
+    source.verify()?;
     let root = source.root_id();
     let excluded = source.excluded_roots();
     let mut records = HashMap::new();
     progress("scanning");
     let scan = source
-        .full_inventory(cancelled, &mut |batch| {
+        .full_inventory_deferred(cancelled, &mut |batch| {
             for record in batch {
                 ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
                 ensure!(
@@ -177,19 +332,17 @@ pub fn build_direct(
             }
         }
     }
-    let index = SearchIndex::from_initial(&objects, &entries, cancelled)?;
-    source.verify()?;
-    ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
-    Ok(DirectIndex {
-        index,
-        cursor: Cursor {
+    Ok((
+        Rows {
+            objects,
+            entries,
+            root: directory_key(root),
+        },
+        Cursor {
             journal: journal.id.to_le_bytes().to_vec(),
             next,
         },
-        objects,
-        entries,
-        root: directory_key(root),
-        report: BuildReport {
+        BuildReport {
             strategy: BuildStrategy::Sequential,
             fallback: None,
             scan: Some(scan),
@@ -198,7 +351,7 @@ pub fn build_direct(
             replay_time,
             validate_time: started.elapsed(),
         },
-    })
+    ))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

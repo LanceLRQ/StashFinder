@@ -115,7 +115,7 @@ fn main() -> Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     ensure!(
         (3..=4).contains(&args.len()),
-        "Usage: index-benchmark <volume GUID path> <new database path> <timeout seconds> [auto|legacy|sequential|memory|direct|direct-deferred]"
+        "Usage: index-benchmark <volume GUID path> <new database path> <timeout seconds> [auto|legacy|sequential|memory|direct|direct-deferred|serial-deferred|parallel-deferred]"
     );
     let mode = args.get(3).map(String::as_str).unwrap_or("auto");
     let strategy = match mode {
@@ -125,7 +125,7 @@ fn main() -> Result<()> {
         #[cfg(feature = "memory-index-bench")]
         "memory" | "direct" => BuildStrategy::Auto,
         #[cfg(feature = "deferred-mft-bench")]
-        "direct-deferred" => BuildStrategy::Auto,
+        "direct-deferred" | "serial-deferred" | "parallel-deferred" => BuildStrategy::Auto,
         other => anyhow::bail!("Unknown index strategy: {other}"),
     };
     let path = PathBuf::from(&args[1]);
@@ -151,7 +151,10 @@ fn main() -> Result<()> {
     let source = MeasuredSource {
         reader,
         #[cfg(feature = "deferred-mft-bench")]
-        deferred: mode == "direct-deferred",
+        deferred: matches!(
+            mode,
+            "direct-deferred" | "serial-deferred" | "parallel-deferred"
+        ),
         native: Cell::new(Duration::ZERO),
         consume: Cell::new(Duration::ZERO),
         directories: Cell::new(0),
@@ -160,6 +163,42 @@ fn main() -> Result<()> {
         started,
         reported: Cell::new(started),
     };
+    #[cfg(feature = "deferred-mft-bench")]
+    if matches!(mode, "serial-deferred" | "parallel-deferred") {
+        use stashfinder_service::index::direct::{build_direct, build_direct_parallel};
+        let probe = |index: &SearchIndex| -> Result<()> {
+            let first = index.search(&Query::parse("", false)?, &[], 1, &cancel)?;
+            println!(
+                "{}",
+                serde_json::json!({"event":"searchable", "from_open_ms":opening.elapsed().as_millis(), "sample_rows":first.rows.len()})
+            );
+            Ok(())
+        };
+        let mut phase = |phase: &str| {
+            println!(
+                "{}",
+                serde_json::json!({"event":"phase","phase":phase,"from_open_us":opening.elapsed().as_micros()})
+            )
+        };
+        let candidate = if mode == "parallel-deferred" {
+            build_direct_parallel(&source, &cancel, &path, &mut phase, probe)?
+        } else {
+            let candidate = build_direct(&source, &cancel, &mut phase)?;
+            probe(&candidate.index)?;
+            candidate.persist(&path, &cancel, &mut || Ok(()))?;
+            candidate
+        };
+        println!(
+            "{}",
+            serde_json::json!({"event":"persisted", "from_open_ms":opening.elapsed().as_millis()})
+        );
+        let scan = candidate.report.scan.as_ref().expect("direct scan");
+        println!(
+            "{}",
+            serde_json::json!({"event":"scan_breakdown","read_us":scan.read_time.as_micros(),"parse_us":scan.parse_time.as_micros(),"read_classes":read_classes(scan),"queue_wait_us":scan.queue_wait_time.as_micros(),"graph_us":candidate.report.import_time.as_micros(),"usn_replay_us":candidate.report.replay_time.as_micros()})
+        );
+        return Ok(());
+    }
     #[cfg(feature = "memory-index-bench")]
     if mode == "direct" || mode == "direct-deferred" {
         let candidate = stashfinder_service::index::direct::build_direct(

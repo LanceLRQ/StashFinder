@@ -13,6 +13,62 @@ struct FastFixture {
 
 #[cfg(feature = "memory-index-bench")]
 #[test]
+fn parallel_snapshot_requires_successful_search_before_publication() {
+    use stashfinder_service::index::direct::build_direct_parallel;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("index.sqlite");
+    let cancel = AtomicBool::new(false);
+    for fail in [true, false] {
+        let source = FastFixture {
+            failure: None,
+            fast: Cell::new(0),
+            legacy: Cell::new(0),
+            journals: Cell::new(0),
+        };
+        let mut phases = Vec::new();
+        let result = build_direct_parallel(
+            &source,
+            &cancel,
+            &path,
+            &mut |phase| phases.push(phase.to_owned()),
+            |index| {
+                assert!(!path.exists());
+                assert_eq!(
+                    index
+                        .search(&Query::parse("alias.txt", false)?, &[], 1, &cancel)?
+                        .rows
+                        .len(),
+                    1
+                );
+                anyhow::ensure!(!fail, "search probe failed");
+                Ok(())
+            },
+        );
+        assert_eq!(
+            phases,
+            [
+                "scanning",
+                "replaying",
+                "publishing",
+                "search_build",
+                "search_built"
+            ]
+        );
+        assert_eq!(result.is_ok(), !fail);
+        assert_eq!(path.exists(), !fail);
+    }
+    let offline = Volume::open(&path).unwrap();
+    assert_eq!(
+        offline
+            .cursor(offline.active_generation().unwrap().unwrap())
+            .unwrap()
+            .unwrap()
+            .next,
+        100
+    );
+}
+#[cfg(feature = "memory-index-bench")]
+#[test]
 fn direct_memory_matches_disk_search_and_persisted_cursor() {
     use stashfinder_service::index::direct::build_direct;
     for (failure, records, next) in [
@@ -173,6 +229,13 @@ fn direct_memory_cancelled_save_never_publishes_or_overwrites_a_file() {
 }
 
 impl Source for FastFixture {
+    fn verify(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.failure != Some("changed_before_commit") || self.journals.get() < 3,
+            "source changed before commit"
+        );
+        Ok(())
+    }
     fn excluded_roots(&self) -> Vec<u64> {
         if self.failure == Some("exclude") {
             vec![20]
@@ -1639,4 +1702,98 @@ fn resumed_sync_prunes_existing_runtime_paths_even_without_new_events() {
         !stashfinder_service::index::synchronize(&source, &mut db, &AtomicBool::new(false))
             .unwrap()
     );
+}
+
+#[test]
+fn registered_first_build_keeps_ownership_and_publishes_the_search_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("registered.sqlite");
+    let mut db = Volume::create(&file, "registered-volume").unwrap();
+    let source = FastFixture {
+        failure: None,
+        fast: Cell::new(0),
+        legacy: Cell::new(0),
+        journals: Cell::new(0),
+    };
+    let cancel = AtomicBool::new(false);
+    let index = stashfinder_service::index::build_registered(
+        &source,
+        &mut db,
+        IndexMode::Journal,
+        &cancel,
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(source.fast.get(), 1);
+    assert_eq!(source.legacy.get(), 0);
+    assert_eq!(db.manifest().unwrap(), "registered-volume");
+    drop(db);
+    let saved = Volume::open(&file).unwrap();
+    let loaded = SearchIndex::load(&saved).unwrap().unwrap();
+    assert_eq!(
+        (
+            index.generation,
+            index.revision,
+            index.indexed_at,
+            index.needs_validation
+        ),
+        (
+            loaded.generation,
+            loaded.revision,
+            loaded.indexed_at,
+            loaded.needs_validation
+        )
+    );
+    assert_eq!(saved.cursor(index.generation).unwrap().unwrap().next, 100);
+    let query = Query::parse("alias.txt", false).unwrap();
+    assert_eq!(
+        index.search(&query, &[], 1, &cancel).unwrap().rows[0]
+            .size
+            .as_deref(),
+        Some("42")
+    );
+    assert_eq!(
+        loaded.search(&query, &[], 1, &cancel).unwrap().rows.len(),
+        1
+    );
+}
+
+#[test]
+fn registered_first_build_rolls_back_on_identity_change_and_can_retry_or_fall_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("registered.sqlite");
+    let mut db = Volume::create(&path, "owned").unwrap();
+    let mut source = FastFixture {
+        failure: Some("changed_before_commit"),
+        fast: Cell::new(0),
+        legacy: Cell::new(0),
+        journals: Cell::new(0),
+    };
+    let cancel = AtomicBool::new(false);
+    let result = stashfinder_service::index::build_registered(
+        &source,
+        &mut db,
+        IndexMode::Journal,
+        &cancel,
+        &mut |_| {},
+    );
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("source changed before commit")
+    );
+    assert!(!db.has_generations().unwrap());
+    assert_eq!(db.manifest().unwrap(), "owned");
+    source.failure = Some("unsupported");
+    let index = stashfinder_service::index::build_registered(
+        &source,
+        &mut db,
+        IndexMode::Journal,
+        &cancel,
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(source.legacy.get(), 1);
+    assert_eq!(db.active_generation().unwrap(), Some(index.generation));
 }

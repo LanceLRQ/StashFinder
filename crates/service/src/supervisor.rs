@@ -1040,13 +1040,19 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                         Ok(task.mode)
                     };
                     mode.and_then(|mode| {
-                        index::build(source.as_ref(), &mut db, mode, &cancel, &mut |phase| {
-                            let mut states =
-                                shared.states.lock().unwrap_or_else(|e| e.into_inner());
-                            let state = states.entry(task.partition_id.clone()).or_default();
-                            state.phase = phase.into();
-                            state.error = None;
-                        })
+                        index::build_registered(
+                            source.as_ref(),
+                            &mut db,
+                            mode,
+                            &cancel,
+                            &mut |phase| {
+                                let mut states =
+                                    shared.states.lock().unwrap_or_else(|e| e.into_inner());
+                                let state = states.entry(task.partition_id.clone()).or_default();
+                                state.phase = phase.into();
+                                state.error = None;
+                            },
+                        )
                         .map(Some)
                     })
                 };

@@ -218,7 +218,6 @@ impl SearchIndex {
         )
     }
 
-    #[cfg(feature = "memory-index-bench")]
     pub fn from_initial(
         objects: &[crate::volume::Object],
         paths: &[crate::volume::Entry],

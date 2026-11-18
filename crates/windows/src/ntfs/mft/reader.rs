@@ -552,7 +552,6 @@ pub fn scan_mft(
     scan(disk, geometry, root, cancelled, consume, false)
 }
 
-#[cfg(feature = "mft-prototype")]
 pub fn scan_mft_deferred(
     disk: &mut dyn ReadAt,
     geometry: &Geometry,

@@ -14,8 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(feature = "memory-index-bench")]
 pub mod direct;
+pub use direct::build_registered;
 
 #[derive(Debug)]
 pub(crate) struct JournalMissing;
@@ -58,6 +58,13 @@ pub trait Source {
         _consume: &mut dyn FnMut(&[NativeObject]) -> Result<()>,
     ) -> Result<Option<FastScanStats>> {
         Ok(None)
+    }
+    fn full_inventory_deferred(
+        &self,
+        cancelled: &AtomicBool,
+        consume: &mut dyn FnMut(&[NativeObject]) -> Result<()>,
+    ) -> Result<Option<FastScanStats>> {
+        self.full_inventory(cancelled, consume)
     }
     fn inventory(
         &self,
@@ -245,6 +252,13 @@ impl Source for VolumeReader {
         consume: &mut dyn FnMut(&[NativeObject]) -> Result<()>,
     ) -> Result<Option<FastScanStats>> {
         self.full_inventory(cancelled, consume)
+    }
+    fn full_inventory_deferred(
+        &self,
+        cancelled: &AtomicBool,
+        consume: &mut dyn FnMut(&[NativeObject]) -> Result<()>,
+    ) -> Result<Option<FastScanStats>> {
+        VolumeReader::full_inventory_deferred(self, cancelled, consume)
     }
     fn inventory(
         &self,

@@ -24,6 +24,13 @@ pub struct Entry {
     pub parent: Option<Vec<u8>>,
     pub name: Vec<u16>,
 }
+pub struct InitialSnapshot<'a> {
+    pub objects: &'a [Object],
+    pub entries: &'a [Entry],
+    pub root: &'a [u8],
+    pub cursor: &'a Cursor,
+}
+
 pub struct Cursor {
     pub journal: Vec<u8>,
     pub next: i64,
@@ -88,12 +95,16 @@ impl Volume {
             .write(true)
             .create_new(true)
             .open(path)?;
-        Self::initialize(Connection::open(path)?, manifest)
+        let db = Connection::open(path)?;
+        db.pragma_update(None, "page_size", 16384)?;
+        Self::initialize(db, manifest)
     }
 
     #[cfg(feature = "memory-index-bench")]
     pub fn create_in_memory(manifest: &str) -> Result<Self> {
-        let volume = Self::initialize(Connection::open_in_memory()?, manifest)?;
+        let db = Connection::open_in_memory()?;
+        db.pragma_update(None, "page_size", 16384)?;
+        let volume = Self::initialize(db, manifest)?;
         volume.db.pragma_update(None, "temp_store", "MEMORY")?;
         Ok(volume)
     }
@@ -439,6 +450,19 @@ impl Volume {
         let tx = self
             .db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let published =
+            Self::publish_transaction(&tx, generation, phase, incremental, expected_revision)?;
+        tx.commit()?;
+        Ok(published)
+    }
+
+    pub(crate) fn publish_transaction(
+        tx: &rusqlite::Transaction<'_>,
+        generation: i64,
+        phase: &str,
+        incremental: bool,
+        expected_revision: Option<i64>,
+    ) -> Result<(i64, u64)> {
         let complete: bool = tx.query_row(
             "SELECT complete FROM generations WHERE id=?1",
             [generation],
@@ -465,7 +489,6 @@ impl Volume {
             )
             .optional()?
             .context("搜索索引构建后分区代次已变化")?;
-        tx.commit()?;
         Ok((revision, completed))
     }
 
@@ -591,6 +614,12 @@ impl Volume {
             records: records.try_into()?,
             error,
         })
+    }
+
+    pub fn has_generations(&self) -> Result<bool> {
+        Ok(self
+            .db
+            .query_row("SELECT EXISTS(SELECT 1 FROM generations)", [], |r| r.get(0))?)
     }
 
     pub fn active_generation(&self) -> Result<Option<i64>> {
