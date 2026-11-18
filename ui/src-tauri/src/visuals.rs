@@ -1,6 +1,7 @@
 use crate::visual_cache::{Cache, Key, Progress, Stats};
 
 pub mod batch;
+pub mod ffmpeg;
 const THUMBNAIL_SIZE: u32 = 512;
 use anyhow::{Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};

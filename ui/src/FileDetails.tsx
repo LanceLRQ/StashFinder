@@ -31,6 +31,12 @@ export default function FileDetails({
           </strong>
           {file && reference && active && (
             <ThumbnailPreview
+              key={JSON.stringify([
+                reference.partition_id,
+                reference.filesystem_id,
+                reference.entry,
+                connection,
+              ])}
               file={file}
               reference={reference}
               connection={connection}

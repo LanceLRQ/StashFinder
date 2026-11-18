@@ -53,6 +53,9 @@
 .thumbnail-preview [role="alert"] {
   color: #923c2b;
 }
+.thumbnail-preview > button {
+  margin-top: 8px;
+}
 .cache-controls {
   max-width: 960px;
 }

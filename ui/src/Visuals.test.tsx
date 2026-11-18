@@ -1,4 +1,11 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -273,4 +280,48 @@ test("offline cached thumbnails are marked historical while native failures leav
   );
   expect(screen.getByText("Photos")).toBeTruthy();
   expect(screen.getByText("10 B")).toBeTruthy();
+});
+
+test("offers a manual FFmpeg repair after Windows fails and cancels on selection change", async () => {
+  let finish!: (value: unknown) => void;
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "visual_ffmpeg_available") return true;
+    if (command === "visual_ffmpeg_rebuild")
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    if (command === "visual_preview")
+      return { ...image(), data_url: null, source: "unsupported" };
+    return image();
+  });
+  const details = (id: number, connection: string) => (
+    <Visuals>
+      <FileDetails
+        rows={[row("sample.mp4", id)]}
+        partition="Movies"
+        connection={connection}
+        indexedAt={null}
+        reference={{ ...reference, entry: [id] }}
+      />
+    </Visuals>
+  );
+  const view = render(details(2, "online"));
+  const repair = await screen.findByRole("button", { name: "用 FFmpeg 补建" });
+  expect(invoke).not.toHaveBeenCalledWith(
+    "visual_ffmpeg_rebuild",
+    expect.anything(),
+  );
+  fireEvent.click(repair);
+  await screen.findByRole("button", { name: "取消补建" });
+  const request = vi
+    .mocked(invoke)
+    .mock.calls.find(([command]) => command === "visual_ffmpeg_rebuild")?.[1];
+  expect(request).toEqual({ reference, requestId: expect.any(String) });
+  view.rerender(details(3, "offline"));
+  expect(invoke).toHaveBeenCalledWith("visual_cancel", {
+    requestId: (request as { requestId: string }).requestId,
+  });
+  await act(async () => finish(null));
+  expect(screen.queryByText("缩略图已补建")).toBeNull();
+  expect(screen.queryByRole("button", { name: "用 FFmpeg 补建" })).toBeNull();
 });

@@ -407,6 +407,8 @@ fn run() -> Result<(), anyhow::Error> {
             visuals::visual_icon,
             visuals::visual_preview,
             visuals::visual_cancel,
+            visuals::ffmpeg::visual_ffmpeg_available,
+            visuals::ffmpeg::visual_ffmpeg_rebuild,
             visuals::visual_cache_status,
             visuals::visual_cache_limit,
             visuals::visual_cache_clear,

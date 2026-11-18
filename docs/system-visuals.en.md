@@ -14,6 +14,12 @@ Choose **Pre-generate thumbnails** in the overview details for an online partiti
 
 Open **Tools → Thumbnail jobs** to see discovered, processed, saved, skipped, and failed counts, or to pause, resume, and cancel the job. A disconnected partition waits for reconnection. The job keeps its progress when it reaches the cache limit or runs low on disk space. After adjusting the limit or freeing space, choose **Resume** to retry the current file. Exiting ends the job and retains saved images, which can be reused by choosing **Skip existing** next time.
 
+## Repair an individual thumbnail with FFmpeg
+
+When an online file's preview cannot display a thumbnail, choose **Repair with FFmpeg** if the application finds `ffmpeg.exe` on `PATH`. FFmpeg must support the `fd` input protocol. The app reads one frame from the selected file, validates the result, and updates the local PNG shared by the list and preview pane.
+
+Choose **Cancel repair** or change the selection to cancel the request. FFmpeg stops after 15 seconds, and existing cache entries are preserved when repair fails or is cancelled.
+
 ## Cache settings
 
 Open **Settings → Image cache** to view cache usage, free space on the cache drive, and current activity. The default limit is **2 GB (2,000,000,000 bytes)**. Apply **Unlimited** to disable eviction based on the cache limit.
