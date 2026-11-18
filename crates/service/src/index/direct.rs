@@ -212,13 +212,21 @@ fn collect_rows(
     let stage_time = scan.consumer_time;
     let started = Instant::now();
     let mut deleted_directories = HashSet::new();
-    prune(
+    let initial_error = match prune(
         &mut records,
         root,
         &excluded,
         &deleted_directories,
         cancelled,
-    )?;
+    ) {
+        Ok(()) => None,
+        // The MFT is live while we read it. A rename or replacement may leave
+        // conflicting names or parent links until the journal is replayed.
+        Err(error) if error.is::<InitialPathConflict>() || error.is::<InitialPathsIncomplete>() => {
+            Some(error)
+        }
+        Err(error) => return Err(error),
+    };
     let import_time = started.elapsed();
     progress("replaying");
     let started = Instant::now();
@@ -318,6 +326,8 @@ fn collect_rows(
             &deleted_directories,
             cancelled,
         )?;
+    } else if let Some(error) = initial_error {
+        return Err(error);
     }
     let mut objects = Vec::with_capacity(records.len());
     let mut entries = Vec::with_capacity(records.len());

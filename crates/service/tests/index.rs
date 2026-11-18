@@ -255,8 +255,10 @@ impl Source for FastFixture {
                 && self.journals.get() > 1
             {
                 300
-            } else if matches!(self.failure, Some("replay" | "directory_delete" | "move"))
-                && self.journals.get() > 1
+            } else if matches!(
+                self.failure,
+                Some("replay" | "directory_delete" | "move" | "replacement")
+            ) && self.journals.get() > 1
             {
                 200
             } else {
@@ -321,6 +323,12 @@ impl Source for FastFixture {
                 )],
             }])?,
         }
+        if self.failure == Some("replacement") {
+            consume(&[NativeObject {
+                entry: entry(22, "alias.txt", false, 23),
+                links: vec![(5, link("alias.txt"))],
+            }])?;
+        }
         Ok(Some(Default::default()))
     }
     fn inventory(
@@ -341,6 +349,17 @@ impl Source for FastFixture {
         consume(&[entry(40, "legacy.txt", false, 7)])
     }
     fn object(&self, id: u64) -> anyhow::Result<Option<NativeObject>> {
+        if self.failure == Some("replacement") {
+            if id == 21 {
+                return Ok(None);
+            }
+            if id == 22 {
+                return Ok(Some(NativeObject {
+                    entry: entry(22, "alias.txt", false, 23),
+                    links: vec![(5, "alias.txt".encode_utf16().collect())],
+                }));
+            }
+        }
         if self.failure == Some("directory_delete") && id == 20 {
             return Ok(None);
         }
@@ -372,6 +391,30 @@ impl Source for FastFixture {
         }))
     }
     fn changes(&self, id: u64, start: i64) -> anyhow::Result<UsnPage> {
+        if self.failure == Some("replacement") {
+            assert_eq!((id, start), (1, 100));
+            return Ok(UsnPage {
+                next: 200,
+                records: vec![
+                    UsnRecord {
+                        id: 21,
+                        parent: 5,
+                        usn: 140,
+                        reason: 0x200,
+                        attributes: 32,
+                        name: vec![],
+                    },
+                    UsnRecord {
+                        id: 22,
+                        parent: 5,
+                        usn: 150,
+                        reason: 0x100,
+                        attributes: 32,
+                        name: vec![],
+                    },
+                ],
+            });
+        }
         if matches!(self.failure, Some("paged_delete" | "missing" | "reused")) {
             assert_eq!(id, 1);
             assert!(matches!(start, 100 | 200));
@@ -1755,6 +1798,43 @@ fn registered_first_build_keeps_ownership_and_publishes_the_search_revision() {
     assert_eq!(
         loaded.search(&query, &[], 1, &cancel).unwrap().rows.len(),
         1
+    );
+}
+
+#[test]
+fn registered_first_build_replays_a_same_name_replacement_before_falling_back() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("registered.sqlite");
+    let mut db = Volume::create(&file, "owned").unwrap();
+    let source = FastFixture {
+        failure: Some("replacement"),
+        fast: Cell::new(0),
+        legacy: Cell::new(0),
+        journals: Cell::new(0),
+    };
+    let cancel = AtomicBool::new(false);
+    let index = stashfinder_service::index::build_registered(
+        &source,
+        &mut db,
+        IndexMode::Journal,
+        &cancel,
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!((source.fast.get(), source.legacy.get()), (1, 0));
+    let query = Query::parse("alias.txt", false).unwrap();
+    let check = |index: &SearchIndex| {
+        let rows = index.search(&query, &[], 10, &cancel).unwrap().rows;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].size.as_deref(), Some("23"));
+    };
+    check(&index);
+    assert_eq!(db.cursor(index.generation).unwrap().unwrap().next, 200);
+    drop(db);
+    check(
+        &SearchIndex::load(&Volume::open(&file).unwrap())
+            .unwrap()
+            .unwrap(),
     );
 }
 
