@@ -42,6 +42,8 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
   const previous = useRef<HTMLElement | null>(null);
   const focusLast = useRef(false);
   const pointerOrigin = useRef<HTMLElement | null>(null);
+  const pointerOpened = useRef(false);
+  const dismissTimer = useRef<number>(undefined);
   const enabledItems = (menu: HTMLDivElement | null) =>
     Array.from(
       menu?.querySelectorAll<HTMLButtonElement>(
@@ -50,6 +52,8 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
     );
 
   function close(restore: boolean) {
+    window.clearTimeout(dismissTimer.current);
+    pointerOpened.current = false;
     setOpen(null);
     setChild(null);
     if (restore) {
@@ -61,7 +65,14 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
     }
   }
 
-  function show(index: number, from: HTMLElement | null, last = false) {
+  function show(
+    index: number,
+    from: HTMLElement | null,
+    last = false,
+    pointer = false,
+  ) {
+    window.clearTimeout(dismissTimer.current);
+    pointerOpened.current = pointer;
     if (open === null) previous.current = from;
     setTabStop(index);
     setChild(null);
@@ -79,11 +90,20 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
   }
 
   useLayoutEffect(() => {
-    if (open !== null)
-      (
-        enabledItems(popup.current).at(focusLast.current ? -1 : 0) ??
-        popup.current
-      )?.focus();
+    if (open === null) return;
+    const menu = popup.current;
+    const trigger = triggers.current[open];
+    if (!menu || !trigger) return;
+    const position = () => {
+      const anchor = trigger.getBoundingClientRect();
+      const available = window.innerWidth - anchor.left;
+      menu.style.maxHeight = `${Math.max(0, window.innerHeight - anchor.bottom - 4)}px`;
+      menu.style.left = `${Math.min(0, available - menu.offsetWidth - 4)}px`;
+    };
+    position();
+    (enabledItems(menu).at(focusLast.current ? -1 : 0) ?? menu).focus();
+    window.addEventListener("resize", position);
+    return () => window.removeEventListener("resize", position);
   }, [open]);
   useLayoutEffect(() => {
     const menu = submenu.current;
@@ -109,6 +129,8 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
       window.removeEventListener("resize", position);
     };
   }, [open, child]);
+
+  useEffect(() => () => window.clearTimeout(dismissTimer.current), []);
 
   useEffect(() => {
     const outside = (event: PointerEvent) => {
@@ -158,6 +180,8 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
       event.nativeEvent.isComposing
     )
       return;
+    window.clearTimeout(dismissTimer.current);
+    pointerOpened.current = false;
     event.stopPropagation();
     const target = event.target as HTMLButtonElement;
     if (key === "Tab") {
@@ -250,7 +274,27 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
   return (
     <nav ref={root} className="app-menu" aria-label="程序菜单">
       {groups.map((group, index) => (
-        <div className="app-menu-group" key={group.label}>
+        <div
+          className="app-menu-group"
+          key={group.label}
+          onPointerEnter={() => {
+            if (open === index) window.clearTimeout(dismissTimer.current);
+          }}
+          onPointerLeave={(event) => {
+            if (
+              open !== index ||
+              !pointerOpened.current ||
+              event.pointerType !== "mouse"
+            )
+              return;
+            window.clearTimeout(dismissTimer.current);
+            dismissTimer.current = window.setTimeout(
+              () =>
+                close(root.current?.contains(document.activeElement) ?? false),
+              500,
+            );
+          }}
+        >
           <button
             ref={(element) => {
               triggers.current[index] = element;
@@ -266,7 +310,13 @@ export default function AppMenu({ groups }: { groups: MenuGroup[] }) {
             }}
             onClick={(event) => {
               if (open === index) close(true);
-              else show(index, pointerOrigin.current ?? event.currentTarget);
+              else
+                show(
+                  index,
+                  pointerOrigin.current ?? event.currentTarget,
+                  false,
+                  event.detail > 0,
+                );
               pointerOrigin.current = null;
             }}
             onKeyDown={(event) => {

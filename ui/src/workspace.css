@@ -186,7 +186,9 @@
   z-index: 25;
   top: 100%;
   left: 0;
-  min-width: 184px;
+  width: max-content;
+  min-width: min(184px, 100vw - 8px);
+  max-width: calc(100vw - 8px);
   max-height: 70vh;
   overflow: auto;
   padding: 4px;
@@ -199,7 +201,7 @@
   display: grid;
   grid-template-columns: 1em minmax(0, 1fr) auto;
   align-items: center;
-  column-gap: 6px;
+  column-gap: 8px;
   width: 100%;
   padding: 6px 10px;
   border: 0;
@@ -228,12 +230,14 @@
 }
 .app-menu-label {
   grid-column: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .app-menu-shortcut,
 .app-menu-arrow {
   grid-column: 3;
   justify-self: end;
-  margin-inline-start: 12px;
+  margin-inline-start: 8px;
 }
 .app-menu-shortcut {
   color: #566476;

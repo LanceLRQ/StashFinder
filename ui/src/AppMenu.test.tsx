@@ -1,8 +1,17 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import AppMenu from "./AppMenu";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 test("uses the same label slot for commands, checkboxes and submenu triggers", () => {
   const run = vi.fn();
@@ -121,4 +130,60 @@ test("opens Edit with Alt+E, navigates enabled commands and restores focus", () 
   fireEvent.keyDown(document.activeElement!, { key: "Escape" });
   expect(screen.queryByRole("menu")).toBeNull();
   expect(document.activeElement).toBe(source);
+});
+
+test("dismisses a pointer-opened menu after 500 ms outside its tree", () => {
+  vi.useFakeTimers();
+  const run = vi.fn();
+  render(
+    <>
+      <button>文件列表</button>
+      <AppMenu
+        groups={[
+          {
+            label: "查看",
+            accessKey: "v",
+            sections: [
+              [{ label: "布局", sections: [[{ label: "详情", run }]] }],
+            ],
+          },
+        ]}
+      />
+    </>,
+  );
+  const view = screen.getByRole("button", { name: "查看" });
+  const outside = screen.getByRole("button", { name: "文件列表" });
+  outside.focus();
+  fireEvent.pointerDown(view, { pointerType: "mouse" });
+  fireEvent.click(view, { detail: 1 });
+  const menu = screen.getByRole("menu", { name: "查看" });
+  const layout = screen.getByRole("menuitem", { name: "布局" });
+  fireEvent.pointerOut(menu, { pointerType: "mouse", relatedTarget: outside });
+  act(() => vi.advanceTimersByTime(400));
+  fireEvent.pointerOut(outside, {
+    pointerType: "mouse",
+    relatedTarget: menu,
+  });
+  fireEvent.click(layout, { detail: 1 });
+  const submenu = screen.getByRole("menu", { name: "布局" });
+  fireEvent.pointerOut(menu, { pointerType: "mouse", relatedTarget: submenu });
+  act(() => vi.advanceTimersByTime(500));
+  expect(screen.getByRole("menu", { name: "布局" })).toBe(submenu);
+  fireEvent.pointerOut(submenu, {
+    pointerType: "mouse",
+    relatedTarget: outside,
+  });
+  act(() => vi.advanceTimersByTime(499));
+  expect(screen.getByRole("menu", { name: "查看" })).toBe(menu);
+  act(() => vi.advanceTimersByTime(1));
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(document.activeElement).toBe(outside);
+
+  fireEvent.keyDown(outside, { key: "v", altKey: true });
+  fireEvent.pointerOut(screen.getByRole("menu", { name: "查看" }), {
+    pointerType: "mouse",
+    relatedTarget: outside,
+  });
+  act(() => vi.advanceTimersByTime(500));
+  expect(screen.getByRole("menu", { name: "查看" })).toBeTruthy();
 });
