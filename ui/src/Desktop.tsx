@@ -144,7 +144,7 @@ export default function Desktop() {
   }
 
   return (
-    <Visuals>
+    <Visuals onOpenCache={() => setSettings("cache")}>
       <FileOperations showStatus={preferences.show_status_bar ?? true}>
         <main className="desktop">
           <Workspace

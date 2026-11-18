@@ -22,6 +22,62 @@ function openSettings() {
   fireEvent.click(screen.getByRole("menuitem", { name: "设置…" }));
 }
 
+test("commits a cache draft with the settings confirmation after changing categories", async () => {
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    const limit =
+      command === "visual_cache_limit"
+        ? (args as { limitBytes: number }).limitBytes
+        : 2_000_000_000;
+    return {
+      used_bytes: 0,
+      free_bytes: null,
+      limit_bytes: limit,
+      files: 0,
+      waiting: 0,
+      active: 0,
+      thumbnail_types: {
+        images: true,
+        videos: false,
+        documents: false,
+        extensions: [],
+      },
+    };
+  });
+  const close = vi.fn();
+  render(
+    <Settings
+      preferences={{
+        version: 1,
+        collapsed: false,
+        start_page: "overview",
+        include_path: true,
+      }}
+      saving={false}
+      onSave={async () => true}
+      tasks={null}
+      taskError=""
+      onTasksRefresh={() => {}}
+      initialPage="cache"
+      onClose={close}
+    />,
+  );
+  fireEvent.change(
+    await screen.findByRole("spinbutton", { name: "图片缓存上限（GB）" }),
+    { target: { value: "5" } },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "常用" }));
+  expect(invoke).not.toHaveBeenCalledWith(
+    "visual_cache_limit",
+    expect.anything(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "确定" }));
+  await waitFor(() => expect(close).toHaveBeenCalled());
+  expect(invoke).toHaveBeenCalledWith("visual_cache_limit", {
+    limitBytes: 5_000_000_000,
+    requestId: expect.any(String),
+  });
+});
+
 test.each(["portable", "windows_service"])(
   "offers an explicit portable exit only for the portable backend: %s",
   async (mode) => {
@@ -250,11 +306,23 @@ test("disabling automatic updates requires confirmation and a failed save retain
   );
   expect(enabled).toBe(true);
   fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole("button", { name: "关闭自动更新" }));
+  expect(enabled).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  expect(enabled).toBe(true);
+  openSettings();
+  fireEvent.click(screen.getByRole("button", { name: "索引与同步" }));
+  const reopened = screen.getByRole("switch", { name: "自动更新已登记分区" });
+  fireEvent.click(reopened);
+  fireEvent.click(screen.getByRole("button", { name: "关闭自动更新" }));
   fail = true;
-  fireEvent.click(screen.getByRole("button", { name: "关闭自动更新" }));
+  fireEvent.click(screen.getByRole("button", { name: "确定" }));
   await screen.findByText(/策略写入失败/);
-  expect(toggle).toHaveProperty("checked", true);
+  expect(enabled).toBe(true);
   fail = false;
-  fireEvent.click(screen.getByRole("button", { name: "关闭自动更新" }));
-  await waitFor(() => expect(toggle).toHaveProperty("checked", false));
+  fireEvent.click(screen.getByRole("button", { name: "确定" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "设置" })).toBeNull(),
+  );
+  expect(enabled).toBe(false);
 });

@@ -14,6 +14,7 @@ export default function FileListItem({
   active,
   reference,
   connection,
+  connectionStatus,
   editing,
   location,
   children,
@@ -27,6 +28,7 @@ export default function FileListItem({
   active: boolean;
   reference?: EntryRef;
   connection?: string;
+  connectionStatus?: string;
   editing?: {
     onSubmit: (name: string) => void;
     onCancel: () => void;
@@ -58,6 +60,9 @@ export default function FileListItem({
     ) : (
       file.name
     ));
+  const status = connectionStatus && (
+    <span className="file-connection">{connectionStatus} </span>
+  );
   return (
     <Item
       {...events}
@@ -84,7 +89,8 @@ export default function FileListItem({
               name
             ) : (
               <span className="thumbnail-label">
-                {name}
+                {status}
+                <span>{name}</span>
                 {location && (
                   <span className="thumbnail-location"> · {location}</span>
                 )}
@@ -99,7 +105,8 @@ export default function FileListItem({
           {file && (
             <td title={file.name}>
               {icon}
-              {name}
+              {status}
+              {status && !editing ? <span>{name}</span> : name}
             </td>
           )}
           {children}

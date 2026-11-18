@@ -570,10 +570,12 @@ test("shows a running build ahead of an older failure and resolves other indexin
     return original(command, args);
   });
   render(<Desktop />);
+  const cardButton = await screen.findByRole("button", { name: "Movies" });
+  fireEvent.click(cardButton);
   const sidebar = within(
     screen.getByRole("complementary", { name: "分区详情" }),
   );
-  const card = within(await screen.findByRole("button", { name: "Movies" }));
+  const card = within(cardButton);
   await card.findByText("索引中");
   expect(card.queryByText("待处理")).toBeNull();
   expect(sidebar.queryByRole("button", { name: "重试 Movies" })).toBeNull();

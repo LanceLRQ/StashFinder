@@ -383,6 +383,10 @@
   white-space: nowrap;
   color: #59687c;
 }
+.candidate-copy .candidate-blocked {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
 
 @media (max-width: 670px) {
   .asset-details {

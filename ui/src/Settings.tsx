@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import CategoryEditor from "./CategoryEditor";
-import CacheSettings from "./CacheSettings";
+import CacheSettings, { type CacheSettingsControls } from "./CacheSettings";
 import Modal from "./Modal";
 import {
   defaultPreferences,
@@ -66,6 +66,9 @@ export default function Settings({
   preferenceUnavailable?: boolean;
 }) {
   const [category, setCategory] = useState<SettingsPage>(initialPage);
+  const [cacheVisited, setCacheVisited] = useState(initialPage === "cache");
+  const cache = useRef<CacheSettingsControls>(null);
+  const [cacheBusy, setCacheBusy] = useState(false);
   const [changes, setChanges] = useState<Partial<PreferenceDraft>>({});
   const draft = { ...defaultPreferences, ...preferences, ...changes };
   const categories = draft.categories ?? defaultCategories;
@@ -73,7 +76,10 @@ export default function Settings({
   const availablePresets = filterPresetEntries(categories, presets);
   const selectedPreset =
     availablePresets.find(({ id }) => id === draft.browse_filter)?.id ?? null;
-  const formDisabled = saving || preferenceUnavailable;
+  const committing = useRef(false);
+  const [applying, setApplying] = useState(false);
+  const locked = saving || applying || cacheBusy;
+  const formDisabled = locked || preferenceUnavailable;
   const navFocus = useRef<HTMLButtonElement>(null);
   const changed = (Object.keys(changes) as (keyof PreferenceDraft)[]).some(
     (key) =>
@@ -81,8 +87,38 @@ export default function Settings({
       JSON.stringify(preferences[key] ?? null),
   );
   async function commit() {
-    if (changed && (formDisabled || (await onSave(changes)) === false)) return;
-    onClose();
+    if (committing.current || locked || (changed && preferenceUnavailable))
+      return;
+    committing.current = true;
+    setApplying(true);
+    try {
+      if (cache.current && !(await cache.current.save())) {
+        setCategory("cache");
+        return;
+      }
+      if (changed) {
+        if ((await onSave(changes)) === false) return;
+        setChanges({});
+      }
+      if (automaticDraft !== null && automaticDraft !== tasks?.automatic) {
+        const saved = await taskCommand({
+          auto_update: { enabled: automaticDraft },
+        }).then(
+          () => true,
+          (e) => {
+            setPolicyError(String(e));
+            setCategory("sync");
+            return false;
+          },
+        );
+        if (!saved) return;
+        onTasksRefresh();
+      }
+      onClose();
+    } finally {
+      committing.current = false;
+      setApplying(false);
+    }
   }
   const [status, setStatus] = useState<ServiceStatus | null>(null);
   const [error, setError] = useState("");
@@ -91,21 +127,8 @@ export default function Settings({
   const [checking, setChecking] = useState(false);
   const sequence = useRef(0);
   const [confirmDisable, setConfirmDisable] = useState(false);
-  const [policySaving, setPolicySaving] = useState(false);
+  const [automaticDraft, setAutomaticDraft] = useState<boolean | null>(null);
   const [policyError, setPolicyError] = useState("");
-  async function setAutomatic(enabled: boolean) {
-    if (policySaving) return;
-    setPolicySaving(true);
-    setPolicyError("");
-    await taskCommand({ auto_update: { enabled } }).then(
-      () => {
-        setConfirmDisable(false);
-        onTasksRefresh();
-      },
-      (e) => setPolicyError(String(e)),
-    );
-    setPolicySaving(false);
-  }
   async function connect() {
     const id = ++sequence.current;
     setChecking(true);
@@ -144,7 +167,7 @@ export default function Settings({
       className="settings-dialog"
       onClose={onClose}
       initialFocus={navFocus}
-      closeDisabled={saving}
+      closeDisabled={locked}
       actions={
         <>
           {category === "general" && (
@@ -168,13 +191,13 @@ export default function Settings({
               恢复默认
             </button>
           )}
-          <button type="button" disabled={saving} onClick={onClose}>
+          <button type="button" disabled={locked} onClick={onClose}>
             取消
           </button>
           <button
             type="button"
             className="primary"
-            disabled={saving || (changed && preferenceUnavailable)}
+            disabled={locked || (changed && preferenceUnavailable)}
             onClick={() => void commit()}
           >
             确定
@@ -190,7 +213,11 @@ export default function Settings({
               key={id}
               ref={id === initialPage ? navFocus : undefined}
               aria-current={category === id ? "page" : undefined}
-              onClick={() => setCategory(id)}
+              disabled={locked}
+              onClick={() => {
+                setCategory(id);
+                if (id === "cache") setCacheVisited(true);
+              }}
             >
               {label}
             </button>
@@ -202,7 +229,11 @@ export default function Settings({
               {preferenceError}
             </p>
           )}
-          {category === "cache" && <CacheSettings />}
+          {cacheVisited && (
+            <div hidden={category !== "cache"}>
+              <CacheSettings ref={cache} onBusyChange={setCacheBusy} />
+            </div>
+          )}
           {category === "sync" && (
             <>
               <label className="setting-row">
@@ -217,19 +248,20 @@ export default function Settings({
                   role="switch"
                   aria-label="自动更新已登记分区"
                   aria-describedby="settings-sync-hint"
-                  checked={tasks?.automatic ?? false}
-                  disabled={!tasks || !!taskError || policySaving}
-                  onChange={(e) =>
-                    e.target.checked
-                      ? void setAutomatic(true)
-                      : setConfirmDisable(true)
-                  }
+                  checked={automaticDraft ?? tasks?.automatic ?? false}
+                  disabled={!tasks || !!taskError || locked}
+                  onChange={(e) => {
+                    setPolicyError("");
+                    if (!e.target.checked && tasks?.automatic)
+                      setConfirmDisable(true);
+                    else setAutomaticDraft(e.target.checked);
+                  }}
                 />
               </label>
               {!tasks && !taskError && <p role="status">自动更新状态未知</p>}
-              {(taskError || (!confirmDisable && policyError)) && (
+              {(policyError || taskError) && (
                 <p role="alert" className="desktop-error">
-                  {taskError || policyError}
+                  {policyError || taskError}
                 </p>
               )}
               <p className="stage-note">
@@ -439,24 +471,20 @@ export default function Settings({
             className="asset-dialog"
             title="关闭自动更新？"
             onClose={() => setConfirmDisable(false)}
-            closeDisabled={policySaving}
             actions={
               <button
-                disabled={policySaving}
-                onClick={() => void setAutomatic(false)}
+                onClick={() => {
+                  setAutomaticDraft(false);
+                  setConfirmDisable(false);
+                }}
               >
                 关闭自动更新
               </button>
             }
           >
             <p>
-              之后的文件变化不会自动进入索引；已有任务继续，离线记录仍可搜索。
+              保存设置后，文件变化将不再自动进入索引。已有任务会继续，离线记录仍可搜索。
             </p>
-            {policyError && (
-              <p role="alert" className="desktop-error">
-                {policyError}
-              </p>
-            )}
           </Modal>
         )}
       </div>

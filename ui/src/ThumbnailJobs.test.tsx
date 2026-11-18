@@ -9,6 +9,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import Visuals, { useVisuals } from "./Visuals";
 import { ThumbnailProgress } from "./ThumbnailJobs";
+import ThumbnailJobs from "./ThumbnailJobs";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -17,6 +18,27 @@ vi.mock("@tauri-apps/api/event", () => ({
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
+});
+
+test.each([
+  ["请先在「设置 → 图片缓存」选择预生成的文件类型", "选择文件类型"],
+  ["已有缩略图任务在运行", "查看运行中的任务"],
+])("offers the recovery action for %s", async (failure, label) => {
+  vi.mocked(invoke).mockRejectedValue(failure);
+  const recover = vi.fn();
+  render(
+    <ThumbnailJobs
+      scope={{ partitionId: "p", filesystemId: "fs", label: "照片" }}
+      onClose={() => {}}
+      onStarted={() => {}}
+      onRecovery={recover}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "开始" }));
+  fireEvent.click(await screen.findByRole("button", { name: label }));
+  expect(recover).toHaveBeenCalledWith(
+    label === "选择文件类型" ? "cache" : "tasks",
+  );
 });
 
 test("opens a folder job with skip selected and shows safe progress after requesting a rebuild", async () => {

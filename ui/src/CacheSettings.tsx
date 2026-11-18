@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type Ref,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useVisuals } from "./Visuals";
@@ -16,7 +22,15 @@ const fileTypes = [
   ["documents", "文档（PDF）"],
 ] as const;
 
-export default function CacheSettings() {
+export type CacheSettingsControls = { save: () => Promise<boolean> };
+
+export default function CacheSettings({
+  ref,
+  onBusyChange,
+}: {
+  ref?: Ref<CacheSettingsControls>;
+  onBusyChange?: (busy: boolean) => void;
+}) {
   const visuals = useVisuals();
   const [status, setStatus] = useState<CacheStatus | null>(null);
   const [limit, setLimit] = useState("");
@@ -102,49 +116,30 @@ export default function CacheSettings() {
   useEffect(() => {
     if (confirm) return () => clearButton.current?.focus();
   }, [confirm]);
-  function update(
+  async function update(
     command:
       | "visual_cache_limit"
       | "visual_cache_clear"
       | "visual_thumbnail_types",
+    args: Record<string, unknown> = {},
   ) {
-    if (working.current) return;
-    const bytes = Math.round(Number(limit) * 1e9);
-    if (
-      command === "visual_cache_limit" &&
-      !unlimited &&
-      (!Number.isSafeInteger(bytes) || bytes <= 0)
-    ) {
-      setError("请输入有效的正数容量");
-      return;
-    }
+    if (working.current) return false;
     const id = ++sequence.current;
     working.current = true;
     const requestId = crypto.randomUUID();
     operationId.current = requestId;
     setMaintenance(null);
     setBusy(true);
+    onBusyChange?.(true);
     setError("");
     if (command === "visual_cache_clear") setConfirm(false);
-    void invoke<CacheStatus>(
+    return invoke<CacheStatus>(
       command,
-      command === "visual_cache_limit"
-        ? { limitBytes: unlimited ? null : bytes, requestId }
-        : command === "visual_thumbnail_types"
-          ? {
-              types: {
-                ...types,
-                extensions: extensions
-                  .split(/[,;，；\n]/)
-                  .map((ext) => ext.trim())
-                  .filter(Boolean),
-              },
-            }
-          : { requestId },
+      command === "visual_thumbnail_types" ? args : { ...args, requestId },
     )
       .then(
         (next) => {
-          if (!live.current || id !== sequence.current) return;
+          if (!live.current || id !== sequence.current) return false;
           setStatus(next);
           if (command === "visual_cache_limit") {
             setUnlimited(next.limit_bytes === null);
@@ -159,17 +154,50 @@ export default function CacheSettings() {
             setConfirm(false);
             visuals?.invalidate();
           }
+          return true;
         },
         (failure) => {
           if (live.current && id === sequence.current)
             setError(String(failure).replace(/^Error: /, ""));
+          return false;
         },
       )
       .finally(() => {
         working.current = false;
-        if (live.current && id === sequence.current) setBusy(false);
+        if (live.current && id === sequence.current) {
+          setBusy(false);
+          onBusyChange?.(false);
+        }
       });
   }
+  useImperativeHandle(ref, () => ({
+    async save() {
+      if (!status || !types) return true;
+      const limitBytes = unlimited ? null : Math.round(Number(limit) * 1e9);
+      if (
+        limitBytes !== null &&
+        (!Number.isSafeInteger(limitBytes) || limitBytes <= 0)
+      ) {
+        setError("请输入有效的正数容量");
+        return false;
+      }
+      const nextTypes = {
+        ...types,
+        extensions: extensions
+          .split(/[,;，；\n]/)
+          .map((ext) => ext.trim())
+          .filter(Boolean),
+      };
+      if (
+        limitBytes !== status.limit_bytes &&
+        !(await update("visual_cache_limit", { limitBytes }))
+      )
+        return false;
+      if (JSON.stringify(nextTypes) !== JSON.stringify(status.thumbnail_types))
+        return update("visual_thumbnail_types", { types: nextTypes });
+      return true;
+    },
+  }));
   return (
     <div className="cache-controls">
       {!status ? (
@@ -188,9 +216,6 @@ export default function CacheSettings() {
                 value={limit}
                 disabled={busy || unlimited}
                 onChange={(event) => setLimit(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") update("visual_cache_limit");
-                }}
               />
               <span>GB</span>
               <label>
@@ -202,12 +227,6 @@ export default function CacheSettings() {
                 />
                 不限容量
               </label>
-              <button
-                disabled={busy}
-                onClick={() => update("visual_cache_limit")}
-              >
-                应用
-              </button>
               <button
                 ref={clearButton}
                 disabled={busy}
@@ -279,12 +298,6 @@ export default function CacheSettings() {
               <small id="thumbnail-extensions-help">
                 用逗号分隔。生成结果取决于 Windows 对该格式的支持。
               </small>
-              <button
-                type="button"
-                onClick={() => update("visual_thumbnail_types")}
-              >
-                保存文件类型
-              </button>
             </fieldset>
           )}
         </>

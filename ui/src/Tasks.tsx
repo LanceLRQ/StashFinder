@@ -71,9 +71,11 @@ export default function Tasks({
             >
               {label}
               <span>
-                {id === "recent"
-                  ? Math.min(rows.length, 5)
-                  : rows.filter((t) => taskGroup(t) === id).length}
+                {!data
+                  ? "—"
+                  : id === "recent"
+                    ? Math.min(rows.length, 5)
+                    : rows.filter((t) => taskGroup(t) === id).length}
               </span>
             </button>
           ))}
@@ -92,15 +94,25 @@ export default function Tasks({
         </select>
         <span className="task-policy">
           {error
-            ? "状态未确认"
+            ? data
+              ? "显示上次读取的任务"
+              : "状态未确认"
             : data
               ? `自动更新${data.automatic ? "开启" : "关闭"}`
               : "正在读取"}
         </span>
       </div>
-      {(error || actionError) && (
-        <p className="desktop-error" role="alert">
-          {actionError || error}
+      {(actionError || (error && data)) && (
+        <p>
+          <span className="desktop-error" role="alert">
+            {actionError || error}
+          </span>
+          {error && data && (
+            <>
+              {" "}
+              <button onClick={onRefresh}>重试</button>
+            </>
+          )}
         </p>
       )}
       {!!data?.paused.length && (
@@ -238,13 +250,22 @@ export default function Tasks({
             {!shown.length && (
               <tr>
                 <td className="task-empty" colSpan={5}>
-                  {data
-                    ? group === "current" || group === "recent"
-                      ? "当前没有任务"
-                      : group === "attention"
-                        ? "没有需要处理的任务"
-                        : "暂无任务历史"
-                    : "正在读取任务…"}
+                  {!data && error ? (
+                    <>
+                      <span role="alert">任务读取失败：{error}</span>{" "}
+                      <button onClick={onRefresh}>重试</button>
+                    </>
+                  ) : data ? (
+                    group === "current" || group === "recent" ? (
+                      "当前没有任务"
+                    ) : group === "attention" ? (
+                      "没有需要处理的任务"
+                    ) : (
+                      "暂无任务历史"
+                    )
+                  ) : (
+                    "正在读取任务…"
+                  )}
                 </td>
               </tr>
             )}

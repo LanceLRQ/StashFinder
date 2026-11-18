@@ -7,11 +7,12 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Visuals from "./Visuals";
 import FileIcon from "./FileIcon";
-import CacheSettings from "./CacheSettings";
+import CacheSettings, { type CacheSettingsControls } from "./CacheSettings";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async () => vi.fn()),
@@ -21,6 +22,16 @@ afterEach(() => {
   cleanup();
   vi.resetAllMocks();
 });
+
+function CacheForm() {
+  const controls = useRef<CacheSettingsControls>(null);
+  return (
+    <>
+      <CacheSettings ref={controls} />
+      <button onClick={() => void controls.current?.save()}>确定</button>
+    </>
+  );
+}
 
 test("saves unlimited capacity and selected types with custom extensions", async () => {
   let status = {
@@ -51,10 +62,10 @@ test("saves unlimited capacity and selected types with custom extensions", async
       };
     return status;
   });
-  render(<CacheSettings />);
+  render(<CacheForm />);
   await screen.findByText("42 B / 2 GB");
   fireEvent.click(screen.getByRole("checkbox", { name: "不限容量" }));
-  fireEvent.click(screen.getByRole("button", { name: "应用" }));
+  fireEvent.click(screen.getByRole("button", { name: "确定" }));
   await screen.findByText("42 B / 不限容量");
   expect(screen.queryByRole("progressbar")).toBeNull();
   expect(screen.getByText("磁盘剩余 100 MB")).toBeTruthy();
@@ -62,7 +73,7 @@ test("saves unlimited capacity and selected types with custom extensions", async
   fireEvent.change(screen.getByRole("textbox", { name: "自定义扩展名" }), {
     target: { value: ".JXL, abc" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "保存文件类型" }));
+  fireEvent.click(screen.getByRole("button", { name: "确定" }));
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("visual_thumbnail_types", {
       types: {
@@ -107,12 +118,12 @@ test("maintenance progress uses its own operation and never presents an old resp
   });
   render(
     <Visuals>
-      <CacheSettings />
+      <CacheForm />
     </Visuals>,
   );
   await screen.findByText("100 MB / 2 GB");
   fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "1" } });
-  fireEvent.click(screen.getByRole("button", { name: "应用" }));
+  fireEvent.click(screen.getByRole("button", { name: "确定" }));
   await waitFor(() => expect(operationId).not.toBe(""));
   await act(async () =>
     progress({
@@ -171,7 +182,7 @@ test("maintenance progress uses its own operation and never presents an old resp
   expect(screen.getByText("0 B / 1 GB")).toBeTruthy();
 });
 
-test("cache controls show real bytes, resize immediately and clear without losing the selected limit", async () => {
+test("cache controls show real bytes, save the new limit and clear without losing it", async () => {
   let status = {
     used_bytes: 100_000_000,
     limit_bytes: 2_000_000_000,
@@ -207,7 +218,7 @@ test("cache controls show real bytes, resize immediately and clear without losin
   render(
     <Visuals>
       <FileIcon name="sample.txt" folder={false} />
-      <CacheSettings />
+      <CacheForm />
     </Visuals>,
   );
   const input = await screen.findByRole("spinbutton", {
@@ -218,7 +229,7 @@ test("cache controls show real bytes, resize immediately and clear without losin
     "100000000",
   );
   fireEvent.change(input, { target: { value: "1" } });
-  fireEvent.click(screen.getByRole("button", { name: "应用" }));
+  fireEvent.click(screen.getByRole("button", { name: "确定" }));
   await screen.findByText("30 MB / 1 GB");
   expect(invoke).toHaveBeenCalledWith("visual_cache_limit", {
     limitBytes: 1_000_000_000,

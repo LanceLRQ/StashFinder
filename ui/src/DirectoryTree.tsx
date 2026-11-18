@@ -32,6 +32,7 @@ export default function DirectoryTree({
   const [loading, setLoading] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const request = useRef(0);
+  const requestLabel = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (entry && ancestors?.some((a) => a.entry.join(",") === entry.join(",")))
       setExpanded(true);
@@ -92,18 +93,26 @@ export default function DirectoryTree({
       <div className="tree-row">
         <button
           className="tree-expander"
+          tabIndex={-1}
           aria-label={`${open ? "收起" : "展开"}${name}`}
           aria-expanded={open}
           disabled={activePartition && !canExpand}
           onClick={() => {
+            const label = requestLabel.current;
+            label?.focus();
             if (activePartition) setExpanded(!expanded);
-            else onNavigate(null);
+            else {
+              setExpanded(true);
+              onNavigate(null);
+            }
           }}
         >
           <WorkspaceIcon name={open ? "chevronDown" : "chevronRight"} />
         </button>
         <button
           className="tree-label"
+          ref={requestLabel}
+          tabIndex={-1}
           title={name}
           aria-current={
             activePartition &&
@@ -123,7 +132,16 @@ export default function DirectoryTree({
           {error && (
             <div className="tree-error">
               <span>{error}</span>
-              <button onClick={() => setRefresh((n) => n + 1)}>重试</button>
+              <button
+                className="tree-extra"
+                tabIndex={-1}
+                onClick={() => {
+                  requestLabel.current?.focus();
+                  setRefresh((n) => n + 1);
+                }}
+              >
+                重试
+              </button>
             </div>
           )}
           {page?.entries.map((row) => (
@@ -140,7 +158,15 @@ export default function DirectoryTree({
             />
           ))}
           {page?.next != null && (
-            <button disabled={loading} onClick={() => void more()}>
+            <button
+              className="tree-extra"
+              tabIndex={-1}
+              disabled={loading}
+              onClick={() => {
+                requestLabel.current?.focus();
+                void more();
+              }}
+            >
               更多目录
             </button>
           )}

@@ -102,15 +102,33 @@ test("shows the no-match overlay inside the results area", async () => {
   expect(message.closest(".search-body")).toBeTruthy();
 });
 
+test("shows and clears an active online filter from empty results", async () => {
+  mockPage({ ...page, row: null, more: false });
+  render(<Search partitions={[]} onlineOnly />);
+  expect(
+    await screen.findByRole("button", { name: /筛选器.*仅在线/ }),
+  ).toBeTruthy();
+  fireEvent.click(await screen.findByRole("button", { name: "清除筛选" }));
+  expect(screen.getByRole("button", { name: "筛选器" })).toBeTruthy();
+});
+
 test("shows offline relative paths, unknown metadata and bounded results without file operations", async () => {
   mockPage(page);
   render(<Search partitions={[]} onBack={() => {}} />);
   expect(await screen.findByText("movie.txt")).toBeTruthy();
   expect(screen.getByText("aaa\\movie.txt")).toBeTruthy();
-  expect(screen.getByText("离线")).toBeTruthy();
+  expect(screen.getByRole("cell", { name: /离线\s*movie\.txt/ })).toBeTruthy();
   expect(screen.getAllByText("未知").length).toBeGreaterThan(0);
   expect(screen.getByText("1 条结果").closest("footer")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "打开" })).toBeNull();
+});
+
+test("shows the recorded connection in thumbnail view", async () => {
+  mockPage(page);
+  render(<Search partitions={[]} initialView="large" />);
+  expect(
+    await screen.findByRole("option", { name: /离线.*movie.txt/ }),
+  ).toBeTruthy();
 });
 
 test.each([
@@ -125,7 +143,7 @@ test.each([
     });
     const view = render(<Search partitions={[]} />);
     const row = within((await screen.findByText("movie.txt")).closest("tr")!);
-    expect(row.getByRole("cell", { name: "movie.txt" })).toBeTruthy();
+    expect(row.getByRole("cell", { name: /离线\s*movie\.txt/ })).toBeTruthy();
     expect(row.getByRole("cell", { name: "离线" })).toBeTruthy();
     expect(row.queryByText("硬链接")).toBeNull();
     expect(row.queryByText(indexState)).toBeNull();
@@ -169,10 +187,9 @@ test("sends filename and partition filters, and distinguishes errors from empty 
   fireEvent.click(filterButton);
   fireEvent.click(screen.getByRole("checkbox", { name: "仅文件名" }));
   fireEvent.click(screen.getByRole("button", { name: "应用" }));
-  expect(
-    screen.getByRole("button", { name: "筛选器", description: "已启用" }),
-  ).toBe(filterButton);
-  expect(filterButton.textContent).toBe("筛选器");
+  expect(screen.getByRole("button", { name: /筛选器.*仅文件名/ })).toBe(
+    filterButton,
+  );
   fireEvent.change(screen.getByRole("combobox", { name: "分区范围" }), {
     target: { value: "p" },
   });

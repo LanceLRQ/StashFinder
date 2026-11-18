@@ -131,6 +131,8 @@ export default function BrowsePane({
   const [tree, setTree] = useState(true);
   const [preview, setPreview] = useState(initialPreview);
   const [breadcrumb, setBreadcrumb] = useState(true);
+  const [treeFocused, setTreeFocused] = useState(false);
+  const lastTreeFocus = useRef<HTMLButtonElement>(null);
   const [searchText, setSearchText] = useState("");
   const composing = useRef(false);
   const request = useRef(0);
@@ -415,7 +417,14 @@ export default function BrowsePane({
     onCommands,
     [
       ...fileViewOptions(view, onView),
-      { label: "目录树", checked: tree, run: () => setTree((v) => !v) },
+      {
+        label: "目录树",
+        checked: tree,
+        run: () => {
+          setTree((v) => !v);
+          setTreeFocused(false);
+        },
+      },
       {
         ...workspaceCommand("preview", () => setPreview((v) => !v)),
         checked: preview,
@@ -542,7 +551,91 @@ export default function BrowsePane({
     );
   }
   const partitionTree = tree && (
-    <nav className="directory-tree" aria-label="目录树">
+    <nav
+      className="directory-tree"
+      aria-label="目录树"
+      tabIndex={treeFocused ? -1 : 0}
+      onFocus={(event) => {
+        const tree = event.currentTarget;
+        if (event.target === tree) {
+          const last = lastTreeFocus.current;
+          (last && tree.contains(last) && !last.disabled
+            ? last
+            : (tree.querySelector<HTMLButtonElement>(
+                ".tree-label[aria-current]",
+              ) ?? tree.querySelector<HTMLButtonElement>(".tree-label"))
+          )?.focus();
+        } else if (event.target instanceof HTMLButtonElement) {
+          setTreeFocused(true);
+          lastTreeFocus.current = event.target;
+        }
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget))
+          setTreeFocused(false);
+      }}
+      onKeyDown={(event) => {
+        if (
+          event.altKey ||
+          event.ctrlKey ||
+          event.metaKey ||
+          !(event.target instanceof HTMLButtonElement)
+        )
+          return;
+        const node = event.target.closest(".tree-node");
+        if (!node) return;
+        const buttons = Array.from(
+          event.currentTarget.querySelectorAll<HTMLButtonElement>(
+            ".tree-label, .tree-extra:not(:disabled)",
+          ),
+        );
+        const position = buttons.indexOf(event.target);
+        if (position < 0) return;
+        const expander = node.querySelector<HTMLButtonElement>(
+          ":scope > .tree-row > .tree-expander",
+        );
+        const parent = node.parentElement?.closest(".tree-node");
+        let next: HTMLButtonElement | null | undefined;
+        switch (event.key) {
+          case "ArrowDown":
+            next = buttons[position + 1];
+            break;
+          case "ArrowUp":
+            next = buttons[position - 1];
+            break;
+          case "Home":
+            next = buttons[0];
+            break;
+          case "End":
+            next = buttons.at(-1);
+            break;
+          case "ArrowRight":
+            if (expander?.ariaExpanded === "false") expander.click();
+            else
+              next = node.querySelector<HTMLButtonElement>(
+                ":scope > .tree-children .tree-label",
+              );
+            break;
+          case "ArrowLeft":
+            if (
+              event.target.matches(".tree-label") &&
+              expander?.ariaExpanded === "true"
+            )
+              expander.click();
+            else
+              next = (
+                event.target.matches(".tree-extra") ? node : parent
+              )?.querySelector<HTMLButtonElement>(
+                ":scope > .tree-row > .tree-label",
+              );
+            break;
+          default:
+            return;
+        }
+        event.preventDefault();
+        next?.focus();
+      }}
+    >
       {assets.map(({ registration }) => {
         const current = registration.partition_id === partition;
         return (
@@ -626,6 +719,13 @@ export default function BrowsePane({
           <div className="browse-body">
             {partitionTree}
             <div className="directory-main">
+              {!breadcrumb && asset.connection !== "online" && (
+                <div className="breadcrumbs">
+                  <span className="directory-connection">
+                    {connectionLabel[asset.connection] || "状态未确认"}
+                  </span>
+                </div>
+              )}
               {breadcrumb && (
                 <nav className="breadcrumbs" aria-label="目录位置">
                   <button
@@ -645,6 +745,11 @@ export default function BrowsePane({
                   >
                     {asset.registration.name}
                   </button>
+                  {asset.connection !== "online" && (
+                    <span className="directory-connection">
+                      {connectionLabel[asset.connection] || "状态未确认"}
+                    </span>
+                  )}
                   {page?.ancestors.slice(1).map((a) => (
                     <span key={a.entry.join(",")}>
                       <span aria-hidden="true"> / </span>

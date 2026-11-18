@@ -89,6 +89,7 @@ export default function Assets({
 } = {}) {
   const visuals = useVisuals();
   const [data, setData] = useState<AssetSnapshot | null>(null);
+  const [readError, setReadError] = useState("");
   const [message, setMessage] = useState("");
   const [working, setWorking] = useState(false);
   const [selected, setSelected] = useState<
@@ -109,19 +110,29 @@ export default function Assets({
   const request = useRef(0);
   const mounted = useRef(true);
   const lock = useRef(false);
+  const keepRegistration = useRef(false);
 
   const reload = useCallback(async () => {
     const sequence = ++request.current;
-    const next = await invoke<AssetSnapshot>("asset_snapshot");
-    if (mounted.current && sequence === request.current) setData(next);
-    return next;
+    return invoke<AssetSnapshot>("asset_snapshot").then(
+      (next) => {
+        if (mounted.current && sequence === request.current) {
+          setData(next);
+          setReadError("");
+        }
+        return next;
+      },
+      (error) => {
+        if (mounted.current && sequence === request.current)
+          setReadError(String(error));
+        throw error;
+      },
+    );
   }, []);
 
   useEffect(() => {
     mounted.current = true;
-    void reload().catch((error) => {
-      if (mounted.current) setMessage(String(error));
-    });
+    void reload().catch(() => {});
     return () => {
       mounted.current = false;
       request.current++;
@@ -129,15 +140,23 @@ export default function Assets({
   }, [reload]);
 
   useEffect(() => {
-    if (!data || working) return;
-    const timer = window.setTimeout(
-      () => {
-        void reload().catch((error) => setMessage(String(error)));
-      },
-      data.busy ? 750 : document.hidden ? 10000 : 5000,
-    );
-    return () => window.clearTimeout(timer);
-  }, [data, working, reload]);
+    if ((!data && !readError) || working) return;
+    const delay = data?.busy ? 750 : document.hidden ? 10000 : 5000;
+    let active = true;
+    let timer: number;
+    function poll() {
+      timer = window.setTimeout(() => {
+        void reload().catch(() => {
+          if (active) poll();
+        });
+      }, delay);
+    }
+    poll();
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [data, readError, working, reload]);
 
   async function waitForOperation() {
     const deadline = Date.now() + 30000;
@@ -180,7 +199,7 @@ export default function Assets({
       return;
     }
     setWeakConfirm(false);
-    closeRegistration();
+    hideRegistration();
     lock.current = true;
     setWorking(true);
     setMessage("");
@@ -254,12 +273,16 @@ export default function Assets({
       ),
     );
     setMessage(errors.join("；"));
+    keepRegistration.current = errors.length > 0;
     lock.current = false;
     setWorking(false);
   }
 
   const disabled = working || !!data?.busy;
-  const error = message || data?.error;
+  const snapshotError = readError || data?.error;
+  const error = snapshotError || message;
+  const countsKnown =
+    !!data && (data.assets.length > 0 || (!data.busy && !snapshotError));
   useEffect(() => {
     onStatus?.({ error: error || "", working });
   }, [error, working, onStatus]);
@@ -268,35 +291,41 @@ export default function Assets({
   function openRegistration() {
     if (!data || data.busy || lock.current) return;
     registrationTrigger.current = document.activeElement as HTMLElement;
-    setAutoIndex(true);
+    if (!keepRegistration.current) setAutoIndex(true);
     setRegisterOpen(true);
   }
-  function closeRegistration() {
+  function hideRegistration() {
     setRegisterOpen(false);
     const trigger = registrationTrigger.current;
     window.setTimeout(() => trigger?.focus(), 0);
+  }
+  function closeRegistration() {
+    keepRegistration.current = false;
+    setSelected({});
+    hideRegistration();
+  }
+  function retrySnapshot() {
+    if (data?.error && !readError) void command("refresh");
+    else void reload().catch(() => {});
   }
   useImperativeHandle(ref, () => ({
     register: openRegistration,
     refresh: () => {
       if (!disabled) void command("refresh");
     },
-    retry: () => {
-      setMessage("");
-      void reload().catch((error) => setMessage(String(error)));
-    },
+    retry: retrySnapshot,
   }));
   const groups = new Map<string, Asset[]>();
   for (const asset of data?.assets || []) {
     const key = asset.registration.disk_id;
     groups.set(key, [...(groups.get(key) || []), asset]);
   }
-  const candidates = (data?.candidates ?? []).filter(
-    (candidate) => candidate.registered || !candidate.blocked,
-  );
+  const candidates = data?.candidates ?? [];
   const selectedCandidates = candidates.filter(
     (candidate) =>
-      !candidate.registered && candidate.observation.candidate_id in selected,
+      !candidate.registered &&
+      !candidate.blocked &&
+      candidate.observation.candidate_id in selected,
   );
   const current = data?.assets.find(
     (asset) => asset.registration.partition_id === selectedPartition,
@@ -435,7 +464,19 @@ export default function Assets({
             if (event.target === event.currentTarget) setSelectedPartition("");
           }}
         >
-          {!data && !error && <p role="status">正在读取已登记分区…</p>}
+          {snapshotError && !registerOpen && !rename && !removing && (
+            <div className="asset-recovery">
+              <p className="asset-error" role="alert">
+                {snapshotError}
+              </p>
+              <button disabled={disabled} onClick={retrySnapshot}>
+                重试
+              </button>
+            </div>
+          )}
+          {(!data || (data.busy && !data.assets.length)) && !error && (
+            <p role="status">正在读取已登记分区…</p>
+          )}
           {data && !data.assets.length && !data.busy && !error && (
             <div className="asset-empty">
               <WorkspaceIcon name="drive" />
@@ -464,6 +505,8 @@ export default function Assets({
                       const mounts = asset.mounts.length
                         ? asset.mounts
                         : info.mounts;
+                      const mount = mounts[0]?.replace(/[\\/]$/, "");
+                      const offline = asset.connection !== "online";
                       return (
                         <button
                           key={row.partition_id}
@@ -504,8 +547,12 @@ export default function Assets({
                               )}
                             </span>
                             <span className="disk-card-meta">
-                              {mounts[0]?.replace(/[\\/]$/, "") || "无盘符"} ·{" "}
-                              {info.identity.filesystem || "未知"}
+                              {mount
+                                ? offline
+                                  ? `上次 ${mount}`
+                                  : mount
+                                : "无盘符"}{" "}
+                              · {info.identity.filesystem || "未知"}
                               <span
                                 className={`connection ${asset.connection}`}
                               >
@@ -522,7 +569,7 @@ export default function Assets({
                             )}
                             <small>
                               {space
-                                ? `${bytes(space.free)} 可用 / ${bytes(space.total)}`
+                                ? `${offline ? "上次 " : ""}${bytes(space.free)} 可用 / ${bytes(space.total)}`
                                 : `${bytes(info.partition_bytes)} · 可用空间未知`}
                             </small>
                           </span>
@@ -534,7 +581,11 @@ export default function Assets({
               ),
           )}
         </div>
-        <aside className="asset-details" aria-label="分区详情">
+        <aside
+          hidden={!current}
+          className="asset-details"
+          aria-label="分区详情"
+        >
           {current && observation && (
             <>
               <div className="asset-detail-title">
@@ -665,8 +716,16 @@ export default function Assets({
                       aria-description={
                         candidate.registered ? "已登记" : undefined
                       }
-                      disabled={disabled || !!candidate.registered}
-                      checked={!candidate.registered && id in selected}
+                      disabled={
+                        disabled ||
+                        !!candidate.registered ||
+                        !!candidate.blocked
+                      }
+                      checked={
+                        !candidate.registered &&
+                        !candidate.blocked &&
+                        id in selected
+                      }
                       onChange={(event) => {
                         const checked = event.target.checked;
                         setSelected((previous) => {
@@ -694,6 +753,11 @@ export default function Assets({
                         {item.identity.filesystem || "未知"} ·{" "}
                         {bytes(item.partition_bytes ?? item.capacity?.total)}
                       </small>
+                      {!candidate.registered && candidate.blocked && (
+                        <small className="candidate-blocked">
+                          {candidate.blocked}
+                        </small>
+                      )}
                     </span>
                     {candidate.registered && (
                       <span
@@ -721,7 +785,7 @@ export default function Assets({
               : null
         }
         essential={
-          error && !registerOpen && !rename && !removing ? (
+          error && !snapshotError && !registerOpen && !rename && !removing ? (
             <span className="asset-error" role="alert" title={error}>
               {error}
             </span>
@@ -729,17 +793,17 @@ export default function Assets({
         }
       >
         <div className="asset-stats" aria-label="已登记资产统计">
-          <span>硬盘 {data ? groups.size : "—"}</span>
+          <span>硬盘 {countsKnown ? groups.size : "—"}</span>
           <span
             aria-label={
-              data ? `已登记 ${data.assets.length} 个分区` : undefined
+              countsKnown ? `已登记 ${data.assets.length} 个分区` : undefined
             }
           >
-            分区 {data?.assets.length ?? "—"}
+            分区 {countsKnown ? data.assets.length : "—"}
           </span>
           <span>
             在线{" "}
-            {data
+            {countsKnown
               ? data.assets.filter((asset) => asset.connection === "online")
                   .length
               : "—"}

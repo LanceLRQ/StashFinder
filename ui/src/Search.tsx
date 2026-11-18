@@ -188,6 +188,32 @@ export default function Search({
     !!options.duplicate.length ||
     options.online_only ||
     options.include_history;
+  const filterSummary = [
+    options.online_only && "仅在线",
+    options.include_history && "含历史",
+    namesOnly !== !includePath && (namesOnly ? "仅文件名" : "含路径"),
+    options.case_sensitive && "区分大小写",
+    options.mode !== "contains" &&
+      ((
+        {
+          regex: "正则表达式",
+          wildcard: "通配符",
+          whole_name: "完整文件名",
+          whole_word: "完整单词",
+          start: "文件名开头",
+          end: "文件名末尾",
+        } as Record<string, string>
+      )[options.mode] ||
+        "匹配方式"),
+    options.duplicate.length > 0 && "重复项",
+    hasFileFilter(filter.rule) &&
+      (filterPresetEntries(categories, presets).find(
+        (entry) => entry.id === filter.id,
+      )?.name ||
+        "文件条件"),
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
   const [total, setTotal] = useState(0);
@@ -1004,14 +1030,14 @@ export default function Search({
         </select>
         <button
           type="button"
-          aria-label="筛选器"
           aria-haspopup="dialog"
+          title={filterSummary || undefined}
           aria-describedby={filterActive ? filterStatusId : undefined}
           className="search-filter-button"
           onClick={() => setFilterOpen("search")}
         >
           <WorkspaceIcon name="filter" />
-          筛选器
+          <span>{filterSummary ? `筛选器 · ${filterSummary}` : "筛选器"}</span>
         </button>
         {filterActive && (
           <span id={filterStatusId} hidden>
@@ -1073,10 +1099,26 @@ export default function Search({
             !busy &&
             !error &&
             !total && (
-              <p className="search-empty-overlay" role="status">
+              <div className="search-empty-overlay">
                 <WorkspaceIcon name="search" />
-                没有匹配的文件
-              </p>
+                <span role="status">没有匹配的文件</span>
+                {filterActive && (
+                  <button
+                    onClick={() => {
+                      setFilter(noFilter);
+                      setNamesOnly(!includePath);
+                      setOptions(({ sort, descending }) => ({
+                        ...emptyOptions,
+                        sort,
+                        descending,
+                      }));
+                      input.current?.focus();
+                    }}
+                  >
+                    清除筛选
+                  </button>
+                )}
+              </div>
             )
           }
           grid={grid}
@@ -1182,6 +1224,11 @@ export default function Search({
                 file={r?.file}
                 active={active}
                 connection={r?.connection}
+                connectionStatus={
+                  r && r.connection !== "online"
+                    ? connectionLabel[r.connection] || "状态未确认"
+                    : undefined
+                }
                 reference={
                   r && {
                     partition_id: r.partition_id,

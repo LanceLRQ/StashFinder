@@ -118,6 +118,21 @@ function choosePartition(name = "Movies") {
   fireEvent.click(within(tree).getByRole("button", { name }));
 }
 
+test("uses one tree Tab stop and navigates visible folders with arrows", async () => {
+  setup();
+  choosePartition();
+  const tree = screen.getByRole("navigation", { name: "目录树" });
+  const partition = within(tree).getByRole("button", { name: "Movies" });
+  const folder = await within(tree).findByRole("button", { name: "Films" });
+  expect(tree.querySelectorAll("button:not([tabindex='-1'])")).toHaveLength(0);
+  tree.focus();
+  expect(document.activeElement).toBe(partition);
+  fireEvent.keyDown(partition, { key: "ArrowDown" });
+  expect(document.activeElement).toBe(folder);
+  fireEvent.keyDown(folder, { key: "ArrowLeft" });
+  expect(document.activeElement).toBe(partition);
+});
+
 test("separates clipboard, selection and file actions, and skips separators during navigation", async () => {
   setup();
   choosePartition();
@@ -1208,6 +1223,9 @@ test("shows offline metadata and allows panes and breadcrumbs to be hidden", asy
   expect(screen.queryByRole("complementary", { name: "预览窗格" })).toBeNull();
   expect(screen.queryByRole("navigation", { name: "目录位置" })).toBeNull();
   expect(screen.queryByRole("navigation", { name: "目录树" })).toBeNull();
+  expect(
+    screen.getByText("离线", { selector: ".directory-connection" }),
+  ).toBeTruthy();
 });
 test("keeps the search field mounted during IME composition", async () => {
   setup();

@@ -463,7 +463,7 @@ test("device changes refresh cached result status and menus without restarting t
   );
   const row = within(list).getByText("file-0.txt").closest("tr")!;
   expect(row.getAttribute("aria-selected")).toBe("true");
-  expect(within(row).getByText("离线")).toBeTruthy();
+  expect(within(row).getByRole("cell", { name: "离线" })).toBeTruthy();
   expect(within(row).queryByText(/E:\\/)).toBeNull();
   expect(
     within(screen.getByRole("complementary", { name: "预览窗格" })).getByText(
@@ -498,7 +498,7 @@ test("device changes refresh cached result status and menus without restarting t
       ]}
     />,
   );
-  expect(within(row).getByText("历史记录")).toBeTruthy();
+  expect(within(row).getByRole("cell", { name: "历史记录" })).toBeTruthy();
   expect(within(row).queryByText(/Z:\\/)).toBeNull();
   expect(
     vi

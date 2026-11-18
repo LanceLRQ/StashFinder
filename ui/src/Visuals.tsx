@@ -21,7 +21,13 @@ const Context = createContext<{
   openThumbnails: (scope: ThumbnailScope) => void;
   thumbnailTaskRevision: number;
 } | null>(null);
-export default function Visuals({ children }: { children: ReactNode }) {
+export default function Visuals({
+  children,
+  onOpenCache,
+}: {
+  children: ReactNode;
+  onOpenCache?: () => void;
+}) {
   const [epoch, setEpoch] = useState(0);
   const [thumbnailView, setThumbnailView] = useState<ThumbnailScope | null>(
     null,
@@ -91,6 +97,11 @@ export default function Visuals({ children }: { children: ReactNode }) {
             setThumbnailTaskRevision((revision) => revision + 1);
           }}
           onClose={() => setThumbnailView(null)}
+          onRecovery={(target) => {
+            setThumbnailView(null);
+            if (target === "cache") onOpenCache?.();
+            else setThumbnailTaskRevision((revision) => revision + 1);
+          }}
         />
       )}
     </Context.Provider>

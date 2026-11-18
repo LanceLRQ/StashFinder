@@ -71,6 +71,10 @@ test("registration shows eligible and registered cards without editable names", 
   const dialog = await screen.findByRole("dialog", { name: "选择分区登记" });
   const boxes = within(dialog).getAllByRole("checkbox", { name: /^[AB]:/ });
   expect(boxes).toHaveLength(2);
+  expect(within(dialog).getByRole("checkbox", { name: /^Z:/ })).toHaveProperty(
+    "disabled",
+    true,
+  );
   expect(
     within(dialog).getByRole("checkbox", { name: "登记后自动建立索引" }),
   ).toHaveProperty("checked", true);
@@ -85,7 +89,7 @@ test("registration shows eligible and registered cards without editable names", 
   expect(boxes[0]).toHaveProperty("checked", true);
   expect(within(dialog).getByText("已选 1 个分区")).toBeTruthy();
   expect(within(dialog).queryByRole("textbox")).toBeNull();
-  expect(within(dialog).queryByText(/Z:/)).toBeNull();
+  expect(within(dialog).getByText("不是本地卷")).toBeTruthy();
   const actions = dialog.querySelector<HTMLElement>(".dialog-actions");
   expect(actions).toBeTruthy();
   expect(
@@ -147,11 +151,13 @@ test("shows details on click, browses on double-click and confirms removal", asy
   });
   render(<Assets onBrowse={browse} />);
   const card = await screen.findByRole("button", { name: "Movies" });
+  expect(screen.queryByRole("complementary", { name: "分区详情" })).toBeNull();
+  expect(within(card).getByText(/上次 A:/)).toBeTruthy();
+  expect(within(card).getByText(/上次 500 B 可用/)).toBeTruthy();
+  fireEvent.click(card);
   const details = within(
     screen.getByRole("complementary", { name: "分区详情" }),
   );
-  expect(details.queryByText("USB Test Disk")).toBeNull();
-  fireEvent.click(card);
   expect(details.getByText("USB Test Disk")).toBeTruthy();
   const heading = details.getByRole("heading", { name: "Movies" });
   const rename = details.getByRole("button", { name: "重命名 Movies" });
@@ -404,13 +410,42 @@ test("shows offline capacity as a snapshot and renames only the software record"
 });
 
 test("shows service failure instead of an empty registration success state", async () => {
-  vi.mocked(invoke).mockRejectedValue("后台服务不可用");
+  vi.mocked(invoke)
+    .mockRejectedValueOnce("后台服务不可用")
+    .mockResolvedValue(snapshot());
   render(<Assets />);
-  expect(await screen.findByRole("alert")).toHaveProperty(
-    "textContent",
+  expect((await screen.findByRole("alert")).textContent).toContain(
     "后台服务不可用",
   );
   expect(screen.queryByText("尚未登记分区")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "重试" }));
+  expect(await screen.findByText("尚未登记分区")).toBeTruthy();
+});
+
+test("shows a busy initial snapshot as loading without zero totals", async () => {
+  vi.mocked(invoke).mockResolvedValue({ ...snapshot(), busy: true });
+  render(<Assets />);
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("asset_snapshot"));
+  expect(screen.getByText("正在读取已登记分区…")).toBeTruthy();
+  expect(screen.queryByText("硬盘 0")).toBeNull();
+});
+
+test("closing registration discards the selected devices and index option together", async () => {
+  vi.mocked(invoke).mockResolvedValue(snapshot());
+  render(<Assets />);
+  await openRegistration();
+  fireEvent.click(screen.getByRole("checkbox", { name: /^A:/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "登记后自动建立索引" }));
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  await openRegistration();
+  expect(screen.getByRole("checkbox", { name: /^A:/ })).toHaveProperty(
+    "checked",
+    false,
+  );
+  expect(screen.getByRole("button", { name: "登记所选分区" })).toHaveProperty(
+    "disabled",
+    true,
+  );
 });
 
 test("a catalog error is not presented as a successful empty catalog", async () => {

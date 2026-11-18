@@ -38,22 +38,29 @@ export default function ThumbnailJobs({
   scope,
   onStarted,
   onClose,
+  onRecovery,
 }: {
   scope: ThumbnailScope;
   onStarted: () => void;
   onClose: () => void;
+  onRecovery: (target: "cache" | "tasks") => void;
 }) {
   const [rebuild, setRebuild] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [error, setError] = useState("");
+  const recovery = error.includes("选择预生成的文件类型")
+    ? "cache"
+    : error.includes("已有缩略图任务在运行")
+      ? "tasks"
+      : null;
   async function start() {
     setBusy(true);
-    setFailed(false);
+    setError("");
     try {
       await invoke("thumbnail_start", { options: { ...scope, rebuild } });
       onStarted();
-    } catch {
-      setFailed(true);
+    } catch (failure) {
+      setError(String(failure).replace(/^Error: /, "") || "缩略图任务未启动");
     } finally {
       setBusy(false);
     }
@@ -100,7 +107,12 @@ export default function ThumbnailJobs({
             <option value="rebuild">全部重建</option>
           </select>
         </label>
-        {failed && <p role="alert">缩略图任务未启动</p>}
+        {error && <p role="alert">{error}</p>}
+        {recovery && (
+          <button onClick={() => onRecovery(recovery)}>
+            {recovery === "cache" ? "选择文件类型" : "查看运行中的任务"}
+          </button>
+        )}
       </div>
     </Modal>
   );
