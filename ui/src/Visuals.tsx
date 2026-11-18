@@ -11,16 +11,37 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { EntryRef } from "./file-operations";
 import type { VisualImage } from "./visual-api";
+import ThumbnailJobs, { type ThumbnailScope } from "./ThumbnailJobs";
 import "./visuals.css";
 
 const Context = createContext<{
   epoch: number;
   icon: (name: string, folder: boolean, size: number) => Promise<VisualImage>;
   invalidate: () => void;
+  openThumbnails: (view: ThumbnailScope | "progress") => void;
 } | null>(null);
 export default function Visuals({ children }: { children: ReactNode }) {
   const [epoch, setEpoch] = useState(0);
+  const [thumbnailView, setThumbnailView] = useState<
+    ThumbnailScope | "progress" | null
+  >(null);
   const icons = useRef(new Map<string, Promise<VisualImage>>());
+  useEffect(() => {
+    let live = true;
+    let stop: (() => void) | undefined;
+    void listen("thumbnail-cache-updated", () => {
+      if (live) setEpoch((value) => value + 1);
+    })
+      .then((unlisten) => {
+        if (live) stop = unlisten;
+        else unlisten();
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+      stop?.();
+    };
+  }, []);
   const value = useMemo(
     () => ({
       epoch,
@@ -52,10 +73,22 @@ export default function Visuals({ children }: { children: ReactNode }) {
         icons.current.clear();
         setEpoch((e) => e + 1);
       },
+      openThumbnails: setThumbnailView,
     }),
     [epoch],
   );
-  return <Context.Provider value={value}>{children}</Context.Provider>;
+  return (
+    <Context.Provider value={value}>
+      {children}
+      {thumbnailView && (
+        <ThumbnailJobs
+          view={thumbnailView}
+          onProgress={() => setThumbnailView("progress")}
+          onClose={() => setThumbnailView(null)}
+        />
+      )}
+    </Context.Provider>
+  );
 }
 export const useVisuals = () => useContext(Context);
 export function useTypeIcon(

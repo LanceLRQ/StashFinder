@@ -183,3 +183,140 @@ pub fn directory_refs(
 }
 
 pub use stashfinder_core::file_operations::top_level;
+
+#[derive(Default)]
+pub struct ThumbnailCandidates {
+    pub generation: String,
+    pub files: Vec<ResolvedEntry>,
+    pub folders: Vec<Vec<u8>>,
+    pub next: Option<i64>,
+    pub unavailable: usize,
+}
+
+pub fn thumbnail_candidates(
+    path: &Path,
+    request: &ThumbnailPageRequest,
+) -> Result<ThumbnailCandidates> {
+    let mut db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let tx = db.transaction()?;
+    let (generation, revision): (i64, i64) = tx.query_row(
+        "SELECT g.id,g.revision FROM index_state s JOIN generations g ON g.id=s.active_generation WHERE s.id=1",
+        [],
+        |r| Ok((r.get(0)?,r.get(1)?)),
+    ).context("分区尚无可用索引")?;
+    let generation_text = generation.to_string();
+    ensure!(
+        request
+            .generation
+            .as_ref()
+            .is_none_or(|g| g == &generation_text),
+        "索引代次已变化，请重新开始"
+    );
+    let mut reference = EntryRef {
+        partition_id: request.partition_id.clone(),
+        filesystem_id: request.filesystem_id.clone(),
+        generation: generation_text.clone(),
+        revision: revision.to_string(),
+        entry: request.folder.clone().unwrap_or_default(),
+    };
+    if request.folder.is_some() && request.after.is_none() {
+        ensure!(
+            resolve_in(&tx, &reference, true, false)?.folder,
+            "缩略图范围不是文件夹"
+        );
+    }
+    let query = if request.folder.is_some() {
+        "SELECT p.rowid,p.id,p.name,o.kind,o.attributes FROM paths p INDEXED BY paths_parent JOIN objects o
+         ON o.generation=p.generation AND o.id=p.object
+         WHERE p.generation=?1 AND p.parent=?2 AND p.rowid>?3 ORDER BY p.rowid LIMIT 65"
+    } else {
+        "SELECT p.rowid,p.id,p.name,o.kind,o.attributes FROM paths p NOT INDEXED JOIN objects o
+         ON o.generation=p.generation AND o.id=p.object
+         WHERE p.generation=?1 AND ?2 IS NULL AND p.rowid>?3 ORDER BY p.rowid LIMIT 65"
+    };
+    let mut stmt = tx.prepare(query)?;
+    let rows = stmt
+        .query_map(
+            params![generation, request.folder, request.after.unwrap_or(0)],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, Vec<u8>>(1)?,
+                    r.get::<_, Vec<u8>>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, u32>(4)?,
+                ))
+            },
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut result = ThumbnailCandidates {
+        generation: generation_text,
+        ..Default::default()
+    };
+    let mut last = None;
+    // Leave space for the shared volume identity and the IPC envelope.
+    let mut bytes = 0;
+    for (i, (rowid, id, name, kind, attributes)) in rows.into_iter().enumerate() {
+        if i == 64 {
+            result.next = last;
+            break;
+        }
+        if kind == "folder" && request.folder.is_some() && attributes & 1024 == 0 {
+            bytes += serde_json::to_vec(&id)?.len() + 1;
+            if bytes > MAX_FRAME / 2 {
+                result.next = last;
+                break;
+            }
+            result.folders.push(id.clone());
+        }
+        if kind == "file"
+            && attributes & 1024 == 0
+            && thumbnail_candidate(&crate::search::decode_name(&name)?)
+        {
+            reference.entry.clone_from(&id);
+            match resolve_in(&tx, &reference, false, false) {
+                Ok(file) => {
+                    let n = serde_json::to_vec(&file)?.len() + 1;
+                    if n > MAX_FRAME / 2 {
+                        result.unavailable += 1;
+                    } else if bytes + n > MAX_FRAME / 2 {
+                        result.next = last;
+                        break;
+                    } else {
+                        bytes += n;
+                        result.files.push(file);
+                    }
+                }
+                Err(_) => result.unavailable += 1,
+            }
+        }
+        last = Some(rowid);
+    }
+    Ok(result)
+}
+
+fn thumbnail_candidate(name: &str) -> bool {
+    matches!(
+        crate::search::extension(name).to_ascii_lowercase().as_str(),
+        "jpg"
+            | "jpeg"
+            | "png"
+            | "webp"
+            | "gif"
+            | "bmp"
+            | "tiff"
+            | "tif"
+            | "heic"
+            | "heif"
+            | "avif"
+            | "svg"
+            | "mp4"
+            | "mkv"
+            | "mov"
+            | "avi"
+            | "webm"
+            | "wmv"
+            | "m4v"
+            | "pdf"
+    )
+}

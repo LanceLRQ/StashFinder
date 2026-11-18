@@ -26,8 +26,8 @@ test("maintenance progress uses its own operation and never presents an old resp
   let progress!: (event: any) => void;
   let finish!: (value: unknown) => void;
   let operationId = "";
-  vi.mocked(listen).mockImplementation(async (_event, handler: any) => {
-    progress = handler;
+  vi.mocked(listen).mockImplementation(async (event, handler: any) => {
+    if (event === "visual-cache-progress") progress = handler;
     return vi.fn<() => void>();
   });
   vi.mocked(invoke).mockImplementation((command, args: any) => {

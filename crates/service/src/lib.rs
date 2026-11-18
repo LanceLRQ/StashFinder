@@ -237,6 +237,13 @@ pub async fn serve_runtime(
                             .runner
                             .directory(&request)?,
                     ))),
+                    Action::ThumbnailPage(request) => Ok(Response::ThumbnailPage(
+                        indexes
+                            .context("索引服务未配置")?
+                            .runner
+                            .thumbnail_page(&request, &assets.snapshot())?
+                            .map(Box::new),
+                    )),
                     Action::SearchPage { id, offset } => Ok(Response::SearchPage(Box::new(
                         indexes.context("索引服务未配置")?.page(id, offset)?,
                     ))),

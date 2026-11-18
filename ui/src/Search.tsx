@@ -38,6 +38,7 @@ import { virtualWindow, type ViewportLayout } from "./DetailsViewport";
 import { fileViewOptions, thumbnailLayouts, type FileView } from "./file-view";
 import { inSpans, rectangleSpans, toggleSpans } from "./marquee";
 import FileContextMenu from "./FileContextMenu";
+import { useVisuals } from "./Visuals";
 import WorkspaceIcon from "./WorkspaceIcon";
 import FileListItem from "./FileListItem";
 import type { Asset } from "./asset-api";
@@ -145,6 +146,7 @@ export default function Search({
     };
   }
   const input = useRef<HTMLInputElement>(null);
+  const visuals = useVisuals();
   const operations = useFileOperations();
   const [editing, setEditing] = useState<number | null>(null);
   const dragging = useRef<{ x: number; y: number; started: boolean } | null>(
@@ -1384,6 +1386,23 @@ export default function Search({
           folder={facts.folder}
           blocked={facts.blocked}
           onAction={dispatch}
+          onThumbnails={
+            visuals &&
+            facts.online &&
+            facts.folder &&
+            !facts.blocked &&
+            selectedRow &&
+            !selectedRow.partial
+              ? () =>
+                  visuals.openThumbnails({
+                    partitionId: selectedRow.partition_id,
+                    filesystemId: selectedRow.filesystem_id,
+                    generation: String(selectedRow.generation),
+                    folder: selectedRow.file.entry,
+                    label: selectedRow.file.name,
+                  })
+              : undefined
+          }
           onClose={() => setMenu(null)}
         />
       )}

@@ -18,6 +18,7 @@ import type { SearchHit } from "./index-api";
 import BrowsePane from "./BrowsePane";
 import { FileStatusBar } from "./FileOperations";
 import Modal from "./Modal";
+import { useVisuals } from "./Visuals";
 import type { FileView } from "./file-view";
 import Search from "./Search";
 import SearchHelp from "./SearchHelp";
@@ -170,6 +171,7 @@ export default function Workspace({
   onSettings?: (page: SettingsPage) => void;
   onExit?: () => void;
 }) {
+  const visuals = useVisuals();
   const [tabs, setTabs] = useState<Tab[]>(() =>
     panels?.overview ? [pages.overview] : [newTab(1)],
   );
@@ -753,6 +755,14 @@ export default function Workspace({
       accessKey: "t",
       sections: [
         onSettings ? [mainCommands.settings] : [],
+        visuals
+          ? [
+              {
+                label: "缩略图任务…",
+                run: () => visuals.openThumbnails("progress"),
+              },
+            ]
+          : [],
         device
           ? [{ label: "刷新设备", run: device.refresh, disabled: device.busy }]
           : [],

@@ -62,6 +62,69 @@ fn fixture(path: &std::path::Path) -> (Volume, EntryRef) {
 }
 
 #[test]
+fn thumbnail_pages_cover_the_selected_scope_and_keep_the_generation() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("v.sqlite");
+    let (_db, reference) = fixture(&path);
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    let generation = reference.generation.parse::<i64>().unwrap();
+    for (id, parent, name) in [(3, 2, "inner.JPG"), (4, 1, "outer.png")] {
+        sql.execute(
+            "UPDATE paths SET name=?1 WHERE parent=?2 AND id=?3",
+            rusqlite::params![
+                name.encode_utf16()
+                    .flat_map(u16::to_le_bytes)
+                    .collect::<Vec<_>>(),
+                [parent as u8],
+                [id as u8]
+            ],
+        )
+        .unwrap();
+    }
+    for id in 10..90 {
+        let name = format!("photo-{id}.png")
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>();
+        sql.execute(
+            "INSERT INTO paths(generation,id,object,parent,name) VALUES(?1,?2,?3,?4,?5)",
+            rusqlite::params![generation, [id as u8], 8u64.to_le_bytes(), [2u8], name],
+        )
+        .unwrap();
+    }
+    let mut request = ThumbnailPageRequest {
+        partition_id: "p".into(),
+        filesystem_id: "fs".into(),
+        generation: None,
+        folder: Some(vec![2]),
+        after: None,
+    };
+    for (folder, expected) in [(Some(vec![2]), 81), (None, 82)] {
+        request.folder = folder;
+        request.after = None;
+        let mut entries = std::collections::HashSet::new();
+        let mut pages = 0;
+        loop {
+            let page = file_operations::thumbnail_candidates(&path, &request).unwrap();
+            assert_eq!(page.unavailable, 0);
+            pages += 1;
+            for f in page.files {
+                assert!(entries.insert(f.reference.entry));
+            }
+            request.generation = Some(page.generation);
+            request.after = page.next;
+            if request.after.is_none() {
+                break;
+            }
+        }
+        assert!(pages > 1);
+        assert_eq!(entries.len(), expected);
+    }
+    request.generation = Some("999".into());
+    assert!(file_operations::thumbnail_candidates(&path, &request).is_err());
+}
+
+#[test]
 fn previous_schema_text_records_remain_readable_without_migrating_offline_data() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("v.sqlite");

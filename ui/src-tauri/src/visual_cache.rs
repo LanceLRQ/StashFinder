@@ -171,6 +171,10 @@ impl Cache {
         self.trim(self.limit, |_| {})?;
         Ok(true)
     }
+    pub fn fits_without_eviction(&self, key: Key, bytes: usize) -> bool {
+        let replaced = self.entries.get(&key).map_or(0, |entry| entry.bytes);
+        self.used - replaced + bytes as u64 <= self.limit
+    }
     pub fn set_limit(&mut self, limit: u64, progress: impl FnMut(Progress)) -> Result<()> {
         validate_limit(limit)?;
         let parent = self.config.parent().context("缓存配置路径无父目录")?;

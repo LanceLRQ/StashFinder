@@ -1,4 +1,7 @@
 use crate::visual_cache::{Cache, Key, Progress, Stats};
+
+pub mod batch;
+const THUMBNAIL_SIZE: u32 = 512;
 use anyhow::{Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
@@ -62,6 +65,7 @@ trait Provider: Send + Sync {
         size: u32,
         cached_only: bool,
     ) -> Result<Option<Vec<u8>>>;
+    fn rebuild_thumbnail(&self, target: &PreparedTarget, size: u32) -> Result<Option<Vec<u8>>>;
 }
 struct WindowsProvider;
 impl Provider for WindowsProvider {
@@ -71,6 +75,12 @@ impl Provider for WindowsProvider {
     fn file_icon(&self, target: &PreparedTarget, size: u32) -> Result<Vec<u8>> {
         let path = verify(target, false)?;
         let image = stashfinder_windows::visuals::file_icon(&path, size)?;
+        verify(target, false)?;
+        Ok(image)
+    }
+    fn rebuild_thumbnail(&self, target: &PreparedTarget, size: u32) -> Result<Option<Vec<u8>>> {
+        let path = verify(target, false)?;
+        let image = stashfinder_windows::visuals::rebuild_thumbnail(&path, size)?;
         verify(target, false)?;
         Ok(image)
     }
@@ -96,6 +106,7 @@ fn file_key(record: &VisualRecord, kind: Kind, size: u32) -> Result<Key> {
     }))?))
 }
 struct Shared {
+    batch: batch::Batch,
     cache: Mutex<Option<Cache>>,
     provider: Arc<dyn Provider>,
     fresh_types: Mutex<HashSet<Key>>,
@@ -109,6 +120,7 @@ struct Shared {
 impl Shared {
     fn new(provider: Arc<dyn Provider>) -> Self {
         Self {
+            batch: batch::Batch::default(),
             cache: Mutex::new(None),
             provider,
             fresh_types: Mutex::new(HashSet::new()),
@@ -203,12 +215,23 @@ impl Shared {
         );
         ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
         let epoch = self.epoch.load(Ordering::Acquire);
-        let key = file_key(record, kind, size)?;
+        let canonical_size = if matches!(kind, Kind::Thumbnail) {
+            THUMBNAIL_SIZE
+        } else {
+            size
+        };
+        let key = file_key(record, kind, canonical_size)?;
         notify("local_cache");
         if let Some(bytes) = self.cached(paths, |cache| cache.get(key))? {
             return Ok(Image::png(&bytes, "local_cache", !record.online, None));
         }
         if !record.online {
+            if size != canonical_size
+                && let Some(bytes) =
+                    self.cached(paths, |cache| cache.get(file_key(record, kind, size)?))?
+            {
+                return Ok(Image::png(&bytes, "local_cache", true, None));
+            }
             return Ok(Image {
                 data_url: None,
                 source: "offline",
@@ -223,17 +246,23 @@ impl Shared {
                 Some(self.provider.file_icon(&record.target, size)?),
                 "system_icon",
             ),
-            Kind::Thumbnail => match self.provider.thumbnail(&record.target, size, true)? {
-                Some(bytes) => (Some(bytes), "system_cache"),
-                None => {
-                    ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
-                    notify("system_generate");
-                    (
-                        self.provider.thumbnail(&record.target, size, false)?,
-                        "system_generated",
-                    )
+            Kind::Thumbnail => {
+                match self
+                    .provider
+                    .thumbnail(&record.target, canonical_size, true)?
+                {
+                    Some(bytes) => (Some(bytes), "system_cache"),
+                    None => {
+                        ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
+                        notify("system_generate");
+                        (
+                            self.provider
+                                .thumbnail(&record.target, canonical_size, false)?,
+                            "system_generated",
+                        )
+                    }
                 }
-            },
+            }
         };
         ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
         let Some(bytes) = bytes else {
@@ -251,6 +280,7 @@ impl Shared {
         Ok(Image::png(&bytes, source, false, warning))
     }
     fn clear(&self, paths: &Paths, progress: impl FnMut(Progress)) -> Result<()> {
+        self.batch.cancel();
         self.epoch.fetch_add(1, Ordering::AcqRel);
         for cancel in self
             .requests
@@ -479,6 +509,17 @@ mod tests {
         fail: AtomicBool,
     }
     impl Provider for Fake {
+        fn rebuild_thumbnail(
+            &self,
+            _target: &PreparedTarget,
+            _size: u32,
+        ) -> Result<Option<Vec<u8>>> {
+            ensure!(
+                !self.fail.load(Ordering::Acquire),
+                "native extraction failed"
+            );
+            Ok(Some(b"rebuilt".to_vec()))
+        }
         fn type_icon(&self, _name: &str, _folder: bool, _size: u32) -> Result<Vec<u8>> {
             Ok(b"type".to_vec())
         }
@@ -505,7 +546,7 @@ mod tests {
             Ok(Some(b"generated".to_vec()))
         }
     }
-    fn record() -> VisualRecord {
+    pub(super) fn record() -> VisualRecord {
         VisualRecord {
             online: true,
             target: PreparedTarget {
@@ -543,7 +584,7 @@ mod tests {
             },
         }
     }
-    fn paths(temp: &tempfile::TempDir) -> Paths {
+    pub(super) fn paths(temp: &tempfile::TempDir) -> Paths {
         Paths {
             root: temp.path().join("cache"),
             config: temp.path().join("config.json"),
@@ -584,6 +625,31 @@ mod tests {
                 .data_url
                 .is_none()
         );
+        assert_eq!(provider.calls.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn restarted_cache_serves_the_same_thumbnail_to_grid_and_preview_offline() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = paths(&temp);
+        let provider = Arc::new(Fake::default());
+        let cancel = AtomicBool::new(false);
+        let mut row = record();
+        let image = Shared::new(provider.clone())
+            .load_file(&paths, &row, Kind::Thumbnail, 32, &cancel, &|_| {})
+            .unwrap();
+        assert_eq!(image.source, "system_generated");
+        row.online = false;
+        row.target.mounts.clear();
+        let restarted = Shared::new(provider.clone());
+        for size in [32, 64, 128, 512] {
+            let offline = restarted
+                .load_file(&paths, &row, Kind::Thumbnail, size, &cancel, &|_| {})
+                .unwrap();
+            assert_eq!(offline.data_url, image.data_url);
+            assert!(offline.historical);
+        }
+        assert_eq!(restarted.status(&paths).unwrap().stats.files, 1);
         assert_eq!(provider.calls.lock().unwrap().len(), 2);
     }
 

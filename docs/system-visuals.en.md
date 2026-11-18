@@ -4,9 +4,15 @@
 
 File lists display icons associated with file types in Windows. Folders, applications, shortcuts, and similar entries request their individual icons when online, with generic type icons as a fallback. Type icons do not require access to the source file and also work for offline records.
 
-With the preview pane open, selecting one file first checks the local image cache, then the Windows thumbnail cache. On a miss, Windows may generate a thumbnail. Support for images, videos, documents, and other formats depends on the thumbnail providers installed on the computer. StashFinder does not decode file contents or extract video frames itself, and does not pre-generate thumbnails for entire partitions.
+The preview pane and thumbnail list check the local image cache, then the Windows thumbnail cache. On a miss, Windows may generate a thumbnail. Both views share the image requested at 512 pixels. Older small images remain readable at their original requested size when offline. Format support depends on the Windows thumbnail providers installed on the computer.
 
 Offline previews read only the local image cache. Cached previews are labeled as historical; otherwise the pane shows a type icon and the offline state. Metadata still comes from the partition index, so a thumbnail failure does not interrupt browsing or searching. Multiple selections show metadata summaries without generating a batch of previews.
+
+## Pre-generate thumbnails
+
+Choose **Pre-generate thumbnails** in the overview details for an online partition or in a folder's context menu. Folder jobs include subfolders and read common image, video, and PDF entries from the existing index. By default the job skips existing thumbnails. Choose **Rebuild all** to have Windows extract new images. Each old image is replaced after its new image is saved successfully.
+
+Open **Tools → Thumbnail jobs** to see discovered, processed, saved, skipped, and failed counts, or to pause, resume, and cancel the job. A disconnected partition waits for reconnection and a full cache pauses the job. Exiting ends the job and retains saved images, which can be reused by choosing **Skip existing** next time.
 
 ## Cache settings
 

@@ -12,6 +12,7 @@ import FileList from "./FileList";
 import { fileViewOptions, type FileView } from "./file-view";
 import FileDetails from "./FileDetails";
 import FileContextMenu from "./FileContextMenu";
+import { useVisuals } from "./Visuals";
 import WorkspaceIcon from "./WorkspaceIcon";
 import { FileStatusBar, useFileOperations } from "./FileOperations";
 import {
@@ -123,6 +124,7 @@ export default function BrowsePane({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const visuals = useVisuals();
   const [refresh, setRefresh] = useState(0);
   const [sort, setSort] = useState<DirectorySort>();
   const appliedSort = useRef<DirectorySort>(undefined);
@@ -786,6 +788,31 @@ export default function BrowsePane({
               paste={menu.blank && facts.paste}
               blocked={facts.blocked}
               onAction={dispatch}
+              onThumbnails={
+                visuals &&
+                online &&
+                partition &&
+                filesystem &&
+                page &&
+                !page.partial &&
+                !asset.error &&
+                !facts.blocked &&
+                (menu.blank || facts.folder)
+                  ? () =>
+                      visuals.openThumbnails({
+                        partitionId: partition,
+                        filesystemId: filesystem,
+                        generation: page.generation,
+                        folder: menu.blank
+                          ? page.location
+                          : selectedRows[0].entry,
+                        label:
+                          (menu.blank
+                            ? page.ancestors.at(-1)?.name
+                            : selectedRows[0].name) || asset.registration.name,
+                      })
+                  : undefined
+              }
               onClose={() => {
                 setMenu(null);
               }}

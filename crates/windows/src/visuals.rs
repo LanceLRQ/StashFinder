@@ -266,6 +266,22 @@ pub fn file_icon(path: &Path, size: u32) -> Result<Vec<u8>> {
 }
 
 pub fn thumbnail(path: &Path, size: u32, cached_only: bool) -> Result<Option<Vec<u8>>> {
+    thumbnail_with_flags(
+        path,
+        size,
+        if cached_only {
+            WTS_INCACHEONLY
+        } else {
+            WTS_EXTRACT
+        },
+    )
+}
+
+pub fn rebuild_thumbnail(path: &Path, size: u32) -> Result<Option<Vec<u8>>> {
+    thumbnail_with_flags(path, size, WTS_FORCEEXTRACTION)
+}
+
+fn thumbnail_with_flags(path: &Path, size: u32, flags: WTS_FLAGS) -> Result<Option<Vec<u8>>> {
     ensure!((1..=1024).contains(&size), "缩略图尺寸无效");
     let _apartment = crate::shell::Apartment::new()?;
     // SAFETY: Interfaces and the borrowed shared bitmap remain alive within this apartment; no shared handle is deleted.
@@ -274,18 +290,7 @@ pub fn thumbnail(path: &Path, size: u32, cached_only: bool) -> Result<Option<Vec
         let cache: IThumbnailCache =
             CoCreateInstance(&LocalThumbnailCache, None, CLSCTX_INPROC_SERVER)?;
         let mut shared = None;
-        match cache.GetThumbnail(
-            &item,
-            size,
-            if cached_only {
-                WTS_INCACHEONLY
-            } else {
-                WTS_EXTRACT
-            },
-            Some(&mut shared),
-            None,
-            None,
-        ) {
+        match cache.GetThumbnail(&item, size, flags, Some(&mut shared), None, None) {
             Ok(()) => {
                 let shared = shared.context("Windows 未返回缩略图")?;
                 Ok(Some(bitmap_png(
@@ -293,7 +298,9 @@ pub fn thumbnail(path: &Path, size: u32, cached_only: bool) -> Result<Option<Vec
                     shared.GetFormat()?,
                 )?))
             }
-            Err(error) if cached_only && error.code() == STG_E_FILENOTFOUND => Ok(None),
+            Err(error) if flags == WTS_INCACHEONLY && error.code() == STG_E_FILENOTFOUND => {
+                Ok(None)
+            }
             Err(error)
                 if error.code() == WTS_E_FAILEDEXTRACTION
                     || error.code() == WTS_E_NOSTORAGEPROVIDERTHUMBNAILHANDLER =>

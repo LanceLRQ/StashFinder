@@ -10,6 +10,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import IndexControls from "./IndexControls";
 import { FileStatusBar } from "./FileOperations";
+import { useVisuals } from "./Visuals";
 import Modal from "./Modal";
 import WorkspaceIcon from "./WorkspaceIcon";
 import "./assets.css";
@@ -92,6 +93,7 @@ export default function Assets({
   indexActivityLabels?: ReadonlyMap<string, string>;
   managedIndexTasks?: ReadonlySet<string>;
 } = {}) {
+  const visuals = useVisuals();
   const [data, setData] = useState<AssetSnapshot | null>(null);
   const [message, setMessage] = useState("");
   const [working, setWorking] = useState(false);
@@ -372,9 +374,27 @@ export default function Assets({
     </>
   );
   const browse = current && onBrowse && (
-    <button onClick={() => onBrowse(current.registration.partition_id)}>
-      浏览文件
-    </button>
+    <>
+      <button onClick={() => onBrowse(current.registration.partition_id)}>
+        浏览文件
+      </button>
+      {visuals && current.registration.state === "ready" && (
+        <button
+          disabled={
+            current.connection !== "online" || disabled || !!current.error
+          }
+          onClick={() =>
+            visuals.openThumbnails({
+              partitionId: current.registration.partition_id,
+              filesystemId: current.registration.filesystem_id,
+              label: current.registration.name,
+            })
+          }
+        >
+          预生成缩略图…
+        </button>
+      )}
+    </>
   );
 
   return (

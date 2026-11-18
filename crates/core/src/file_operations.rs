@@ -73,6 +73,28 @@ pub struct VisualRecord {
     pub target: PreparedTarget,
     pub online: bool,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ThumbnailPageRequest {
+    pub partition_id: String,
+    pub filesystem_id: String,
+    pub generation: Option<String>,
+    pub folder: Option<Vec<u8>>,
+    pub after: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ThumbnailPage {
+    pub generation: String,
+    pub files: Vec<ResolvedEntry>,
+    pub folders: Vec<Vec<u8>>,
+    pub next: Option<i64>,
+    pub unavailable: usize,
+    pub mounts: Vec<String>,
+    pub volume: String,
+    pub identity: crate::assets::Identity,
+    pub partition_name: String,
+}
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SelectionPage {
     pub id: u64,

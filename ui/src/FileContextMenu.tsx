@@ -16,6 +16,7 @@ export default function FileContextMenu({
   paste = false,
   blocked = false,
   onAction,
+  onThumbnails,
   onClose,
 }: {
   x: number;
@@ -28,6 +29,7 @@ export default function FileContextMenu({
   paste?: boolean;
   blocked?: boolean;
   onAction: (action: MenuAction) => void;
+  onThumbnails?: () => void;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -118,6 +120,17 @@ export default function FileContextMenu({
             </button>
           );
         })}
+      {onThumbnails && (
+        <button
+          role="menuitem"
+          onClick={() => {
+            onThumbnails();
+            onClose();
+          }}
+        >
+          <span>预生成缩略图…</span>
+        </button>
+      )}
     </div>
   );
 }
