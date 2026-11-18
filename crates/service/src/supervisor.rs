@@ -1089,6 +1089,29 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                                 state.phase = phase.into();
                                 state.error = None;
                             },
+                            |mut diagnostic| {
+                                diagnostic["task_id"] = serde_json::json!(task.id);
+                                diagnostic["partition_id"] = serde_json::json!(task.partition_id);
+                                diagnostic["finished_unix_seconds"] =
+                                    serde_json::json!(stashfinder_core::assets::now());
+                                let last_fallback = diagnostic
+                                    .get("fallback_reason")
+                                    .map(|_| "last-first-index-fallback.json");
+                                for name in
+                                    ["last-first-index.json"].into_iter().chain(last_fallback)
+                                {
+                                    let result = (|| -> Result<()> {
+                                        let mut file =
+                                            tempfile::NamedTempFile::new_in(&shared.root)?;
+                                        serde_json::to_writer_pretty(&mut file, &diagnostic)?;
+                                        file.persist(shared.root.join(name))?;
+                                        Ok(())
+                                    })();
+                                    if let Err(error) = result {
+                                        eprintln!("cannot save {name}: {error:#}");
+                                    }
+                                }
+                            },
                         )
                         .map(Some)
                     })

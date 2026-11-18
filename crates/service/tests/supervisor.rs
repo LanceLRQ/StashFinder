@@ -233,6 +233,14 @@ fn automatic_worker_requires_registration_online_identity_and_enabled_policy() {
     });
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(worker.status(&row.partition_id).records, 1);
+    let diagnostic: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("last-first-index.json")).unwrap())
+            .unwrap();
+    assert_eq!(diagnostic["partition_id"], row.partition_id);
+    assert_eq!(diagnostic["strategy"], "mft");
+    assert_eq!(diagnostic["success"], true);
+    assert!(diagnostic["collect_ms"].is_u64() && diagnostic["commit_ms"].is_u64());
+    assert!(!dir.path().join("last-first-index-fallback.json").exists());
     let registered = catalog.get(&row.partition_id).unwrap();
     let saved = catalog.open_volume(&registered).unwrap();
     let offline = stashfinder_store::search::SearchIndex::load(&saved)

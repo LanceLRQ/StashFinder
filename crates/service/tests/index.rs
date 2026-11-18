@@ -1765,6 +1765,7 @@ fn registered_first_build_keeps_ownership_and_publishes_the_search_revision() {
         IndexMode::Journal,
         &cancel,
         &mut |_| {},
+        |_| {},
     )
     .unwrap();
     assert_eq!(source.fast.get(), 1);
@@ -1819,6 +1820,7 @@ fn registered_first_build_replays_a_same_name_replacement_before_falling_back() 
         IndexMode::Journal,
         &cancel,
         &mut |_| {},
+        |_| {},
     )
     .unwrap();
     assert_eq!((source.fast.get(), source.legacy.get()), (1, 0));
@@ -1856,6 +1858,7 @@ fn registered_first_build_rolls_back_on_identity_change_and_can_retry_or_fall_ba
         IndexMode::Journal,
         &cancel,
         &mut |_| {},
+        |_| {},
     );
     assert!(
         result
@@ -1866,14 +1869,26 @@ fn registered_first_build_rolls_back_on_identity_change_and_can_retry_or_fall_ba
     assert!(!db.has_generations().unwrap());
     assert_eq!(db.manifest().unwrap(), "owned");
     source.failure = Some("unsupported");
+    let mut diagnostic = None;
     let index = stashfinder_service::index::build_registered(
         &source,
         &mut db,
         IndexMode::Journal,
         &cancel,
         &mut |_| {},
+        |entry| diagnostic = Some(entry),
     )
     .unwrap();
+    let diagnostic = diagnostic.unwrap();
+    assert_eq!(diagnostic["strategy"], "directory_walk");
+    assert_eq!(diagnostic["success"], true);
+    assert!(
+        diagnostic["fallback_reason"]
+            .as_str()
+            .unwrap()
+            .contains("顺序元数据读取")
+    );
+    assert!(diagnostic["before_fallback_ms"].is_u64() && diagnostic["legacy_ms"].is_u64());
     assert_eq!(source.legacy.get(), 1);
     assert_eq!(db.active_generation().unwrap(), Some(index.generation));
 }

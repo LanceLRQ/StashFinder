@@ -120,6 +120,7 @@ pub fn build_registered(
     mode: IndexMode,
     cancelled: &AtomicBool,
     progress: &mut dyn FnMut(&str),
+    diagnostic: impl FnOnce(serde_json::Value),
 ) -> Result<SearchIndex> {
     if matches!(mode, IndexMode::ScanOnly) || db.has_generations()? {
         return build(source, db, mode, cancelled, progress);
@@ -130,7 +131,8 @@ pub fn build_registered(
         IndexMode::CreateJournal => source.create_journal()?,
         _ => source.journal()?.ok_or(JournalMissing)?,
     };
-    let (rows, cursor, _) = match collect_rows(source, &journal, cancelled, progress) {
+    let started = Instant::now();
+    let (rows, cursor, report) = match collect_rows(source, &journal, cancelled, progress) {
         Ok(rows) => rows,
         Err(e)
             if e.is::<FastScanUnavailable>()
@@ -145,19 +147,36 @@ pub fn build_registered(
                     && journal.next <= current.next,
                 JournalCursorInvalid
             );
-            return build_with_strategy(
+            let fallback_started = Instant::now();
+            let result = build_with_strategy(
                 source,
                 db,
                 IndexMode::Journal,
                 BuildStrategy::Legacy,
                 cancelled,
                 progress,
-            )
-            .map(|(_, index)| index);
+            );
+            diagnostic(serde_json::json!({
+                "strategy": "directory_walk",
+                "fallback_reason": e.to_string(),
+                "success": result.is_ok(),
+                "elapsed_ms": started.elapsed().as_millis(),
+                "before_fallback_ms": (fallback_started - started).as_millis(),
+                "legacy_ms": fallback_started.elapsed().as_millis(),
+            }));
+            return result.map(|(_, index)| index);
         }
-        Err(e) => return Err(e),
+        Err(e) => {
+            diagnostic(serde_json::json!({
+                "strategy": "mft",
+                "success": false,
+                "elapsed_ms": started.elapsed().as_millis(),
+            }));
+            return Err(e);
+        }
     };
-    std::thread::scope(|scope| {
+    let commit_started = Instant::now();
+    let result = std::thread::scope(|scope| {
         let search =
             scope.spawn(|| SearchIndex::from_initial(&rows.objects, &rows.entries, cancelled));
         let (mut index, generation, revision, completed) = db.commit_first_snapshot(
@@ -182,7 +201,18 @@ pub fn build_registered(
         index.indexed_at = Some(completed);
         index.needs_validation = false;
         Ok(index)
-    })
+    });
+    diagnostic(serde_json::json!({
+        "strategy": "mft",
+        "success": result.is_ok(),
+        "elapsed_ms": started.elapsed().as_millis(),
+        "collect_ms": (commit_started - started).as_millis(),
+        "journal_replay_ms": report.replay_time.as_millis(),
+        "commit_ms": commit_started.elapsed().as_millis(),
+        "objects": rows.objects.len(),
+        "paths": rows.entries.len(),
+    }));
+    result
 }
 
 fn collect_rows(
