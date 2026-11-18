@@ -4,7 +4,6 @@ import {
   useImperativeHandle,
   useRef,
   useState,
-  type ReactNode,
   type Ref,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -70,7 +69,6 @@ export default function Assets({
   onIndexStatus,
   ref,
   onStatus,
-  indexActivity,
   attentionPartitions,
   indexActivityLabels,
   managedIndexTasks,
@@ -85,10 +83,6 @@ export default function Assets({
   ) => void;
   ref?: Ref<AssetControls>;
   onStatus?: (status: { error: string; working: boolean }) => void;
-  indexActivity?: (
-    partition: string | undefined,
-    select: (id: string) => void,
-  ) => ReactNode;
   attentionPartitions?: ReadonlySet<string>;
   indexActivityLabels?: ReadonlyMap<string, string>;
   managedIndexTasks?: ReadonlySet<string>;
@@ -604,10 +598,6 @@ export default function Assets({
                 <p className="asset-error">{current.capacity_error}</p>
               )}
             </>
-          )}
-          {indexActivity?.(
-            current?.registration.partition_id,
-            setSelectedPartition,
           )}
           {current && (
             <div className="asset-remove">

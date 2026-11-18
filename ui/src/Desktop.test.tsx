@@ -34,6 +34,7 @@ beforeEach(() => {
       };
     if (command === "service_status") throw new Error("服务未启动");
     if (command === "app_version") return "0.1.0";
+    if (command === "thumbnail_status") return null;
     if (args?.action?.task_overview)
       return {
         kind: "task_overview",
@@ -576,11 +577,16 @@ test("shows a running build ahead of an older failure and resolves other indexin
   await waitFor(() => expect(card.getByText("待处理")).toBeTruthy(), {
     timeout: 3500,
   });
-  fireEvent.click(await sidebar.findByRole("button", { name: "重试 Movies" }));
+  expect(sidebar.queryByRole("button", { name: "重试 Movies" })).toBeNull();
+  expect(sidebar.queryByText("最近操作")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "工具" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "任务" }));
+  fireEvent.click(await screen.findByRole("button", { name: /需处理/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "重试 Movies" }));
   expect(invoke).toHaveBeenCalledWith("index_request", {
     action: { task_retry: { id: "failed-task" } },
   });
-  const choose = sidebar.getByRole("button", { name: "选择索引方式 Backup" });
+  const choose = screen.getByRole("button", { name: "选择索引方式 Backup" });
   await waitFor(() => expect(choose).toHaveProperty("disabled", false));
   fireEvent.click(choose);
   const dialog = screen.getByRole("dialog", { name: "选择索引方式 Backup" });
@@ -593,12 +599,10 @@ test("shows a running build ahead of an older failure and resolves other indexin
       action: { index_start: { partition_id: "Backup", mode: "scan_only" } },
     }),
   );
-  expect(screen.getByRole("tab", { name: "概览" })).toHaveProperty(
+  expect(screen.getByRole("tab", { name: "任务" })).toHaveProperty(
     "ariaSelected",
     "true",
   );
-  fireEvent.click(screen.getByRole("button", { name: "工具" }));
-  expect(screen.queryByRole("menuitem", { name: "任务" })).toBeNull();
 });
 
 test("shows Home with legacy preferences and applies the search default", async () => {

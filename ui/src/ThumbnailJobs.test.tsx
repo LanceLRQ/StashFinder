@@ -8,6 +8,7 @@ import {
 import { afterEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import Visuals, { useVisuals } from "./Visuals";
+import { ThumbnailProgress } from "./ThumbnailJobs";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -18,7 +19,7 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
-test("opens a folder job with skip selected and reopens its progress after requesting a rebuild", async () => {
+test("opens a folder job with skip selected and shows safe progress after requesting a rebuild", async () => {
   const scope = {
     partitionId: "p",
     filesystemId: "fs",
@@ -32,10 +33,12 @@ test("opens a folder job with skip selected and reopens its progress after reque
           state: "running",
           label: scope.label,
           discovered: 5,
+          total: 10,
           saved: 2,
           skipped: 1,
           unsupported: 1,
           failed: 0,
+          error: "系统位图尺寸无效",
         }
       : undefined,
   );
@@ -46,9 +49,9 @@ test("opens a folder job with skip selected and reopens its progress after reque
         <button onClick={() => visuals.openThumbnails(scope)}>
           开始目录任务
         </button>
-        <button onClick={() => visuals.openThumbnails("progress")}>
-          查看任务
-        </button>
+        {!!visuals.thumbnailTaskRevision && (
+          <ThumbnailProgress revision={visuals.thumbnailTaskRevision} />
+        )}
       </>
     );
   }
@@ -65,13 +68,14 @@ test("opens a folder job with skip selected and reopens its progress after reque
     target: { value: "rebuild" },
   });
   fireEvent.click(screen.getByRole("button", { name: "开始" }));
-  await screen.findByText("已处理 4 项，已发现 5 项");
+  const progress = await screen.findByRole("progressbar");
+  expect(progress.getAttribute("value")).toBe("4");
+  expect(progress.getAttribute("max")).toBe("10");
+  expect(screen.queryByText("系统位图尺寸无效")).toBeNull();
   expect(invoke).toHaveBeenCalledWith("thumbnail_start", {
     options: { ...scope, rebuild: true },
   });
-  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-  fireEvent.click(screen.getByRole("button", { name: "查看任务" }));
-  await screen.findByText("已处理 4 项，已发现 5 项");
+  expect(screen.queryByRole("dialog")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "暂停" }));
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("thumbnail_control", {

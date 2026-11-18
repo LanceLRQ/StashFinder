@@ -12,7 +12,7 @@ Offline previews read only the local image cache. Cached previews are labeled as
 
 Choose **Pre-generate thumbnails** in the overview details for an online partition or in a folder's context menu. Folder jobs include subfolders and filter entries from the existing index. By default the job skips existing thumbnails. Choose **Rebuild all** to have Windows extract new images. Each old image is replaced after its new image is saved successfully.
 
-Open **Tools → Thumbnail jobs** to see discovered, processed, saved, skipped, and failed counts, or to pause, resume, and cancel the job. A disconnected partition waits for reconnection. The job keeps its progress when it reaches the cache limit or runs low on disk space. After adjusting the limit or freeing space, choose **Resume** to retry the current file. Exiting ends the job and retains saved images, which can be reused by choosing **Skip existing** next time.
+Open **Tools → Tasks** to view, pause, resume, or cancel the thumbnail job. The job first counts indexed files matching the configured types, then shows the processed count and the fixed total. It reports successful, failed, and skipped files. Skipped files include those without thumbnail support. Error details go to `thumbnail-jobs.log` in the app's local data directory, or `data/local/thumbnail-jobs.log` in the portable edition. A disconnected partition waits for reconnection. The job keeps its progress when it reaches the cache limit or runs low on disk space. After adjusting the limit or freeing space, choose **Resume** to retry the current file. Exiting ends the job and retains saved images, which can be reused by choosing **Skip existing** next time.
 
 ## Repair an individual thumbnail with FFmpeg
 

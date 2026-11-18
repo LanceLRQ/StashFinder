@@ -3,10 +3,12 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use stashfinder_core::{
     Action, Response,
-    file_operations::{PreparedTarget, ThumbnailPageRequest, VisualRecord},
+    file_operations::{PreparedTarget, ThumbnailPage, ThumbnailPageRequest, VisualRecord},
 };
 use std::{
     collections::HashSet,
+    fs::{self, OpenOptions},
+    io::Write,
     sync::{Arc, Mutex, MutexGuard, atomic::Ordering},
     time::Duration,
 };
@@ -37,11 +39,11 @@ pub struct BatchStatus {
     label: String,
     state: BatchState,
     discovered: usize,
+    total: Option<usize>,
     saved: usize,
     skipped: usize,
     unsupported: usize,
     failed: usize,
-    error: Option<String>,
 }
 
 #[derive(Default)]
@@ -77,34 +79,40 @@ pub async fn thumbnail_start(
     let shared = state.0.clone();
     let types = {
         let shared = shared.clone();
-        let paths = paths.clone();
-        background(move || shared.cached(&paths, |cache| Ok(cache.thumbnail_types().clone())))
-            .await?
+        let cache_paths = paths.clone();
+        background(move || shared.cached(&cache_paths, |cache| Ok(cache.thumbnail_types().clone())))
+            .await
+            .inspect_err(|error| log_error(&paths, &options.label, None, error))?
     };
     if types.selected_extensions().is_empty() {
-        return Err("请先在「设置 → 图片缓存」选择预生成的文件类型".into());
+        let error = "请先在「设置 → 图片缓存」选择预生成的文件类型";
+        log_error(&paths, &options.label, None, error);
+        return Err(error.into());
     }
     let mut slot = shared.batch.lock();
     if slot.as_ref().is_some_and(|job| !job.state.finished()) {
-        return Err("已有缩略图任务在运行".into());
+        drop(slot);
+        let error = "已有缩略图任务在运行";
+        log_error(&paths, &options.label, None, error);
+        return Err(error.into());
     }
     *slot = Some(BatchStatus {
         partition_id: options.partition_id.clone(),
         label: options.label,
         state: BatchState::Running,
         discovered: 0,
+        total: None,
         saved: 0,
         skipped: 0,
         unsupported: 0,
         failed: 0,
-        error: None,
     });
     let epoch = shared.epoch.load(Ordering::Acquire);
     drop(slot);
     tauri::async_runtime::spawn(async move {
         let result = run(
             &shared,
-            paths,
+            &paths,
             ThumbnailPageRequest {
                 partition_id: options.partition_id,
                 filesystem_id: options.filesystem_id,
@@ -115,15 +123,22 @@ pub async fn thumbnail_start(
             },
             options.rebuild,
             epoch,
+            async |request| match crate::runtime::request(Action::ThumbnailPage(request)).await? {
+                Response::ThumbnailPage(page) => Ok(page.map(|page| *page)),
+                _ => anyhow::bail!("缩略图候选响应无效"),
+            },
         )
         .await;
+        if let Err(error) = &result {
+            let label = shared.batch.lock().as_ref().unwrap().label.clone();
+            log_error(&paths, &label, None, &format!("{error:#}"));
+        }
         let saved = {
             let mut slot = shared.batch.lock();
             let job = slot.as_mut().unwrap();
             job.state = if job.state == BatchState::Cancelling {
                 BatchState::Cancelled
-            } else if let Err(error) = result {
-                job.error = Some(format!("{error:#}"));
+            } else if result.is_err() {
                 BatchState::Failed
             } else {
                 BatchState::Completed
@@ -182,22 +197,20 @@ async fn wait(batch: &Batch) -> bool {
 
 async fn run(
     shared: &Arc<Shared>,
-    paths: Paths,
+    paths: &Paths,
     mut request: ThumbnailPageRequest,
     rebuild: bool,
     epoch: u64,
+    mut fetch: impl AsyncFnMut(ThumbnailPageRequest) -> Result<Option<ThumbnailPage>>,
 ) -> Result<()> {
+    let mut candidates = Vec::new();
     let mut folders = Vec::new();
     let mut seen = HashSet::new();
     if let Some(folder) = &request.folder {
         seen.insert(folder.clone());
     }
     while wait(&shared.batch).await {
-        let response = crate::runtime::request(Action::ThumbnailPage(request.clone())).await?;
-        let Response::ThumbnailPage(page) = response else {
-            anyhow::bail!("缩略图候选响应无效");
-        };
-        let Some(page) = page else {
+        let Some(mut page) = fetch(request.clone()).await? else {
             {
                 let mut lock = shared.batch.lock();
                 let job = lock.as_mut().unwrap();
@@ -217,12 +230,39 @@ async fn run(
             job.discovered += page.files.len() + page.unavailable;
             job.failed += page.unavailable;
         }
-        request.generation = Some(page.generation);
-        folders.extend(
-            page.folders
-                .into_iter()
-                .filter(|id| seen.insert(id.clone())),
+        request.generation = Some(std::mem::take(&mut page.generation));
+        folders.extend(page.folders.drain(..).filter(|id| seen.insert(id.clone())));
+        let next = page.next;
+        if !page.files.is_empty() {
+            candidates.push(page);
+        }
+        if let Some(next) = next {
+            request.after = Some(next);
+        } else if let Some(folder) = folders.pop() {
+            request.folder = Some(folder);
+            request.after = None;
+        } else {
+            break;
+        }
+    }
+    if !wait(&shared.batch).await {
+        return Ok(());
+    }
+    let (label, unavailable) = {
+        let mut lock = shared.batch.lock();
+        let job = lock.as_mut().unwrap();
+        job.total = Some(job.discovered);
+        (job.label.clone(), job.failed)
+    };
+    if unavailable > 0 {
+        log_error(
+            paths,
+            &label,
+            None,
+            &format!("{unavailable} 个索引候选无法解析"),
         );
+    }
+    for page in candidates {
         for file in page.files {
             let record = VisualRecord {
                 online: true,
@@ -239,14 +279,17 @@ async fn run(
                     return Ok(());
                 }
                 let permit = shared.slots.clone().acquire_owned().await?;
-                let paths = paths.clone();
+                let cache_paths = paths.clone();
                 let shared_for_item = shared.clone();
-                let record = record.clone();
+                let candidate = record.clone();
                 let outcome = background(move || {
                     let _permit = permit;
-                    shared_for_item.prebuild(&paths, &record, rebuild, epoch)
+                    shared_for_item.prebuild(&cache_paths, &candidate, rebuild, epoch)
                 })
                 .await;
+                if let Err(error) = &outcome {
+                    log_error(paths, &label, Some(&record.target.file.relative), error);
+                }
                 let offline = matches!(outcome, Ok(Outcome::Offline));
                 {
                     let mut slot = shared.batch.lock();
@@ -271,10 +314,7 @@ async fn run(
                             }
                         }
                         Ok(Outcome::Interrupted) => continue,
-                        Err(error) => {
-                            job.failed += 1;
-                            job.error = Some(error);
-                        }
+                        Err(_) => job.failed += 1,
                     }
                 }
                 if offline {
@@ -284,16 +324,27 @@ async fn run(
                 break;
             }
         }
-        if let Some(next) = page.next {
-            request.after = Some(next);
-        } else if let Some(folder) = folders.pop() {
-            request.folder = Some(folder);
-            request.after = None;
-        } else {
-            break;
-        }
     }
     Ok(())
+}
+
+fn log_error(paths: &Paths, label: &str, relative: Option<&[u16]>, error: &str) {
+    let row = serde_json::json!({
+        "time": stashfinder_core::assets::now(),
+        "scope": label,
+        "file": relative.map(String::from_utf16_lossy),
+        "error": error,
+    });
+    eprintln!("{row}");
+    let path = paths.root.with_file_name("thumbnail-jobs.log");
+    let result = (|| -> std::io::Result<()> {
+        fs::create_dir_all(path.parent().expect("cache directory has a parent"))?;
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+        writeln!(file, "{row}")
+    })();
+    if let Err(error) = result {
+        eprintln!("cannot save thumbnail job log: {error}");
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -397,6 +448,72 @@ mod tests {
     use stashfinder_windows::file_operations::inspect;
     use std::{fs, sync::atomic::AtomicBool};
 
+    #[tokio::test]
+    async fn counts_all_candidates_before_processing_and_logs_file_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = paths(&temp);
+        let shared = Arc::new(Shared::new(Arc::new(WindowsProvider)));
+        *shared.batch.lock() = Some(BatchStatus {
+            partition_id: "p".into(),
+            label: "Photos".into(),
+            state: BatchState::Running,
+            discovered: 0,
+            total: None,
+            saved: 0,
+            skipped: 0,
+            unsupported: 0,
+            failed: 0,
+        });
+        let mut pages = 0;
+        run(
+            &shared,
+            &paths,
+            ThumbnailPageRequest {
+                partition_id: "p".into(),
+                filesystem_id: "fs".into(),
+                generation: None,
+                folder: None,
+                after: None,
+                types: Default::default(),
+            },
+            false,
+            0,
+            async |request: ThumbnailPageRequest| {
+                let target = record().target;
+                let slot = shared.batch.lock();
+                let status = slot.as_ref().unwrap();
+                assert_eq!(status.total, None);
+                assert_eq!((status.saved, status.skipped, status.failed), (0, 0, 0));
+                assert_eq!(status.discovered, pages);
+                assert_eq!(request.after, (pages == 1).then_some(1));
+                pages += 1;
+                Ok(Some(ThumbnailPage {
+                    generation: "1".into(),
+                    files: vec![target.file],
+                    folders: vec![],
+                    next: (pages == 1).then_some(1),
+                    unavailable: 0,
+                    mounts: vec![],
+                    volume: temp.path().display().to_string(),
+                    identity: target.identity,
+                    partition_name: "Photos".into(),
+                }))
+            },
+        )
+        .await
+        .unwrap();
+        let status = shared.batch.lock();
+        let status = status.as_ref().unwrap();
+        assert_eq!(
+            (status.discovered, status.total, status.failed),
+            (2, Some(2), 2)
+        );
+        let errors = fs::read_to_string(paths.root.with_file_name("thumbnail-jobs.log")).unwrap();
+        assert_eq!(errors.lines().count(), 2);
+        let public = serde_json::to_value(status).unwrap();
+        assert!(public.get("error").is_none());
+    }
+
     #[test]
     fn windows_batch_reuses_and_rebuilds_one_png_then_reopens_it_without_the_source() {
         let temp = tempfile::tempdir().unwrap();
@@ -437,11 +554,11 @@ mod tests {
             label: "Photos".into(),
             state: BatchState::Running,
             discovered: 1,
+            total: Some(1),
             saved: 0,
             skipped: 0,
             unsupported: 0,
             failed: 0,
-            error: None,
         });
         assert_eq!(
             shared.prebuild(&paths, &row, false, 0).unwrap(),

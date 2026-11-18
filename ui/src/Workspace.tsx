@@ -85,6 +85,7 @@ const searchTitle = (text: string) =>
   text.trim() ? `搜索：${text.trim()}` : "搜索";
 const pages = {
   overview: { id: -1, title: "概览", kind: "overview" },
+  tasks: { id: -2, title: "任务", kind: "tasks" },
   development: { id: -4, title: "开发验证", kind: "development" },
 } as const;
 type AuxiliaryPage = keyof typeof pages;
@@ -445,7 +446,7 @@ export default function Workspace({
         );
     }
   }
-  function openPage(page: AuxiliaryPage) {
+  const openPage = useCallback((page: AuxiliaryPage) => {
     const tab = pages[page];
     setTabs((previous) =>
       previous.some((item) => item.id === tab.id)
@@ -453,7 +454,12 @@ export default function Workspace({
         : [...previous, tab],
     );
     setActive(tab.id);
-  }
+  }, []);
+  const thumbnailTaskRevision = visuals?.thumbnailTaskRevision;
+  const hasTaskPage = !!panels?.tasks;
+  useEffect(() => {
+    if (thumbnailTaskRevision && hasTaskPage) openPage("tasks");
+  }, [thumbnailTaskRevision, hasTaskPage, openPage]);
   function choosePartition(id: number, partition: string) {
     const chosen = assets.find(
       (a) => a.registration.partition_id === partition,
@@ -755,11 +761,11 @@ export default function Workspace({
       accessKey: "t",
       sections: [
         onSettings ? [mainCommands.settings] : [],
-        visuals
+        panels?.tasks
           ? [
               {
-                label: "缩略图任务…",
-                run: () => visuals.openThumbnails("progress"),
+                label: "任务",
+                run: () => openPage("tasks"),
               },
             ]
           : [],

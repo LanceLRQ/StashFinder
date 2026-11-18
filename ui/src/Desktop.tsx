@@ -7,7 +7,7 @@ import FileOperations from "./FileOperations";
 import Visuals from "./Visuals";
 import Settings, { type SettingsPage } from "./Settings";
 import type { Asset, AssetSnapshot } from "./asset-api";
-import IndexActivity from "./IndexActivity";
+import Tasks from "./Tasks";
 import { IndexModeDialog } from "./IndexControls";
 import { taskGroup, useTasks } from "./task-api";
 import {
@@ -58,6 +58,7 @@ export default function Desktop() {
     return {
       id: a.registration.partition_id,
       name: a.registration.name,
+      connection: a.connection,
       canRetry,
       canChooseIndex:
         canRetry && a.registration.observation.identity.filesystem === "NTFS",
@@ -234,17 +235,15 @@ export default function Desktop() {
                   attentionPartitions={attentionPartitions}
                   indexActivityLabels={indexActivityLabels}
                   managedIndexTasks={managedIndexTasks}
-                  indexActivity={(partition, onSelect) => (
-                    <IndexActivity
-                      data={tasks.data}
-                      error={tasks.error}
-                      partitions={partitions}
-                      partition={partition}
-                      onSelect={onSelect}
-                      onRefresh={tasks.refresh}
-                      onChooseIndex={setIndexChoice}
-                    />
-                  )}
+                />
+              ),
+              tasks: (
+                <Tasks
+                  data={tasks.data}
+                  error={tasks.error}
+                  partitions={partitions}
+                  onRefresh={tasks.refresh}
+                  onChooseIndex={setIndexChoice}
                 />
               ),
               ...(Development && {

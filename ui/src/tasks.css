@@ -1,0 +1,236 @@
+.task-workspace {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.task-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 16px 24px;
+  border-bottom: 1px solid #dce1e7;
+}
+.task-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.task-index-label {
+  white-space: nowrap;
+  font-weight: 600;
+}
+.task-tabs button {
+  border-color: transparent;
+  white-space: nowrap;
+}
+.task-tabs button[aria-pressed="true"] {
+  background: #e8edf2;
+}
+.task-tabs span {
+  margin-left: 8px;
+  color: #647082;
+  font-variant-numeric: tabular-nums;
+}
+.task-policy {
+  margin-left: auto;
+  color: #647082;
+  white-space: nowrap;
+}
+.task-table-wrap {
+  overflow: auto;
+  padding: 0 24px;
+}
+.task-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 710px;
+  font-size: 13px;
+}
+.task-table th {
+  text-align: left;
+  color: #647082;
+  font-weight: 400;
+  padding: 12px 8px;
+  border-bottom: 1px solid #dce1e7;
+}
+.task-table td {
+  padding: 14px 8px;
+  border-bottom: 1px solid #e1e5eb;
+  vertical-align: top;
+}
+.task-table small {
+  display: block;
+  color: #647082;
+  font-size: 12px;
+  margin-top: 5px;
+}
+.desktop .task-name {
+  padding: 0;
+  background: none;
+  border: 0;
+  text-align: left;
+  font-weight: 600;
+}
+.task-time {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.task-actions {
+  white-space: nowrap;
+}
+.task-actions button + button {
+  margin-left: 6px;
+}
+.task-table .task-error {
+  color: #9d4927;
+  max-width: 320px;
+  overflow-wrap: anywhere;
+}
+.task-state.failed,
+.task-state.needs_confirmation {
+  color: #9d4927;
+}
+.task-state.running {
+  color: #356b9f;
+}
+.task-detail td {
+  background: #f8f9fa;
+}
+.task-detail dl {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+.task-detail dl div {
+  display: flex;
+  gap: 16px;
+}
+.task-detail dt {
+  color: #647082;
+  min-width: 72px;
+}
+.task-detail dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.task-empty {
+  text-align: center;
+  color: #647082;
+  height: 90px;
+  vertical-align: middle !important;
+}
+.task-workspace > .desktop-error {
+  margin: 12px 24px;
+}
+.paused-partitions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 24px;
+  border-bottom: 1px solid #e1e5eb;
+}
+
+.thumbnail-job {
+  margin: 18px 24px 0;
+  padding: 16px 18px;
+  background: var(--ui-surface, #fff);
+  border: 1px solid var(--ui-control-border, #c9d3df);
+  border-radius: 8px;
+}
+
+.thumbnail-job > header,
+.thumbnail-job-status,
+.thumbnail-job-actions,
+.thumbnail-scope {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.thumbnail-job > header,
+.thumbnail-job-status {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.thumbnail-scope-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 8px;
+  color: #235f9e;
+  background: #e8f1fc;
+}
+
+.thumbnail-scope {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.thumbnail-scope strong,
+.thumbnail-scope small {
+  display: block;
+}
+
+.thumbnail-scope small,
+.thumbnail-job-status,
+.thumbnail-job-counts dt {
+  color: #526478;
+}
+
+.thumbnail-job-status {
+  margin-top: 16px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.thumbnail-job progress {
+  display: block;
+  width: 100%;
+  height: 8px;
+  margin-top: 7px;
+  accent-color: #235f9e;
+}
+
+.thumbnail-job-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin: 14px 0 0;
+}
+
+.thumbnail-job-counts > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.thumbnail-job-counts dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.thumbnail-start {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.thumbnail-start > label {
+  display: grid;
+  gap: 6px;
+}
+
+.thumbnail-start > p {
+  margin: 0;
+}
+
+.thumbnail-start-dialog button.thumbnail-start-button:not(:disabled) {
+  color: #fff;
+  border-color: #235f9e;
+  background: #235f9e;
+}

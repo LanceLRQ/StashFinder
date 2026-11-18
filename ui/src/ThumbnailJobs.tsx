@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Modal from "./Modal";
+import WorkspaceIcon from "./WorkspaceIcon";
 
 export type ThumbnailScope = {
   partitionId: string;
@@ -21,89 +22,75 @@ const states = {
   completed: "已完成",
   failed: "未完成",
 };
+
 type Job = {
   label: string;
   state: keyof typeof states;
   discovered: number;
+  total: number | null;
   saved: number;
   skipped: number;
   unsupported: number;
   failed: number;
-  error?: string;
 };
 
 export default function ThumbnailJobs({
-  view,
-  onProgress,
+  scope,
+  onStarted,
   onClose,
 }: {
-  view: ThumbnailScope | "progress";
-  onProgress: () => void;
+  scope: ThumbnailScope;
+  onStarted: () => void;
   onClose: () => void;
 }) {
   const [rebuild, setRebuild] = useState(false);
-  const [job, setJob] = useState<Job | null>();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    if (view !== "progress") return;
-    let live = true;
-    let timer: number;
-    async function load() {
-      try {
-        const status = await invoke<Job | null>("thumbnail_status");
-        if (live) setJob(status);
-      } catch (error) {
-        if (live) setError(String(error));
-      } finally {
-        if (live) timer = window.setTimeout(load, 500);
-      }
-    }
-    void load();
-    return () => {
-      live = false;
-      window.clearTimeout(timer);
-    };
-  }, [view]);
-
-  async function command(name: string, args: Record<string, unknown>) {
+  const [failed, setFailed] = useState(false);
+  async function start() {
     setBusy(true);
-    setError("");
+    setFailed(false);
     try {
-      await invoke(name, args);
-      if (name === "thumbnail_start") onProgress();
-      else setJob(await invoke<Job | null>("thumbnail_status"));
-    } catch (error) {
-      setError(String(error));
+      await invoke("thumbnail_start", { options: { ...scope, rebuild } });
+      onStarted();
+    } catch {
+      setFailed(true);
     } finally {
       setBusy(false);
     }
   }
-
-  if (view !== "progress")
-    return (
-      <Modal
-        title="预生成缩略图"
-        onClose={onClose}
-        closeDisabled={busy}
-        actions={
+  return (
+    <Modal
+      title="预生成缩略图"
+      className="thumbnail-start-dialog"
+      onClose={onClose}
+      closeDisabled={busy}
+      actions={
+        <>
+          <button disabled={busy} onClick={onClose}>
+            取消
+          </button>
           <button
-            type="button"
+            className="thumbnail-start-button"
             disabled={busy}
-            onClick={() =>
-              void command("thumbnail_start", { options: { ...view, rebuild } })
-            }
+            onClick={() => void start()}
           >
             开始
           </button>
-        }
-      >
-        <p>
-          {view.label}
-          {view.folder ? "（含子文件夹）" : ""}
-        </p>
+        </>
+      }
+    >
+      <div className="thumbnail-start">
+        <div className="thumbnail-scope">
+          <span className="thumbnail-scope-icon">
+            <WorkspaceIcon name={scope.folder ? "folder" : "drive"} />
+          </span>
+          <div>
+            <strong>{scope.label}</strong>
+            {scope.folder && <small>含子文件夹</small>}
+          </div>
+        </div>
         <label>
-          处理方式{" "}
+          处理方式
           <select
             value={rebuild ? "rebuild" : "skip"}
             onChange={(event) => setRebuild(event.target.value === "rebuild")}
@@ -113,75 +100,121 @@ export default function ThumbnailJobs({
             <option value="rebuild">全部重建</option>
           </select>
         </label>
-        <p>按「设置 → 图片缓存」里的文件类型生成。</p>
-        {error && <p role="alert">{error}</p>}
-      </Modal>
-    );
+        {failed && <p role="alert">缩略图任务未启动</p>}
+      </div>
+    </Modal>
+  );
+}
 
-  const terminal =
-    job &&
-    ["completed", "cancelled", "failed", "cancelling"].includes(job.state);
-  const paused = job && ["paused", "quota", "full"].includes(job.state);
-  const processed =
-    job && job.saved + job.skipped + job.unsupported + job.failed;
+export function ThumbnailProgress({ revision }: { revision: number }) {
+  const [job, setJob] = useState<Job | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    let timer: number;
+    async function load() {
+      try {
+        const status = await invoke<Job | null>("thumbnail_status");
+        if (live) setJob(status);
+      } catch {
+        // Keep the last readable state during a transient connection failure.
+      } finally {
+        if (live) timer = window.setTimeout(load, 500);
+      }
+    }
+    void load();
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [revision]);
+
+  async function control(action: "pause" | "resume" | "cancel") {
+    setBusy(true);
+    setFailed(false);
+    try {
+      await invoke("thumbnail_control", { action });
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!job) return null;
+  const total = job.total;
+  const counting = total == null;
+  const terminal = ["completed", "cancelled", "failed", "cancelling"].includes(
+    job.state,
+  );
+  const paused = ["paused", "quota", "full"].includes(job.state);
+  const skipped = job.skipped + job.unsupported;
+  const processed = job.saved + skipped + job.failed;
+  const status =
+    counting && job.state === "running" ? "正在清点文件" : states[job.state];
   return (
-    <Modal
-      title="缩略图任务"
-      onClose={onClose}
-      actions={
-        job &&
-        !terminal && (
-          <>
+    <section className="thumbnail-job" aria-label="缩略图任务">
+      <header>
+        <div className="thumbnail-scope">
+          <span className="thumbnail-scope-icon">
+            <WorkspaceIcon name="folder" />
+          </span>
+          <div>
+            <strong>预生成缩略图</strong>
+            <small>{job.label}</small>
+          </div>
+        </div>
+        {!terminal && (
+          <div className="thumbnail-job-actions">
             <button
-              type="button"
               disabled={busy}
-              onClick={() =>
-                void command("thumbnail_control", {
-                  action: paused ? "resume" : "pause",
-                })
-              }
+              onClick={() => void control(paused ? "resume" : "pause")}
             >
               {paused ? "继续" : "暂停"}
             </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() =>
-                void command("thumbnail_control", { action: "cancel" })
-              }
-            >
+            <button disabled={busy} onClick={() => void control("cancel")}>
               取消任务
             </button>
-          </>
-        )
-      }
-    >
-      {job ? (
-        <>
-          <p>
-            {job.label} · {states[job.state]}
-          </p>
-          {job.state === "running" && <progress aria-label="正在生成缩略图" />}
-          <p>
-            已处理 {processed?.toLocaleString()} 项，已发现{" "}
-            {job.discovered.toLocaleString()} 项
-          </p>
-          <p>
-            已保存 {job.saved.toLocaleString()} · 已跳过{" "}
-            {job.skipped.toLocaleString()} · 不支持{" "}
-            {job.unsupported.toLocaleString()} · 失败{" "}
-            {job.failed.toLocaleString()}
-          </p>
-          {job.error && <p>{job.error}</p>}
-          {job.state === "quota" && (
-            <p>提高图片缓存上限或设为不限容量后继续。</p>
-          )}
-          {job.state === "full" && <p>释放缓存磁盘空间后继续。</p>}
-        </>
-      ) : (
-        <p>{job === null ? "暂无缩略图任务" : "正在读取任务…"}</p>
+          </div>
+        )}
+      </header>
+      <div className="thumbnail-job-status">
+        <span role="status">{status}</span>
+        <span>
+          {counting
+            ? "已清点 " + job.discovered.toLocaleString() + " 项"
+            : processed.toLocaleString() +
+              " / " +
+              total.toLocaleString() +
+              " 项"}
+        </span>
+      </div>
+      {((counting && job.state === "running") ||
+        (total != null && total > 0)) && (
+        <progress
+          aria-label="缩略图处理进度"
+          max={total ?? 1}
+          value={counting ? undefined : processed}
+        />
       )}
-      {error && <p role="alert">{error}</p>}
-    </Modal>
+      <dl className="thumbnail-job-counts">
+        <div>
+          <dt>成功</dt>
+          <dd>{job.saved.toLocaleString()}</dd>
+        </div>
+        <div>
+          <dt>失败</dt>
+          <dd>{job.failed.toLocaleString()}</dd>
+        </div>
+        <div>
+          <dt>跳过</dt>
+          <dd>{skipped.toLocaleString()}</dd>
+        </div>
+      </dl>
+      {job.state === "quota" && <p>提高图片缓存上限或设为不限容量后继续。</p>}
+      {job.state === "full" && <p>释放缓存磁盘空间后继续。</p>}
+      {failed && <p role="alert">缩略图任务操作未完成</p>}
+    </section>
   );
 }

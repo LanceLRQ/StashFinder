@@ -18,13 +18,15 @@ const Context = createContext<{
   epoch: number;
   icon: (name: string, folder: boolean, size: number) => Promise<VisualImage>;
   invalidate: () => void;
-  openThumbnails: (view: ThumbnailScope | "progress") => void;
+  openThumbnails: (scope: ThumbnailScope) => void;
+  thumbnailTaskRevision: number;
 } | null>(null);
 export default function Visuals({ children }: { children: ReactNode }) {
   const [epoch, setEpoch] = useState(0);
-  const [thumbnailView, setThumbnailView] = useState<
-    ThumbnailScope | "progress" | null
-  >(null);
+  const [thumbnailView, setThumbnailView] = useState<ThumbnailScope | null>(
+    null,
+  );
+  const [thumbnailTaskRevision, setThumbnailTaskRevision] = useState(0);
   const icons = useRef(new Map<string, Promise<VisualImage>>());
   useEffect(() => {
     let live = true;
@@ -74,16 +76,20 @@ export default function Visuals({ children }: { children: ReactNode }) {
         setEpoch((e) => e + 1);
       },
       openThumbnails: setThumbnailView,
+      thumbnailTaskRevision,
     }),
-    [epoch],
+    [epoch, thumbnailTaskRevision],
   );
   return (
     <Context.Provider value={value}>
       {children}
       {thumbnailView && (
         <ThumbnailJobs
-          view={thumbnailView}
-          onProgress={() => setThumbnailView("progress")}
+          scope={thumbnailView}
+          onStarted={() => {
+            setThumbnailView(null);
+            setThumbnailTaskRevision((revision) => revision + 1);
+          }}
           onClose={() => setThumbnailView(null)}
         />
       )}
