@@ -1,41 +1,41 @@
 # StashFinder
 
-[简体中文](README.md) | English
+[简体中文](README.md) · English
 
-StashFinder is a personal disk catalog and file search tool for Windows 10/11. It aims to search files across multiple disks and use a local catalog to locate their partitions and paths even when those disks are disconnected.
+StashFinder catalogs drives on Windows. Say you remember saving a video but can't remember which external drive holds it. If you've already indexed that drive, you can look up the partition and path now and plug it in when you need to open the file.
 
-## Status
+## Getting started
 
-The project provides a desktop shell, partition registration, automatic NTFS indexing and USN updates, task management, offline directory browsing and file search. Multiple browse tabs retain their own location, selection and scroll position, while search uses a separate tab. The directory tree, metadata preview and breadcrumbs can be hidden. Search supports Boolean expressions, paths and multiple keywords, wildcards, PCRE2, type/size/date filters, metadata duplicate candidates across complete results, global sorting and a virtual list; lists read local index snapshots. Only registered partitions are updated. Journal gaps trigger rebuilding while preserving the old index, and records from reformatted filesystems remain historical. exFAT/FAT32 and NTFS without a journal support scanning and online change monitoring, with full validation on reconnection. An everyday installer is not available yet. The development view retains the M0 file bridge and synthetic benchmarks.
+You need Windows 10 or 11 (x64) and the WebView2 Runtime. You can build a portable ZIP and a Windows installer from source. Set up the tools in the [development guide](docs/development.en.md), then run these commands from the repository root.
 
-Online lists support copying, copy-only drag-out, cut/paste, F2 rename, recycling, permanent deletion and a Windows native menu entry. Offline records retain text copying and catalog browsing. See [file operations](docs/file-operations.en.md) for availability and receiver limitations.
+```powershell
+pnpm install --frozen-lockfile
+pnpm package
+```
 
-File lists use Windows system icons, and single-item previews request system thumbnails on demand. Images use a separate cache with a default 2 GB limit that can be changed or cleared in settings. Cached historical previews remain available offline. See [system icons and thumbnails](docs/system-visuals.en.md).
+- The **portable ZIP** is in `.local/packages/`. Extract it to a writable folder and run `StashFinder.exe`. Indexes, settings, and cached images live in the `data/` folder next to the executable. [Using the portable build](docs/portable.en.md)
+- The **Windows installer** is in `target/release/bundle/nsis/`. Run the installer. By default, the backend starts and stops with the app. Choose Windows service mode during installation to keep indexing after you close the window.
 
-A development [portable build](docs/portable.en.md) keeps the program, indexes, preferences, and caches together. Its backend is elevated separately without installing a Windows service. It uses the system WebView2 runtime; the complete release matrix is still under verification.
+When you first use the desktop-managed backend, choose to start it and approve the Windows administrator prompt. In the overview, open the partition registration dialog, select the partitions you want, and leave automatic initial indexing enabled. Once indexing finishes, double-click a partition to browse it, or enter a query in the overview and press Enter to search all registered partitions.
 
-See [search help](docs/search.en.md) for syntax and boundaries and the [query baseline](docs/query-performance.en.md) for measured resource use. See the [development guide](docs/development.en.md) for build and validation steps and [third-party notices](docs/third-party.en.md) for dependency sources.
+## Searching and browsing
 
-## Development goals
+Search includes both online and offline registered partitions by default. Browse folders and open search results in separate tabs, then return to where you left off. While a drive is offline, you can see the last saved names, paths, sizes, and timestamps, along with any cached thumbnails. Reconnect the drive to open or work with the files. You can include historical records from before a reformat in the search scope.
 
-- Register selected partitions and manage them by physical disk. Give partitions custom names without creating duplicate registrations when drive letters change.
-- Store file and directory names, paths, sizes, and timestamps, and search online and offline records together. File contents are not indexed.
-- Use fast enumeration and USN updates on NTFS; use scanning and change monitoring on exFAT/FAT32, with full verification when needed.
-- Search paths by default, with multiple keywords, file type and extension filters, and size, date, and regular expression conditions.
-- Find duplicate candidates by name, size, or combined attributes across the entire filtered result set. Matching metadata does not establish identical contents.
-- Show partition capacity, free space, connection state, and update times. Clearly label offline information as a historical snapshot.
-- Copy files from online results or drag them into Explorer and other applications with copy semantics, and back up and restore the catalog.
+- Search by name or path, or filter by type, size, and date. For example, `*.mkv size:>=1GiB` finds MKV files at least 1 GiB in size. Save filters as presets or bookmark the whole search. [Search syntax and examples](docs/search.en.md)
+- Find duplicate candidates by name and size across the full set of filtered results. Groups are based on metadata. Check the files separately to confirm whether their contents match.
+- Copy, cut and paste, rename, or delete files on connected drives. You can also drag files into File Explorer to copy them. [File operations and shortcuts](docs/file-operations.en.md)
 
-## Boundaries
+## Indexing and thumbnails
 
-File scanning is limited to partitions registered by the user. Indexing does not modify ordinary user files. If a USN journal is missing, creating one requires separate consent; it is never enlarged automatically.
+StashFinder scans registered partitions in read-only mode to collect file and folder metadata. Searches read the index directly. On NTFS, StashFinder uses the USN journal for incremental updates when it is available. You can choose a directory scan when the journal is missing, or give separate consent to create a journal. For exFAT and FAT32, StashFinder scans directories, monitors changes, and checks existing records when the drive reconnects.
 
-Offline results describe the last saved state and do not imply that files can currently be opened. Formatting a partition preserves its old catalog; the new filesystem is registered separately after confirmation.
+Choose file analysis for a partition or folder to generate thumbnails ahead of time. The Tasks view in the Tools menu shows progress and the total number of files. On an online NTFS partition with a continuous USN journal index, you can also identify video files with ambiguous extensions such as `.ts` or `.dat`. This requires `ffprobe.exe` with `fd:` support on your `PATH`. The Video filter can use the saved results offline. [File analysis and thumbnail cache](docs/system-visuals.en.md)
 
-## Technical direction
+## Development
 
-The selected stack is a Rust background service, a Tauri 2 + React + TypeScript UI, and local SQLite storage. Installing the service requires administrator permission; the everyday UI runs without elevation. The initial target is Windows 10/11 x64.
+The backend is written in Rust, the desktop UI uses Tauri 2, React, and TypeScript, and indexes are stored in local SQLite databases. Run `pnpm dev` to start the development app and `pnpm check` to run the automated checks. [Development and verification](docs/development.en.md) · [Query performance baseline](docs/query-performance.en.md)
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE) · [Third-party notices](docs/third-party.en.md)
