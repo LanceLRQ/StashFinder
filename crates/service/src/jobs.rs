@@ -127,7 +127,16 @@ impl Indexes {
                                     .unwrap_or_else(|e| e.into_inner())
                                     .get(partition)
                                     .is_some_and(|s| s.phase != "ready");
+                                let video_results = if job.options.video_extensions.is_empty() {
+                                    Default::default()
+                                } else {
+                                    stashfinder_store::file_operations::video_results(
+                                        &catalog.volume_path(&asset.registration.filesystem_id)?,
+                                        index.generation,
+                                    )?
+                                };
                                 sources.push(Source {
+                                    video_results,
                                     id: partition.clone(),
                                     name: asset.registration.name.clone(),
                                     filesystem: asset.registration.filesystem_id.clone(),

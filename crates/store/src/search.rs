@@ -89,6 +89,7 @@ impl CachedRow {
         folded_parent: &'a str,
     ) -> stashfinder_core::search::Record<'a> {
         stashfinder_core::search::Record {
+            analysed_video: None,
             name: &self.name,
             folded_name: &self.folded,
             parent,

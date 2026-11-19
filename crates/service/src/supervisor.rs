@@ -227,6 +227,71 @@ impl Runner {
         );
         stashfinder_store::browse::read(&catalog.volume_path(&row.filesystem_id)?, request)
     }
+    pub fn video_analysis(
+        &self,
+        reference: &stashfinder_core::file_operations::EntryRef,
+        result: Option<stashfinder_core::file_operations::VideoFinding>,
+        snapshot: &Snapshot,
+    ) -> Result<stashfinder_core::Response> {
+        use stashfinder_core::{Response, file_operations::VideoFinding};
+        let catalog = Catalog::read(&self.shared.root)?;
+        let row = catalog.get(&reference.partition_id)?;
+        ensure!(
+            row.filesystem_id == reference.filesystem_id && row.state == "ready",
+            "分析分区身份已变化"
+        );
+        let Some(asset) = snapshot.assets.iter().find(|a| {
+            a.registration.partition_id == reference.partition_id
+                && a.registration.filesystem_id == reference.filesystem_id
+                && a.connection == "online"
+                && a.error.is_none()
+                && snapshot.error.is_none()
+        }) else {
+            return Ok(Response::AnalysisOffline);
+        };
+        if result.is_none()
+            && let Some((id, _)) = self
+                .shared
+                .active
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+        {
+            let partition = self.shared.with_tasks(|t| Ok(t.get(id)?.partition_id))?;
+            if snapshot.assets.iter().any(|a| {
+                a.registration.partition_id == partition
+                    && a.registration.disk_id == asset.registration.disk_id
+            }) {
+                return Ok(Response::AnalysisBusy);
+            }
+        }
+        let path = catalog.volume_path(&reference.filesystem_id)?;
+        if let Some(result) = result {
+            stashfinder_store::file_operations::save_video(
+                &path,
+                reference,
+                match result {
+                    VideoFinding::Video => Some(true),
+                    VideoFinding::Other => Some(false),
+                    VideoFinding::Unknown => None,
+                },
+            )?;
+            Ok(Response::Accepted)
+        } else {
+            let (file, found) =
+                stashfinder_store::file_operations::current_video(&path, reference)?;
+            Ok(Response::VideoAnalysis {
+                file: Box::new(file),
+                finding: found.map(|v| {
+                    if v {
+                        VideoFinding::Video
+                    } else {
+                        VideoFinding::Other
+                    }
+                }),
+            })
+        }
+    }
     pub fn thumbnail_page(
         &self,
         request: &stashfinder_core::file_operations::ThumbnailPageRequest,
@@ -248,11 +313,24 @@ impl Runner {
         }) else {
             return Ok(None);
         };
+        if request.analyse {
+            ensure!(
+                asset
+                    .registration
+                    .observation
+                    .identity
+                    .filesystem
+                    .as_deref()
+                    == Some("NTFS"),
+                "视频识别需要 NTFS 分区"
+            );
+        }
         let candidates = stashfinder_store::file_operations::thumbnail_candidates(
             &catalog.volume_path(&row.filesystem_id)?,
             request,
         )?;
         Ok(Some(stashfinder_core::file_operations::ThumbnailPage {
+            analyse_indices: candidates.analyse_indices,
             generation: candidates.generation,
             files: candidates.files,
             folders: candidates.folders,
@@ -849,7 +927,7 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                     let journal = source.journal()?;
                     let Some(journal) = journal else {
                         if let Some(g) = status.active_generation {
-                            db.mark_stale(g, "USN 日志不可用，等待选择扫描方式或单独授权")?;
+                            db.mark_stale(g, "USN 日志不可用，等待选择扫描方式或单独授权", true)?;
                             shared
                                 .states
                                 .lock()
@@ -1068,6 +1146,7 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                                 db.mark_stale(
                                     generation,
                                     &index::JournalCursorInvalid.to_string(),
+                                    true,
                                 )?;
                                 Ok(IndexMode::Journal)
                             }
@@ -1121,7 +1200,7 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                     .is_err_and(|e| e.is::<index::JournalMissing>())
                     && let Some(g) = db.active_generation()?
                 {
-                    db.mark_stale(g, "USN 日志不可用，等待选择扫描方式或单独授权")?;
+                    db.mark_stale(g, "USN 日志不可用，等待选择扫描方式或单独授权", true)?;
                 }
                 if task.automatic
                     && task.kind == "rebuild"
@@ -1129,7 +1208,7 @@ fn run(shared: Arc<Shared>, factory: Box<SourceFactory>, scan_factory: Box<ScanF
                     && error.is::<index::JournalCursorInvalid>()
                     && let Some(g) = db.active_generation()?
                 {
-                    db.mark_stale(g, &error.to_string())?;
+                    db.mark_stale(g, &error.to_string(), true)?;
                 }
                 match result {
                     Ok(Some(index)) => {

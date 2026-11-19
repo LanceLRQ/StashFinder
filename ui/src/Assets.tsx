@@ -414,7 +414,7 @@ export default function Assets({
             })
           }
         >
-          预生成缩略图…
+          分析文件…
         </button>
       )}
     </>

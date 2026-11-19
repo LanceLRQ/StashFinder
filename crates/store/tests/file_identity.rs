@@ -68,7 +68,7 @@ fn migration_preserves_v3_rows_and_failure_leaves_v3_intact() {
         volume.write_batch(g, &[row], &[], &[], None).unwrap();
         drop(volume);
         let db = Connection::open(&path).unwrap();
-        db.execute_batch("DROP TABLE native_identity; PRAGMA user_version=3;")
+        db.execute_batch("ALTER TABLE objects DROP COLUMN video_current; DROP TABLE video_analysis; DROP TABLE video_analysis_history; DROP TABLE native_identity; PRAGMA user_version=3;")
             .unwrap();
         if fail {
             db.execute_batch("CREATE VIEW native_identity AS SELECT 1;")
@@ -93,7 +93,7 @@ fn migration_preserves_v3_rows_and_failure_leaves_v3_intact() {
             assert_eq!(
                 db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                     .unwrap(),
-                5
+                6
             );
         }
     }

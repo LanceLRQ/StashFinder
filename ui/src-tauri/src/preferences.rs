@@ -200,6 +200,7 @@ fn normalize(p: &mut Preferences) -> Result<()> {
             "筛选预设名称无效或重复"
         );
         preset.rule.extensions = normalize_extensions(&preset.rule.extensions)?;
+        preset.rule.video_extensions = normalize_extensions(&preset.rule.video_extensions)?;
         preset.rule.compile()?;
     }
     if p.browse_filter.as_deref().is_some_and(|id| {

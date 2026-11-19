@@ -29,6 +29,30 @@ pub fn inspect(path: &Path) -> Result<FileInfo> {
         .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0 | FILE_FLAG_OPEN_REPARSE_POINT.0)
         .open(path)?;
+    inspect_handle(&file)
+}
+
+pub fn open_for_analysis(target: &PreparedTarget) -> Result<std::fs::File> {
+    let path = verify_with(target, false, inspect)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ.0)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
+        .open(path)?;
+    let actual = inspect_handle(&file)?;
+    ensure!(
+        matches!(target.file.identity, Some(ExpectedIdentity::Ntfs {frn}) if frn == actual.identity.file)
+            && target.file.size.is_none_or(|v| actual.size == Some(v))
+            && target
+                .file
+                .modified
+                .is_none_or(|v| actual.modified == Some(v)),
+        "索引记录已变化，请更新索引后重试"
+    );
+    Ok(file)
+}
+
+fn inspect_handle(file: &std::fs::File) -> Result<FileInfo> {
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
     // SAFETY: The ordinary file handle and output buffer remain owned throughout the call.
     unsafe {

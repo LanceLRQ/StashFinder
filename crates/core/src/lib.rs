@@ -9,7 +9,7 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub const PROTOCOL_VERSION: u32 = 14;
+pub const PROTOCOL_VERSION: u32 = 15;
 pub const MAX_FRAME: usize = 16 * 1024;
 pub const SNAPSHOT_EXPIRED: &str = "设备快照已更新，请刷新";
 
@@ -118,6 +118,10 @@ pub enum Action {
     FileDestination(file_operations::EntryRef),
     FileInspect(file_operations::EntryRef),
     ThumbnailPage(file_operations::ThumbnailPageRequest),
+    VideoAnalysis {
+        reference: file_operations::EntryRef,
+        result: Option<file_operations::VideoFinding>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -146,6 +150,12 @@ pub enum Response {
     FileTarget(Box<file_operations::PreparedTarget>),
     VisualRecord(Box<file_operations::VisualRecord>),
     ThumbnailPage(Option<Box<file_operations::ThumbnailPage>>),
+    VideoAnalysis {
+        file: Box<file_operations::ResolvedEntry>,
+        finding: Option<file_operations::VideoFinding>,
+    },
+    AnalysisOffline,
+    AnalysisBusy,
     Error(String),
 }
 

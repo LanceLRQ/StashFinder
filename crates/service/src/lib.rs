@@ -237,6 +237,10 @@ pub async fn serve_runtime(
                             .runner
                             .directory(&request)?,
                     ))),
+                    Action::VideoAnalysis { reference, result } => indexes
+                        .context("索引服务未配置")?
+                        .runner
+                        .video_analysis(&reference, result, &assets.snapshot()),
                     Action::ThumbnailPage(request) => Ok(Response::ThumbnailPage(
                         indexes
                             .context("索引服务未配置")?

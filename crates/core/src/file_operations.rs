@@ -37,6 +37,19 @@ pub struct ResolvedEntry {
     pub identity: Option<ExpectedIdentity>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VideoFinding {
+    Video,
+    Other,
+    Unknown,
+}
+
+pub const VIDEO_EXTENSIONS: &[&str] = &[
+    "ts", "mts", "dat", "mod", "vdr", "mp4", "mkv", "avi", "mov", "wmv", "webm", "m2ts", "m4v",
+    "asf",
+];
+
 pub const MAX_SELECTED: usize = 10_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -129,6 +142,8 @@ impl ThumbnailTypes {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ThumbnailPageRequest {
+    #[serde(default)]
+    pub analyse: bool,
     pub partition_id: String,
     pub filesystem_id: String,
     pub generation: Option<String>,
@@ -139,6 +154,7 @@ pub struct ThumbnailPageRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ThumbnailPage {
+    pub analyse_indices: Vec<usize>,
     pub generation: String,
     pub files: Vec<ResolvedEntry>,
     pub folders: Vec<Vec<u8>>,

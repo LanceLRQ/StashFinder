@@ -1,5 +1,6 @@
 use crate::visual_cache::{Cache, Key, Progress, Stats};
 
+mod analysis;
 pub mod batch;
 pub mod ffmpeg;
 const THUMBNAIL_SIZE: u32 = 512;

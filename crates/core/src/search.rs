@@ -49,6 +49,8 @@ pub struct Range {
 #[serde(default, deny_unknown_fields)]
 pub struct FileFilter {
     pub extensions: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub video_extensions: Vec<String>,
     pub include_folders: bool,
     pub kind: Option<String>,
     pub size: Range,
@@ -63,6 +65,7 @@ impl FileFilter {
             false,
             &QueryOptions {
                 extensions: self.extensions.clone(),
+                video_extensions: self.video_extensions.clone(),
                 include_folders: self.include_folders,
                 kind: self.kind.clone(),
                 size: self.size.clone(),
@@ -87,6 +90,8 @@ pub struct QueryOptions {
     pub case_sensitive: bool,
     pub mode: MatchMode,
     pub extensions: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub video_extensions: Vec<String>,
     pub kind: Option<String>,
     pub size: Range,
     pub created: Range,
@@ -108,7 +113,7 @@ enum Expr {
 }
 #[derive(Debug)]
 enum Term {
-    TypeExtensions(Vec<String>, bool),
+    TypeExtensions(Vec<String>, Vec<String>, bool),
     Text(Text),
     Kind(bool),
     Extension(Vec<String>),
@@ -135,6 +140,7 @@ pub struct Query {
     names_only: bool,
 }
 pub struct Record<'a> {
+    pub analysed_video: Option<Option<bool>>,
     pub name: &'a str,
     pub folded_name: &'a str,
     pub parent: &'a str,
@@ -154,7 +160,7 @@ impl Query {
             "搜索文字过长或包含无效字符"
         );
         ensure!(
-            o.extensions.len() <= 256 && o.duplicate.len() <= 3,
+            o.extensions.len() + o.video_extensions.len() <= 256 && o.duplicate.len() <= 3,
             "搜索条件过多"
         );
         let mut p = Parser {
@@ -183,9 +189,10 @@ impl Query {
             e
         };
         let mut filters = Vec::new();
-        if !o.extensions.is_empty() {
+        if !o.extensions.is_empty() || !o.video_extensions.is_empty() {
             filters.push(Term::TypeExtensions(
                 normalize_extensions(&o.extensions)?,
+                normalize_extensions(&o.video_extensions)?,
                 o.include_folders,
             ));
         }
@@ -239,6 +246,7 @@ impl Query {
         let folded_parent = parent.to_lowercase();
         self.matches_record(
             &Record {
+                analysed_video: None,
                 name: &r.name,
                 folded_name: &name,
                 parent,
@@ -329,8 +337,23 @@ impl Term {
         Ok(match self {
             Self::Text(t) => return t.matches(r, m, n),
             Self::Kind(folder) => (r.kind == "folder") == *folder,
-            Self::TypeExtensions(_, true) if r.kind == "folder" => true,
-            Self::Extension(xs) | Self::TypeExtensions(xs, _) => {
+            Self::TypeExtensions(raw, video, folders) => {
+                if r.kind == "folder" {
+                    *folders
+                } else {
+                    let ext = r.folded_name.rsplit_once('.').map_or("", |(_, ext)| ext);
+                    raw.iter().any(|x| x == ext)
+                        || (!video.is_empty()
+                            && match r.analysed_video {
+                                Some(value) => value == Some(true),
+                                None => {
+                                    !matches!(ext, "ts" | "mts" | "dat" | "mod" | "vdr")
+                                        && video.iter().any(|x| x == ext)
+                                }
+                            })
+                }
+            }
+            Self::Extension(xs) => {
                 r.kind == "file"
                     && r.folded_name
                         .rsplit_once('.')

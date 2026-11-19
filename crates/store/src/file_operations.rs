@@ -24,7 +24,7 @@ fn resolve_in(
     let revision: i64 = reference.revision.parse()?;
     let version = tx.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?;
     ensure!(
-        matches!(version, 4..=5) || records_only && version == 3,
+        matches!(version, 4..=6) || records_only && version == 3,
         "目录库需要升级"
     );
     let manifest: String =
@@ -186,6 +186,7 @@ pub use stashfinder_core::file_operations::top_level;
 
 #[derive(Default)]
 pub struct ThumbnailCandidates {
+    pub analyse_indices: Vec<usize>,
     pub generation: String,
     pub files: Vec<ResolvedEntry>,
     pub folders: Vec<Vec<u8>>,
@@ -201,12 +202,28 @@ pub fn thumbnail_candidates(
     types.normalize()?;
     let extensions = types.selected_extensions();
     let mut db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    if request.analyse
+        && request.after.is_none()
+        && db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))? < 6
+    {
+        crate::volume::Volume::open(path)?;
+    }
     let tx = db.transaction()?;
     let (generation, revision): (i64, i64) = tx.query_row(
         "SELECT g.id,g.revision FROM index_state s JOIN generations g ON g.id=s.active_generation WHERE s.id=1",
         [],
         |r| Ok((r.get(0)?,r.get(1)?)),
     ).context("分区尚无可用索引")?;
+    if request.analyse && request.after.is_none() {
+        ensure!(
+            tx.query_row(
+                "SELECT coalesce(length(journal)=8,0) FROM generations WHERE id=?1",
+                [generation],
+                |r| r.get::<_, bool>(0)
+            )?,
+            "视频识别需要已建立 USN 索引的 NTFS 分区"
+        );
+    }
     let generation_text = generation.to_string();
     ensure!(
         request
@@ -229,11 +246,11 @@ pub fn thumbnail_candidates(
         );
     }
     let query = if request.folder.is_some() {
-        "SELECT p.rowid,p.id,p.name,o.kind,o.attributes FROM paths p INDEXED BY paths_parent JOIN objects o
+        "SELECT p.rowid,p.id,p.name,o.kind,o.attributes,p.object FROM paths p INDEXED BY paths_parent JOIN objects o
          ON o.generation=p.generation AND o.id=p.object
          WHERE p.generation=?1 AND p.parent=?2 AND p.rowid>?3 ORDER BY p.rowid LIMIT 65"
     } else {
-        "SELECT p.rowid,p.id,p.name,o.kind,o.attributes FROM paths p NOT INDEXED JOIN objects o
+        "SELECT p.rowid,p.id,p.name,o.kind,o.attributes,p.object FROM paths p NOT INDEXED JOIN objects o
          ON o.generation=p.generation AND o.id=p.object
          WHERE p.generation=?1 AND ?2 IS NULL AND p.rowid>?3 ORDER BY p.rowid LIMIT 65"
     };
@@ -248,6 +265,7 @@ pub fn thumbnail_candidates(
                     r.get::<_, Vec<u8>>(2)?,
                     r.get::<_, String>(3)?,
                     r.get::<_, u32>(4)?,
+                    r.get::<_, Vec<u8>>(5)?,
                 ))
             },
         )?
@@ -259,7 +277,7 @@ pub fn thumbnail_candidates(
     let mut last = None;
     // Leave space for the shared volume identity and the IPC envelope.
     let mut bytes = 0;
-    for (i, (rowid, id, name, kind, attributes)) in rows.into_iter().enumerate() {
+    for (i, (rowid, id, name, kind, attributes, object)) in rows.into_iter().enumerate() {
         if i == 64 {
             result.next = last;
             break;
@@ -272,14 +290,15 @@ pub fn thumbnail_candidates(
             }
             result.folders.push(id.clone());
         }
-        if kind == "file"
-            && attributes & 1024 == 0
-            && extensions.contains(
-                crate::search::extension(&crate::search::decode_name(&name)?)
-                    .to_lowercase()
-                    .as_str(),
-            )
-        {
+        if kind == "file" && attributes & 1024 == 0 {
+            let ext = crate::search::extension(&crate::search::decode_name(&name)?).to_lowercase();
+            let analyse = request.analyse && (VIDEO_EXTENSIONS.contains(&ext.as_str()) ||
+                tx.prepare_cached("SELECT EXISTS(SELECT 1 FROM video_analysis WHERE generation=?1 AND object=?2)")?
+                    .query_row(params![generation,object], |r| r.get::<_,bool>(0))?);
+            if !analyse && !extensions.contains(ext.as_str()) {
+                last = Some(rowid);
+                continue;
+            }
             reference.entry.clone_from(&id);
             match resolve_in(&tx, &reference, false, false) {
                 Ok(file) => {
@@ -291,6 +310,9 @@ pub fn thumbnail_candidates(
                         break;
                     } else {
                         bytes += n;
+                        if analyse {
+                            result.analyse_indices.push(result.files.len());
+                        }
                         result.files.push(file);
                     }
                 }
@@ -300,4 +322,83 @@ pub fn thumbnail_candidates(
         last = Some(rowid);
     }
     Ok(result)
+}
+
+pub fn video_results(
+    path: &Path,
+    generation: i64,
+) -> Result<std::collections::HashMap<Vec<u8>, Option<bool>>> {
+    let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    if db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))? < 6 {
+        return Ok(Default::default());
+    }
+    let mut stmt = db.prepare(
+        "SELECT a.object, CASE WHEN o.video_current=1 THEN a.video END
+        FROM video_analysis a LEFT JOIN objects o ON o.generation=a.generation AND o.id=a.object WHERE a.generation=?1",
+    )?;
+    Ok(stmt
+        .query_map([generation], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+fn analysis_file(tx: &rusqlite::Transaction<'_>, reference: &EntryRef) -> Result<ResolvedEntry> {
+    let file = resolve_in(tx, reference, false, false)?;
+    ensure!(
+        !file.folder
+            && matches!(file.identity, Some(ExpectedIdentity::Ntfs { .. }))
+            && tx.query_row(
+                "SELECT phase='ready' AND length(journal)=8 FROM generations WHERE id=?1",
+                [&reference.generation],
+                |r| r.get::<_, Option<bool>>(0)
+            )? == Some(true),
+        "视频识别需要已建立 USN 索引的 NTFS 分区"
+    );
+    Ok(file)
+}
+
+pub fn current_video(path: &Path, reference: &EntryRef) -> Result<(ResolvedEntry, Option<bool>)> {
+    let mut db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let tx = db.transaction()?;
+    let mut reference = reference.clone();
+    reference.revision = tx
+        .query_row(
+            "SELECT revision FROM generations WHERE id=?1",
+            [&reference.generation],
+            |r| r.get::<_, i64>(0),
+        )?
+        .to_string();
+    let file = analysis_file(&tx, &reference)?;
+    let video = tx
+        .query_row(
+            "SELECT a.video FROM video_analysis a JOIN objects o ON o.generation=a.generation AND o.id=a.object WHERE a.generation=?1 AND a.object=?2 AND o.video_current=1",
+            params![reference.generation, file.object],
+            |r| r.get::<_, Option<bool>>(0),
+        )
+        .optional()?
+        .flatten();
+    Ok((file, video))
+}
+
+pub fn save_video(path: &Path, reference: &EntryRef, video: Option<bool>) -> Result<()> {
+    let mut db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let object = analysis_file(&tx, reference)?.object;
+    tx.execute(
+        "INSERT INTO video_analysis_history(generation,object,revision,video)
+         SELECT a.generation,a.object,a.revision,a.video FROM video_analysis a
+         JOIN objects o ON o.generation=a.generation AND o.id=a.object
+         WHERE a.generation=?1 AND a.object=?2 AND a.video IS NOT NULL AND (o.video_current IS NULL OR a.video IS NOT ?3)",
+        params![reference.generation, object, video],
+    )?;
+    tx.execute(
+        "INSERT INTO video_analysis(generation,object,video,revision) VALUES(?1,?2,?3,?4)
+        ON CONFLICT(generation,object) DO UPDATE SET video=excluded.video,revision=excluded.revision",
+        params![reference.generation, object, video, reference.revision],
+    )?;
+    tx.execute(
+        "UPDATE objects SET video_current=1 WHERE generation=?1 AND id=?2",
+        params![reference.generation, object],
+    )?;
+    tx.commit()?;
+    Ok(())
 }

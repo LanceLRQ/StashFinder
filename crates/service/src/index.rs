@@ -4,8 +4,8 @@ use stashfinder_store::initial::{InitialPathConflict, InitialPathsIncomplete};
 use stashfinder_store::search::SearchIndex;
 use stashfinder_store::volume::{Changes, Cursor, Entry, Object, Volume};
 use stashfinder_windows::ntfs::{
-    DirectoryEntry, Journal, METADATA_ONLY_USN_REASONS, NativeObject, UsnPage, UsnRecord,
-    VolumeReader,
+    DirectoryEntry, Journal, METADATA_ONLY_USN_REASONS, NativeObject,
+    USN_REASONS_PRESERVING_CONTENT, UsnPage, UsnRecord, VolumeReader,
     mft::{ControlRecordTailMismatch, FastScanStats, FastScanUnavailable},
 };
 use std::{
@@ -887,6 +887,7 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
             let mut pending = Vec::new();
             let mut added = HashSet::new();
             let mut later_deletions = None;
+            let mut content_changes = Vec::new();
             for (id, (reason, inspect)) in ids {
                 if !inspect {
                     continue;
@@ -894,6 +895,9 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
                 ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
                 if id & 0x0000ffffffffffff < 16 && id != source.root_id() {
                     continue;
+                }
+                if reason & !USN_REASONS_PRESERVING_CONTENT != 0 {
+                    content_changes.push(id);
                 }
                 if retry_pending {
                     inspected.insert(id);
@@ -958,7 +962,7 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
             {
                 batches += 1;
                 changed = true;
-                db.apply_incremental(
+                db.apply_incremental_with_content_changes(
                     generation,
                     Changes {
                         objects: &objects,
@@ -971,6 +975,7 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
                         }),
                         replace_links: true,
                     },
+                    &content_changes,
                 )?;
             }
         }
@@ -1022,7 +1027,11 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
         Ok(changed)
     })();
     if let Err(error) = &result {
-        db.mark_stale(generation, &format!("{error:#}"))?;
+        db.mark_stale(
+            generation,
+            &format!("{error:#}"),
+            error.is::<JournalMissing>() || error.is::<JournalCursorInvalid>(),
+        )?;
     }
     result
 }

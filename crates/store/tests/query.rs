@@ -52,6 +52,7 @@ fn source(name: &str, files: &[(&str, Option<u64>, u8)]) -> Source {
     v.complete(g).unwrap();
     v.publish(g).unwrap();
     Source {
+        video_results: Default::default(),
         id: name.into(),
         name: name.into(),
         filesystem: name.into(),
@@ -243,4 +244,57 @@ fn combined_duplicate_result_matches_independent_reference_groups() {
         .map(|r| r.file.object[0])
         .collect::<BTreeSet<_>>();
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn offline_video_filter_uses_findings_and_explicit_extensions_still_match_names() {
+    let run = |options: QueryOptions| {
+        let mut disk = source(
+            "offline",
+            &[
+                ("source.ts", None, 1),
+                ("recording.dat", None, 2),
+                ("audio.mp4", None, 3),
+                ("movie.avi", None, 4),
+                ("pending.mp4", None, 5),
+                ("unconfirmed.mts", None, 6),
+            ],
+        );
+        disk.video_results.extend([
+            (vec![2], Some(true)),
+            (vec![3], Some(false)),
+            (vec![5], None),
+        ]);
+        let query = Query::compile("", false, &options).unwrap();
+        ResultSet::run(vec![disk], &query, &options, &false.into())
+            .unwrap()
+            .page(0, 20)
+            .unwrap()
+            .into_iter()
+            .map(|hit| hit.file.name)
+            .collect::<HashSet<_>>()
+    };
+    let video = QueryOptions {
+        video_extensions: vec!["ts".into(), "avi".into(), "mp4".into(), "mts".into()],
+        ..Default::default()
+    };
+    assert_eq!(
+        run(video.clone()),
+        HashSet::from(["recording.dat".into(), "movie.avi".into()])
+    );
+    assert_eq!(
+        run(QueryOptions {
+            extensions: vec!["ts".into()],
+            ..Default::default()
+        }),
+        HashSet::from(["source.ts".into()])
+    );
+    assert_eq!(
+        run(QueryOptions {
+            extensions: vec!["ts".into()],
+            ..video
+        })
+        .len(),
+        3
+    );
 }

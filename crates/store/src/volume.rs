@@ -80,7 +80,7 @@ impl Volume {
         ensure!(
             matches!(
                 db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
-                1..=5
+                1..=6
             ),
             "不支持的分区库版本"
         );
@@ -135,8 +135,8 @@ impl Volume {
 
     pub(crate) fn open_connection(db: Connection, check: bool) -> Result<Self> {
         let version = db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?;
-        ensure!(matches!(version, 1..=5), "不支持的分区库版本");
-        if check || version < 5 {
+        ensure!(matches!(version, 1..=6), "不支持的分区库版本");
+        if check || version < 6 {
             ensure!(
                 db.query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))? == "ok",
                 "分区库损坏"
@@ -144,7 +144,7 @@ impl Volume {
         }
         configure(&db)?;
         let mut volume = Self { db };
-        if version < 5 {
+        if version < 6 {
             volume.migrate()?;
         }
         Ok(volume)
@@ -183,13 +183,22 @@ impl Volume {
             tx.execute_batch("CREATE TABLE native_identity (generation INTEGER NOT NULL, object BLOB NOT NULL, identity_kind TEXT NOT NULL CHECK(identity_kind='file_id64'), native_id BLOB NOT NULL CHECK(length(native_id)=12), PRIMARY KEY(generation,object), FOREIGN KEY(generation,object) REFERENCES objects(generation,id) ON DELETE CASCADE); PRAGMA user_version=4;")?;
             tx.commit()?;
         }
-        if self
+        let version = self
             .db
-            .query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?
-            == 4
-        {
+            .query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?;
+        if version < 6 {
             let tx = self.db.transaction()?;
-            tx.execute_batch("CREATE INDEX IF NOT EXISTS paths_object ON paths(generation,object); PRAGMA user_version=5;")?;
+            if version == 4 {
+                tx.execute_batch(
+                    "CREATE INDEX IF NOT EXISTS paths_object ON paths(generation,object);",
+                )?;
+            }
+            tx.execute_batch("ALTER TABLE objects ADD COLUMN video_current INTEGER;
+                CREATE TABLE video_analysis(generation INTEGER NOT NULL, object BLOB NOT NULL,
+                    video INTEGER, revision INTEGER NOT NULL, PRIMARY KEY(generation,object)) WITHOUT ROWID;
+                CREATE TABLE video_analysis_history(generation INTEGER NOT NULL, object BLOB NOT NULL,
+                    revision INTEGER NOT NULL, video INTEGER NOT NULL);
+                PRAGMA user_version=6;")?;
             tx.commit()?;
         }
         Ok(())
@@ -276,12 +285,21 @@ impl Volume {
     }
 
     pub fn apply_changes(&mut self, generation: i64, changes: Changes<'_>) -> Result<()> {
-        self.commit_changes(generation, changes, false)
+        self.commit_changes(generation, changes, false, &[])
     }
 
     pub fn apply_incremental(&mut self, generation: i64, changes: Changes<'_>) -> Result<()> {
+        self.apply_incremental_with_content_changes(generation, changes, &[])
+    }
+
+    pub fn apply_incremental_with_content_changes(
+        &mut self,
+        generation: i64,
+        changes: Changes<'_>,
+        content_changes: &[u64],
+    ) -> Result<()> {
         ensure!(changes.cursor.is_some(), "增量事务缺少游标");
-        self.commit_changes(generation, changes, true)
+        self.commit_changes(generation, changes, true, content_changes)
     }
 
     fn commit_changes(
@@ -289,6 +307,7 @@ impl Volume {
         generation: i64,
         changes: Changes<'_>,
         incremental: bool,
+        content_changes: &[u64],
     ) -> Result<()> {
         let Changes {
             objects,
@@ -311,7 +330,10 @@ impl Volume {
             "UPDATE generations SET complete=0,revision=revision+1 WHERE id=?1",
             [generation],
         )?;
+        let mut invalidated: std::collections::HashSet<_> =
+            content_changes.iter().map(|id| id.to_le_bytes()).collect();
         for id in removed {
+            invalidated.remove(id.as_slice());
             // Keep the small recursive frontier outermost so each lookup uses paths_parent.
             tx.execute("WITH RECURSIVE doomed(id) AS (SELECT id FROM paths WHERE generation=?1 AND object=?2 UNION SELECT p.id FROM doomed d CROSS JOIN paths p ON p.parent=d.id WHERE p.generation=?1) DELETE FROM paths WHERE generation=?1 AND id IN (SELECT id FROM doomed)",params![generation,id])?;
             tx.execute(
@@ -328,16 +350,49 @@ impl Volume {
         // when a batch contains several hard links to the same object.
         let mut objects = objects.iter().collect::<Vec<_>>();
         objects.sort_by(|a, b| a.id.cmp(&b.id));
+        // Journal replay commonly touches only NTFS IDs with complete metadata.
+        let (mut may_have_native_ids, may_have_pending) = if content_changes.is_empty() {
+            (true, true)
+        } else {
+            tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM native_identity WHERE generation=?1),
+                EXISTS(SELECT 1 FROM pending_metadata WHERE generation=?1)",
+                [generation],
+                |r| Ok((r.get::<_, bool>(0)?, r.get::<_, bool>(1)?)),
+            )?
+        };
+        let mut write_object = tx.prepare_cached(
+            "INSERT INTO objects(generation,id,source,kind,size,created,modified,attributes)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+                 ON CONFLICT(generation,id) DO UPDATE SET source=excluded.source,kind=excluded.kind,
+                    size=excluded.size,created=excluded.created,modified=excluded.modified,
+                    attributes=excluded.attributes,
+                    video_current=CASE WHEN ?9 THEN NULL ELSE objects.video_current END",
+        )?;
         for object in objects {
             if replace_links {
                 tx.prepare_cached("DELETE FROM paths WHERE generation=?1 AND object=?2")?
                     .execute(params![generation, object.id])?;
             }
             ensure!(!object.id.is_empty(), "文件 ID 为空");
-            tx.prepare_cached("INSERT INTO objects VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(generation,id) DO UPDATE SET source=excluded.source,kind=excluded.kind,size=excluded.size,created=excluded.created,modified=excluded.modified,attributes=excluded.attributes")?.execute(params![generation, object.id, object.source, object.kind, object.size, object.created.as_ref().map(|v|v.as_slice()), object.modified.as_ref().map(|v|v.as_slice()), object.attributes])?;
-            tx.prepare_cached("DELETE FROM native_identity WHERE generation=?1 AND object=?2")?
-                .execute(params![generation, object.id])?;
+            let changed = invalidated.remove(object.id.as_slice());
+            write_object.execute(params![
+                generation,
+                object.id,
+                object.source,
+                object.kind,
+                object.size,
+                object.created.as_ref().map(|v| v.as_slice()),
+                object.modified.as_ref().map(|v| v.as_slice()),
+                object.attributes,
+                changed,
+            ])?;
+            if may_have_native_ids {
+                tx.prepare_cached("DELETE FROM native_identity WHERE generation=?1 AND object=?2")?
+                    .execute(params![generation, object.id])?;
+            }
             if let Some(identity) = &object.identity {
+                may_have_native_ids = true;
                 let bytes = [
                     identity.volume.to_le_bytes().as_slice(),
                     identity.file.to_le_bytes().as_slice(),
@@ -347,15 +402,25 @@ impl Volume {
                     .execute(params![generation, object.id, bytes])?;
             }
             // Replaced metadata and its pending state share the cursor transaction.
-            tx.prepare_cached("DELETE FROM pending_metadata WHERE generation=?1 AND object=?2")?
+            if may_have_pending {
+                tx.prepare_cached(
+                    "DELETE FROM pending_metadata WHERE generation=?1 AND object=?2",
+                )?
                 .execute(params![generation, object.id])?;
+            }
         }
+        drop(write_object);
         let mut entries = entries.iter().collect::<Vec<_>>();
         entries.sort_by(|a, b| a.id.cmp(&b.id));
         for entry in entries {
             let name: Vec<u8> = entry.name.iter().flat_map(|c| c.to_le_bytes()).collect();
             ensure!(!name.is_empty(), "路径名称为空");
             tx.prepare_cached("INSERT INTO paths VALUES(?1,?2,?3,?4,?5) ON CONFLICT(generation,id) DO UPDATE SET object=excluded.object,parent=excluded.parent,name=excluded.name")?.execute(params![generation, entry.id, entry.object, entry.parent, name])?;
+        }
+        // A USN event can be committed before its metadata becomes readable.
+        for id in invalidated {
+            tx.prepare_cached("UPDATE objects SET video_current=NULL WHERE generation=?1 AND id=?2 AND video_current=1")?
+                .execute(params![generation,id])?;
         }
         let mut pending = pending.iter().collect::<Vec<_>>();
         pending.sort();
@@ -391,11 +456,20 @@ impl Volume {
         Ok(())
     }
 
-    pub fn mark_stale(&self, generation: i64, message: &str) -> Result<()> {
-        self.db.execute(
+    pub fn mark_stale(&self, generation: i64, message: &str, journal_gap: bool) -> Result<()> {
+        let tx = self.db.unchecked_transaction()?;
+        if journal_gap {
+            tx.execute(
+                "UPDATE objects SET video_current=NULL WHERE generation=?1 AND video_current=1
+                AND id IN (SELECT object FROM video_analysis WHERE generation=?1)",
+                [generation],
+            )?;
+        }
+        tx.execute(
             "UPDATE generations SET phase='needs_validation',error=?2 WHERE id=?1",
             params![generation, message],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -475,6 +549,16 @@ impl Volume {
                 |r| r.get::<_, bool>(0),
             )?;
         ensure!(complete && !pending, "索引尚未完成或仍有元数据待补齐");
+        if !incremental {
+            tx.execute(
+                "INSERT OR IGNORE INTO video_analysis(generation,object,video,revision)
+                SELECT ?1,a.object,a.video,a.revision FROM video_analysis a
+                JOIN index_state s ON s.active_generation=a.generation
+                WHERE a.generation<>?1 AND EXISTS(SELECT 1 FROM objects o
+                    WHERE o.generation=?1 AND o.id=a.object AND o.source='ntfs64')",
+                [generation],
+            )?;
+        }
         tx.execute(
             "UPDATE index_state SET active_generation=?1 WHERE id=1",
             [generation],

@@ -555,9 +555,24 @@ fn expired_cursor_rebuilds_automatically_only_when_eligible_and_keeps_old_search
             std::thread::sleep(Duration::from_millis(2200));
             assert_eq!(builds.load(Ordering::SeqCst), 0);
         }
+        let reference = stashfinder_core::file_operations::EntryRef {
+            partition_id: partition.clone(),
+            filesystem_id: snapshot.assets[0].registration.filesystem_id.clone(),
+            generation: generation.to_string(),
+            revision: "0".into(),
+            entry: vec![],
+        };
+        assert!(matches!(
+            worker.video_analysis(&reference, None, &snapshot).unwrap(),
+            stashfinder_core::Response::AnalysisOffline
+        ));
         snapshot.assets[0].connection = "online".into();
-        worker.observe(snapshot);
+        worker.observe(snapshot.clone());
         wait_until(|| builds.load(Ordering::SeqCst) == 1);
+        assert!(matches!(
+            worker.video_analysis(&reference, None, &snapshot).unwrap(),
+            stashfinder_core::Response::AnalysisBusy
+        ));
         assert_eq!(search(), (generation, 1));
         assert!(
             worker

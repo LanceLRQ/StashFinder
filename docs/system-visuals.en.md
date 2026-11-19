@@ -8,9 +8,17 @@ The preview pane and thumbnail list check the local image cache, then the Window
 
 Offline previews read only the local image cache. Cached previews are labeled as historical; otherwise the pane shows a type icon and the offline state. Metadata still comes from the partition index, so a thumbnail failure does not interrupt browsing or searching. Multiple selections show metadata summaries without generating a batch of previews.
 
+## Manual file analysis
+
+On an online NTFS partition or folder, choose **Analyze files…** and select **Identify video files**, either alone or together with thumbnail generation. Identification requires a current USN journal index and an `ffprobe.exe` with `fd:` support on the desktop process's PATH. Each candidate reads up to the first 256 KiB. Analysis waits before reading another file while an index job is active on the same disk.
+
+Reapply the Video filter in search or directory browsing to see the results, including offline. Files with `.ts`, `.mts`, `.dat`, `.mod` or `.vdr` appear only after identification confirms a video track. Other unanalysed files follow the category's extension list. Audio cover art is excluded. Inconclusive results, including files with track metadata at the end, stay unconfirmed. An explicit extension search still finds the original files.
+
+Within a partition, renames, directory moves and hard links reuse the result when the journal remains continuous. Replayed content edits and journal gaps make prior findings pending until the next manual analysis.
+
 ## Pre-generate thumbnails
 
-Choose **Pre-generate thumbnails** in the overview details for an online partition or in a folder's context menu. Folder jobs include subfolders and filter entries from the existing index. By default the job skips existing thumbnails. Choose **Rebuild all** to have Windows extract new images. Each old image is replaced after its new image is saved successfully.
+Choose **Analyze files…** and select **Generate thumbnails** in the overview details for an online partition or in a folder's context menu. Folder jobs include subfolders and filter entries from the existing index. By default the job skips existing thumbnails. Choose **Rebuild all** to have Windows extract new images. Each old image is replaced after its new image is saved successfully.
 
 Open **Tools → Tasks** to view, pause, resume, or cancel the thumbnail job. The job first counts indexed files matching the configured types, then shows the processed count and the fixed total. It reports successful, failed, and skipped files. Skipped files include those without thumbnail support. Error details go to `thumbnail-jobs.log` in the app's local data directory, or `data/local/thumbnail-jobs.log` in the portable edition. A disconnected partition waits for reconnection. The job keeps its progress when it reaches the cache limit or runs low on disk space. After adjusting the limit or freeing space, choose **Resume** to retry the current file. Exiting ends the job and retains saved images, which can be reused by choosing **Skip existing** next time.
 

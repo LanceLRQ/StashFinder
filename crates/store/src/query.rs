@@ -39,6 +39,7 @@ fn synthetic_range(start: usize, count: usize) -> Source {
         })
         .collect();
     Source {
+        video_results: Default::default(),
         id: format!("synthetic-{start}"),
         name: "Synthetic".into(),
         filesystem: format!("synthetic-{start}"),
@@ -73,6 +74,7 @@ use std::{
 
 #[derive(Clone)]
 pub struct Source {
+    pub video_results: std::collections::HashMap<Vec<u8>, Option<bool>>,
     pub id: String,
     pub name: String,
     pub filesystem: String,
@@ -151,13 +153,14 @@ impl ResultSet {
                     }
                 }
                 let row = &entry.row;
-                if query.matches_record(
-                    &row.record(
-                        &source.index.directories[entry.parent],
-                        &source.index.folded_directories[entry.parent],
-                    ),
-                    &source.mounts,
-                )? {
+                let mut record = row.record(
+                    &source.index.directories[entry.parent],
+                    &source.index.folded_directories[entry.parent],
+                );
+                if !options.video_extensions.is_empty() {
+                    record.analysed_video = source.video_results.get(row.object.as_ref()).copied();
+                }
+                if query.matches_record(&record, &source.mounts)? {
                     let unknown = query.duplicate().iter().any(|f| match f {
                         DuplicateField::Name => false,
                         DuplicateField::Size => {

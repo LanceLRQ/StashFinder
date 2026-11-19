@@ -93,6 +93,7 @@ fn thumbnail_pages_cover_the_selected_scope_and_keep_the_generation() {
         .unwrap();
     }
     let mut request = ThumbnailPageRequest {
+        analyse: false,
         partition_id: "p".into(),
         filesystem_id: "fs".into(),
         generation: None,
@@ -336,4 +337,165 @@ fn missing_scan_identity_stays_explicit_and_malformed_names_are_rejected() {
     )
     .unwrap();
     assert!(file_operations::resolve(&path, &reference, false).is_err());
+}
+
+#[test]
+fn video_analysis_survives_reopen_but_content_changes_invalidate_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("v.sqlite");
+    let (mut db, reference) = fixture(&path);
+    let g = reference.generation.parse().unwrap();
+    let id = 8u64.to_le_bytes().to_vec();
+    let cursor = Cursor {
+        journal: 1u64.to_le_bytes().to_vec(),
+        next: 1,
+    };
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute(
+            "UPDATE generations SET journal=?1,next_usn=0 WHERE id=?2",
+            rusqlite::params![cursor.journal, g],
+        )
+        .unwrap();
+    let video_matches = |db: &Volume| {
+        use stashfinder_core::search::{Query, QueryOptions};
+        use stashfinder_store::search::{
+            SearchIndex,
+            query::{ResultSet, Source},
+        };
+        let options = QueryOptions {
+            video_extensions: vec!["mp4".into()],
+            ..Default::default()
+        };
+        let source = Source {
+            video_results: file_operations::video_results(&path, g).unwrap(),
+            id: "p".into(),
+            name: "disk".into(),
+            filesystem: "fs".into(),
+            connection: "offline".into(),
+            mounts: vec![],
+            index: std::sync::Arc::new(SearchIndex::load(db).unwrap().unwrap()),
+            needs_validation: false,
+        };
+        let query = Query::compile("", false, &options).unwrap();
+        ResultSet::run(vec![source], &query, &options, &false.into())
+            .unwrap()
+            .len()
+    };
+    assert_eq!(video_matches(&db), 0);
+    file_operations::save_video(&path, &reference, Some(true)).unwrap();
+    assert_eq!(video_matches(&db), 2);
+    let rename = Entry {
+        id: vec![2],
+        object: 7u64.to_le_bytes().to_vec(),
+        parent: Some(vec![1]),
+        name: "renamed".encode_utf16().collect(),
+    };
+    db.apply_incremental_with_content_changes(
+        g,
+        Changes {
+            objects: &[],
+            entries: &[rename],
+            removed: &[],
+            pending: &[],
+            cursor: Some(&cursor),
+            replace_links: false,
+        },
+        &[],
+    )
+    .unwrap();
+    db.finish_incremental(g).unwrap();
+    let (renamed, cached) = file_operations::current_video(&path, &reference).unwrap();
+    assert_eq!(cached, Some(true));
+    assert!(String::from_utf16_lossy(&renamed.relative).starts_with("renamed"));
+    let manual = ThumbnailPageRequest {
+        analyse: true,
+        partition_id: "p".into(),
+        filesystem_id: "fs".into(),
+        generation: None,
+        folder: None,
+        after: None,
+        types: ThumbnailTypes {
+            images: false,
+            videos: false,
+            documents: false,
+            extensions: vec![],
+        },
+    };
+    let page = file_operations::thumbnail_candidates(&path, &manual).unwrap();
+    assert_eq!(page.analyse_indices, [0, 1]);
+    let request = stashfinder_core::browse::DirectoryRequest {
+        partition_id: "p".into(),
+        filesystem_id: "fs".into(),
+        generation: None,
+        revision: None,
+        parent: Some(vec![2]),
+        offset: 0,
+        folders_only: false,
+        sort: Default::default(),
+        filter: Some(Box::new(stashfinder_core::search::FileFilter {
+            video_extensions: vec!["mp4".into()],
+            ..Default::default()
+        })),
+    };
+    assert_eq!(
+        stashfinder_store::browse::read(&path, &request)
+            .unwrap()
+            .total,
+        1
+    );
+    assert_eq!(
+        file_operations::video_results(&path, g).unwrap().get(&id),
+        Some(&Some(true))
+    );
+    db.apply_incremental_with_content_changes(
+        g,
+        Changes {
+            objects: &[Object {
+                id: id.clone(),
+                kind: "file".into(),
+                source: "ntfs64".into(),
+                identity: None,
+                size: None,
+                created: None,
+                modified: None,
+                attributes: 0,
+            }],
+            entries: &[],
+            removed: &[],
+            pending: &[],
+            cursor: Some(&cursor),
+            replace_links: false,
+        },
+        &[8],
+    )
+    .unwrap();
+    assert_eq!(
+        file_operations::video_results(&path, g).unwrap().get(&id),
+        Some(&None)
+    );
+    assert!(file_operations::save_video(&path, &reference, Some(false)).is_err());
+    db.finish_incremental(g).unwrap();
+    assert_eq!(video_matches(&db), 0);
+    assert_eq!(
+        stashfinder_store::browse::read(&path, &request)
+            .unwrap()
+            .total,
+        0
+    );
+    let (current, previous) = file_operations::current_video(&path, &reference).unwrap();
+    assert!(previous.is_none());
+    file_operations::save_video(&path, &current.reference, Some(false)).unwrap();
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    assert!(
+        sql.query_row("SELECT video FROM video_analysis_history", [], |r| r
+            .get::<_, bool>(0))
+            .unwrap()
+    );
+    db.mark_stale(g, "USN gap", true).unwrap();
+    assert!(file_operations::current_video(&path, &current.reference).is_err());
+    assert_eq!(
+        file_operations::video_results(&path, g).unwrap().get(&id),
+        Some(&None)
+    );
 }

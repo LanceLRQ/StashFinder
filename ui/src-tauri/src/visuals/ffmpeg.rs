@@ -26,9 +26,12 @@ const MAX_PNG_BYTES: u64 = 3 * 1024 * 1024;
 const EXTRACTION_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn executable() -> Option<PathBuf> {
+    media_executable("ffmpeg.exe")
+}
+pub(super) fn media_executable(name: &str) -> Option<PathBuf> {
     env::split_paths(&env::var_os("PATH")?)
         .filter(|directory| directory.is_absolute())
-        .map(|directory| directory.join("ffmpeg.exe"))
+        .map(|directory| directory.join(name))
         .find(|candidate| candidate.is_file())
 }
 
@@ -199,7 +202,11 @@ fn extract(executable: &Path, input: File, cancel: &AtomicBool) -> Result<Vec<u8
     Ok(bytes)
 }
 
-fn wait_child(child: &mut Child, timeout: Duration, cancel: &AtomicBool) -> Result<ExitStatus> {
+pub(super) fn wait_child(
+    child: &mut Child,
+    timeout: Duration,
+    cancel: &AtomicBool,
+) -> Result<ExitStatus> {
     let started = Instant::now();
     let result = (|| {
         loop {
@@ -208,7 +215,7 @@ fn wait_child(child: &mut Child, timeout: Duration, cancel: &AtomicBool) -> Resu
                 return Ok(status);
             }
             if started.elapsed() >= timeout {
-                bail!("FFmpeg 缩略图补建超时");
+                bail!("媒体处理超时");
             }
             thread::sleep(Duration::from_millis(25));
         }

@@ -168,11 +168,29 @@ export default function Search({
   }));
   const [filter, setFilter] = useState<FilterSelection>(() => {
     if (!bookmark) return initialFilter;
-    const { extensions, include_folders, kind, size, created, modified } =
-      bookmark.options;
+    const {
+      extensions,
+      video_extensions,
+      include_folders,
+      kind,
+      size,
+      created,
+      modified,
+    } = bookmark.options;
     return {
-      rule: { extensions, include_folders, kind, size, created, modified },
-      types: include_folders || kind === "folder" ? ["@folder"] : [],
+      rule: {
+        extensions,
+        video_extensions,
+        include_folders,
+        kind,
+        size,
+        created,
+        modified,
+      },
+      types: [
+        ...(video_extensions?.length ? ["category:视频"] : []),
+        ...(include_folders || kind === "folder" ? ["@folder"] : []),
+      ],
       custom: extensions.join(","),
     };
   });
@@ -332,6 +350,7 @@ export default function Search({
     options: {
       ...options,
       ...filter.rule,
+      video_extensions: filter.rule.video_extensions,
       scope: savedScope?.entry
         ? {
             partition_id: savedScope.partition_id,

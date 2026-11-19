@@ -57,7 +57,10 @@ export default function SearchFilters({
     const extensions = [
       ...new Set([
         ...categories
-          .filter((c) => nextTypes.includes(`category:${c.name}`))
+          .filter(
+            (c) =>
+              c.name !== "视频" && nextTypes.includes(`category:${c.name}`),
+          )
           .flatMap((c) => c.extensions),
         ...nextCustom
           .split(/[,;]/)
@@ -65,6 +68,10 @@ export default function SearchFilters({
           .filter(Boolean),
       ]),
     ];
+    const video_extensions = nextTypes.includes("category:视频")
+      ? categories.find((c) => c.name === "视频")?.extensions
+      : undefined;
+    const hasTypes = extensions.length > 0 || !!video_extensions?.length;
     const folder = nextTypes.includes("@folder");
     setFilter({
       ...filter,
@@ -73,9 +80,10 @@ export default function SearchFilters({
       rule: {
         ...rule,
         extensions,
-        include_folders: folder && extensions.length > 0,
+        video_extensions,
+        include_folders: folder && hasTypes,
         kind: folder
-          ? extensions.length
+          ? hasTypes
             ? null
             : "folder"
           : rule.kind === "file"

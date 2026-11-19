@@ -1,4 +1,6 @@
-use super::{Kind, Paths, Shared, THUMBNAIL_SIZE, Visuals, background, file_key};
+use super::{
+    Kind, Paths, Shared, THUMBNAIL_SIZE, Visuals, analysis::Analysis, background, file_key,
+};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use stashfinder_core::{
@@ -20,6 +22,7 @@ pub enum BatchState {
     Running,
     Paused,
     Offline,
+    WaitingForIndex,
     Quota,
     Full,
     Cancelling,
@@ -43,7 +46,13 @@ pub struct BatchStatus {
     saved: usize,
     skipped: usize,
     unsupported: usize,
+    analysing: bool,
+    videos: usize,
+    other: usize,
+    unknown: usize,
     failed: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 #[derive(Default)]
@@ -77,14 +86,27 @@ pub async fn thumbnail_start(
 ) -> Result<(), String> {
     let paths = Paths::from_app(&app).map_err(|error| error.to_string())?;
     let shared = state.0.clone();
-    let types = {
+    let probe = options
+        .analyse
+        .then(|| {
+            super::ffmpeg::media_executable("ffprobe.exe")
+                .ok_or("未找到 ffprobe.exe，请将 FFmpeg 的 bin 目录加入 PATH 后重启应用")
+        })
+        .transpose()?;
+    let mut types = {
         let shared = shared.clone();
         let cache_paths = paths.clone();
         background(move || shared.cached(&cache_paths, |cache| Ok(cache.thumbnail_types().clone())))
             .await
             .inspect_err(|error| log_error(&paths, &options.label, None, error))?
     };
-    if types.selected_extensions().is_empty() {
+    if !options.thumbnails {
+        types.images = false;
+        types.videos = false;
+        types.documents = false;
+        types.extensions.clear();
+    }
+    if probe.is_none() && types.selected_extensions().is_empty() {
         let error = "请先在「设置 → 图片缓存」选择预生成的文件类型";
         log_error(&paths, &options.label, None, error);
         return Err(error.into());
@@ -105,7 +127,12 @@ pub async fn thumbnail_start(
         saved: 0,
         skipped: 0,
         unsupported: 0,
+        analysing: options.analyse,
+        videos: 0,
+        other: 0,
+        unknown: 0,
         failed: 0,
+        error: None,
     });
     let epoch = shared.epoch.load(Ordering::Acquire);
     drop(slot);
@@ -114,6 +141,7 @@ pub async fn thumbnail_start(
             &shared,
             &paths,
             ThumbnailPageRequest {
+                analyse: options.analyse,
                 partition_id: options.partition_id,
                 filesystem_id: options.filesystem_id,
                 generation: options.generation,
@@ -122,6 +150,7 @@ pub async fn thumbnail_start(
                 types,
             },
             options.rebuild,
+            probe,
             epoch,
             async |request| match crate::runtime::request(Action::ThumbnailPage(request)).await? {
                 Response::ThumbnailPage(page) => Ok(page.map(|page| *page)),
@@ -136,6 +165,7 @@ pub async fn thumbnail_start(
         let saved = {
             let mut slot = shared.batch.lock();
             let job = slot.as_mut().unwrap();
+            job.error = result.as_ref().err().map(|error| format!("{error:#}"));
             job.state = if job.state == BatchState::Cancelling {
                 BatchState::Cancelled
             } else if result.is_err() {
@@ -161,6 +191,13 @@ pub struct BatchOptions {
     generation: Option<String>,
     label: String,
     rebuild: bool,
+    #[serde(default)]
+    analyse: bool,
+    #[serde(default = "default_thumbnails")]
+    thumbnails: bool,
+}
+fn default_thumbnails() -> bool {
+    true
 }
 
 #[tauri::command]
@@ -172,7 +209,10 @@ pub fn thumbnail_status(state: State<'_, Visuals>) -> Option<BatchStatus> {
 pub fn thumbnail_control(state: State<'_, Visuals>, action: BatchAction) {
     if let Some(job) = state.0.batch.lock().as_mut() {
         job.state = match (action, job.state) {
-            (BatchAction::Pause, BatchState::Running | BatchState::Offline) => BatchState::Paused,
+            (
+                BatchAction::Pause,
+                BatchState::Running | BatchState::Offline | BatchState::WaitingForIndex,
+            ) => BatchState::Paused,
             (BatchAction::Resume, BatchState::Paused | BatchState::Quota | BatchState::Full) => {
                 BatchState::Running
             }
@@ -186,7 +226,7 @@ async fn wait(batch: &Batch) -> bool {
     loop {
         let state = batch.lock().as_ref().unwrap().state;
         match state {
-            BatchState::Running | BatchState::Offline => return true,
+            BatchState::Running | BatchState::Offline | BatchState::WaitingForIndex => return true,
             BatchState::Paused | BatchState::Quota | BatchState::Full => {
                 tokio::time::sleep(Duration::from_millis(200)).await
             }
@@ -200,6 +240,7 @@ async fn run(
     paths: &Paths,
     mut request: ThumbnailPageRequest,
     rebuild: bool,
+    probe: Option<std::path::PathBuf>,
     epoch: u64,
     mut fetch: impl AsyncFnMut(ThumbnailPageRequest) -> Result<Option<ThumbnailPage>>,
 ) -> Result<()> {
@@ -262,8 +303,9 @@ async fn run(
             &format!("{unavailable} 个索引候选无法解析"),
         );
     }
+    let thumbnail_extensions = request.types.selected_extensions();
     for page in candidates {
-        for file in page.files {
+        for (index, file) in page.files.into_iter().enumerate() {
             let record = VisualRecord {
                 online: true,
                 target: PreparedTarget {
@@ -274,9 +316,90 @@ async fn run(
                     partition_name: page.partition_name.clone(),
                 },
             };
+            let name = String::from_utf16_lossy(&record.target.file.relative).to_lowercase();
+            let ext = name.rsplit_once('.').map_or("", |(_, x)| x);
+            let mut finding = None;
+            let mut analysis_failed = false;
             loop {
                 if !wait(&shared.batch).await {
                     return Ok(());
+                }
+                if let Some(exe) = &probe
+                    && !analysis_failed
+                    && finding.is_none()
+                    && page.analyse_indices.binary_search(&index).is_ok()
+                {
+                    match super::analysis::analyse(&record, exe, rebuild).await {
+                        Ok(reason @ (Analysis::Busy | Analysis::Offline)) => {
+                            let state = if matches!(reason, Analysis::Offline) {
+                                BatchState::Offline
+                            } else {
+                                BatchState::WaitingForIndex
+                            };
+                            {
+                                let mut lock = shared.batch.lock();
+                                let job = lock.as_mut().unwrap();
+                                if matches!(
+                                    job.state,
+                                    BatchState::Running
+                                        | BatchState::WaitingForIndex
+                                        | BatchState::Offline
+                                ) {
+                                    job.state = state;
+                                }
+                            }
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            continue;
+                        }
+                        Ok(Analysis::Found(value)) => {
+                            let mut slot = shared.batch.lock();
+                            let job = slot.as_mut().unwrap();
+                            if matches!(
+                                job.state,
+                                BatchState::WaitingForIndex | BatchState::Offline
+                            ) {
+                                job.state = BatchState::Running;
+                            }
+                            match value {
+                                stashfinder_core::file_operations::VideoFinding::Video => {
+                                    job.videos += 1
+                                }
+                                stashfinder_core::file_operations::VideoFinding::Other => {
+                                    job.other += 1
+                                }
+                                stashfinder_core::file_operations::VideoFinding::Unknown => {
+                                    job.unknown += 1
+                                }
+                            }
+                            finding = Some(value);
+                        }
+                        Err(error) => {
+                            log_error(
+                                paths,
+                                &label,
+                                Some(&record.target.file.relative),
+                                &format!("{error:#}"),
+                            );
+                            analysis_failed = true;
+                        }
+                    }
+                }
+                if probe.is_some()
+                    && !(thumbnail_extensions.contains(ext)
+                        || request.types.videos
+                            && finding
+                                == Some(stashfinder_core::file_operations::VideoFinding::Video))
+                {
+                    let mut slot = shared.batch.lock();
+                    let job = slot.as_mut().unwrap();
+                    if analysis_failed {
+                        job.failed += 1;
+                    } else if finding.is_some() {
+                        job.saved += 1;
+                    } else {
+                        job.skipped += 1;
+                    }
+                    break;
                 }
                 let permit = shared.slots.clone().acquire_owned().await?;
                 let cache_paths = paths.clone();
@@ -295,6 +418,11 @@ async fn run(
                     let mut slot = shared.batch.lock();
                     let job = slot.as_mut().unwrap();
                     match outcome {
+                        Ok(Outcome::Saved | Outcome::Skipped | Outcome::Unsupported)
+                            if analysis_failed =>
+                        {
+                            job.failed += 1
+                        }
                         Ok(Outcome::Saved) => job.saved += 1,
                         Ok(Outcome::Skipped) => job.skipped += 1,
                         Ok(Outcome::Unsupported) => job.unsupported += 1,
@@ -369,7 +497,10 @@ impl Shared {
         let active = || {
             self.epoch.load(Ordering::Acquire) == epoch
                 && self.batch.lock().as_ref().is_some_and(|job| {
-                    matches!(job.state, BatchState::Running | BatchState::Offline)
+                    matches!(
+                        job.state,
+                        BatchState::Running | BatchState::Offline | BatchState::WaitingForIndex
+                    )
                 })
         };
         if !active() {
@@ -462,13 +593,19 @@ mod tests {
             saved: 0,
             skipped: 0,
             unsupported: 0,
+            analysing: false,
+            videos: 0,
+            other: 0,
+            unknown: 0,
             failed: 0,
+            error: None,
         });
         let mut pages = 0;
         run(
             &shared,
             &paths,
             ThumbnailPageRequest {
+                analyse: false,
                 partition_id: "p".into(),
                 filesystem_id: "fs".into(),
                 generation: None,
@@ -477,6 +614,7 @@ mod tests {
                 types: Default::default(),
             },
             false,
+            None,
             0,
             async |request: ThumbnailPageRequest| {
                 let target = record().target;
@@ -488,6 +626,7 @@ mod tests {
                 assert_eq!(request.after, (pages == 1).then_some(1));
                 pages += 1;
                 Ok(Some(ThumbnailPage {
+                    analyse_indices: vec![],
                     generation: "1".into(),
                     files: vec![target.file],
                     folders: vec![],
@@ -558,7 +697,12 @@ mod tests {
             saved: 0,
             skipped: 0,
             unsupported: 0,
+            analysing: false,
+            videos: 0,
+            other: 0,
+            unknown: 0,
             failed: 0,
+            error: None,
         });
         assert_eq!(
             shared.prebuild(&paths, &row, false, 0).unwrap(),

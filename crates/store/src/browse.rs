@@ -14,9 +14,11 @@ pub(crate) fn filter_clause(db: &Connection, rule: Option<&FileFilter>) -> Resul
         return Ok("");
     };
     let filter = rule.compile()?;
-    let match_extension = !rule.extensions.is_empty();
+    let use_video = !rule.video_extensions.is_empty()
+        && db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))? >= 6;
+    let match_extension = !rule.extensions.is_empty() || !rule.video_extensions.is_empty();
     let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
-    db.create_scalar_function("sf_matches", 5, flags, move |ctx| {
+    db.create_scalar_function("sf_matches", 6, flags, move |ctx| {
         let sql_error =
             |e: anyhow::Error| rusqlite::Error::UserFunctionError(e.into_boxed_dyn_error());
         let folded_name = if match_extension {
@@ -30,6 +32,11 @@ pub(crate) fn filter_clause(db: &Connection, rule: Option<&FileFilter>) -> Resul
         filter
             .matches_record(
                 &Record {
+                    analysed_video: ctx.get::<Option<i64>>(5)?.map(|v| match v {
+                        0 => Some(false),
+                        1 => Some(true),
+                        _ => None,
+                    }),
                     name: "",
                     folded_name: &folded_name,
                     parent: "",
@@ -45,7 +52,11 @@ pub(crate) fn filter_clause(db: &Connection, rule: Option<&FileFilter>) -> Resul
             )
             .map_err(sql_error)
     })?;
-    Ok(" AND sf_matches(p.name,o.kind,o.size,o.created,o.modified)")
+    Ok(if use_video {
+        " AND sf_matches(p.name,o.kind,o.size,o.created,o.modified,(SELECT CASE WHEN o.video_current IS NULL OR video IS NULL THEN -1 ELSE video END FROM video_analysis WHERE generation=p.generation AND object=p.object))"
+    } else {
+        " AND sf_matches(p.name,o.kind,o.size,o.created,o.modified,NULL)"
+    })
 }
 
 /// Read only the local catalog. One SQLite snapshot covers the version, ancestors and children.
@@ -84,7 +95,7 @@ pub fn read(path: &Path, request: &DirectoryRequest) -> Result<DirectoryPage> {
     ensure!(
         matches!(
             tx.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-            3..=5
+            3..=6
         ),
         "目录库需要升级，请等待服务初始化"
     );

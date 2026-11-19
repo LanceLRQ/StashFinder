@@ -14,6 +14,7 @@ export type ThumbnailScope = {
 const states = {
   running: "正在生成",
   paused: "已暂停",
+  waiting_for_index: "等待同一硬盘的索引任务完成",
   offline: "等待分区重新连接",
   quota: "已达图片缓存上限",
   full: "缓存磁盘空间不足",
@@ -30,8 +31,13 @@ type Job = {
   total: number | null;
   saved: number;
   skipped: number;
+  analysing?: boolean;
+  videos?: number;
+  other?: number;
+  unknown?: number;
   unsupported: number;
   failed: number;
+  error?: string;
 };
 
 export default function ThumbnailJobs({
@@ -45,6 +51,8 @@ export default function ThumbnailJobs({
   onClose: () => void;
   onRecovery: (target: "cache" | "tasks") => void;
 }) {
+  const [analyse, setAnalyse] = useState(false);
+  const [thumbnails, setThumbnails] = useState(true);
   const [rebuild, setRebuild] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -57,7 +65,13 @@ export default function ThumbnailJobs({
     setBusy(true);
     setError("");
     try {
-      await invoke("thumbnail_start", { options: { ...scope, rebuild } });
+      await invoke("thumbnail_start", {
+        options: {
+          ...scope,
+          rebuild,
+          ...(analyse ? { analyse, thumbnails } : {}),
+        },
+      });
       onStarted();
     } catch (failure) {
       setError(String(failure).replace(/^Error: /, "") || "缩略图任务未启动");
@@ -67,7 +81,7 @@ export default function ThumbnailJobs({
   }
   return (
     <Modal
-      title="预生成缩略图"
+      title="分析文件"
       className="thumbnail-start-dialog"
       onClose={onClose}
       closeDisabled={busy}
@@ -78,7 +92,7 @@ export default function ThumbnailJobs({
           </button>
           <button
             className="thumbnail-start-button"
-            disabled={busy}
+            disabled={busy || (!analyse && !thumbnails)}
             onClick={() => void start()}
           >
             开始
@@ -96,6 +110,24 @@ export default function ThumbnailJobs({
             {scope.folder && <small>含子文件夹</small>}
           </div>
         </div>
+        <label>
+          <input
+            type="checkbox"
+            checked={thumbnails}
+            disabled={busy}
+            onChange={(e) => setThumbnails(e.target.checked)}
+          />
+          生成缩略图
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={analyse}
+            disabled={busy}
+            onChange={(e) => setAnalyse(e.target.checked)}
+          />
+          识别视频文件
+        </label>
         <label>
           处理方式
           <select
@@ -164,16 +196,23 @@ export function ThumbnailProgress({ revision }: { revision: number }) {
   const skipped = job.skipped + job.unsupported;
   const processed = job.saved + skipped + job.failed;
   const status =
-    counting && job.state === "running" ? "正在清点文件" : states[job.state];
+    counting && job.state === "running"
+      ? "正在清点文件"
+      : job.analysing && job.state === "running"
+        ? "正在分析"
+        : states[job.state];
   return (
-    <section className="thumbnail-job" aria-label="缩略图任务">
+    <section
+      className="thumbnail-job"
+      aria-label={job.analysing ? "文件分析任务" : "缩略图任务"}
+    >
       <header>
         <div className="thumbnail-scope">
           <span className="thumbnail-scope-icon">
             <WorkspaceIcon name="folder" />
           </span>
           <div>
-            <strong>预生成缩略图</strong>
+            <strong>{job.analysing ? "分析文件" : "预生成缩略图"}</strong>
             <small>{job.label}</small>
           </div>
         </div>
@@ -205,7 +244,7 @@ export function ThumbnailProgress({ revision }: { revision: number }) {
       {((counting && job.state === "running") ||
         (total != null && total > 0)) && (
         <progress
-          aria-label="缩略图处理进度"
+          aria-label={job.analysing ? "文件分析进度" : "缩略图处理进度"}
           max={total ?? 1}
           value={counting ? undefined : processed}
         />
@@ -224,6 +263,12 @@ export function ThumbnailProgress({ revision }: { revision: number }) {
           <dd>{skipped.toLocaleString()}</dd>
         </div>
       </dl>
+      {job.analysing && (
+        <p>
+          视频 {job.videos} · 非视频 {job.other} · 待确认 {job.unknown}
+        </p>
+      )}
+      {job.state === "failed" && job.error && <p role="alert">{job.error}</p>}
       {job.state === "quota" && <p>提高图片缓存上限或设为不限容量后继续。</p>}
       {job.state === "full" && <p>释放缓存磁盘空间后继续。</p>}
       {failed && <p role="alert">缩略图任务操作未完成</p>}

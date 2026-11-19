@@ -46,6 +46,7 @@ export const defaultCategories: Category[] = [
 ];
 export type Range = { min: string | null; max: string | null };
 export type FileFilter = {
+  video_extensions?: string[];
   extensions: string[];
   include_folders: boolean;
   kind: "file" | "folder" | null;
@@ -96,6 +97,7 @@ export const noFilter: FilterSelection = {
   custom: "",
 };
 export const hasFileFilter = (rule: FileFilter) =>
+  !!rule.video_extensions?.length ||
   rule.extensions.length > 0 ||
   rule.kind !== null ||
   [rule.size, rule.created, rule.modified].some((r) => r.min || r.max);
@@ -110,10 +112,12 @@ export function selectFilter(
     return {
       id: preset.id,
       rule: preset.rule,
-      types:
-        preset.rule.include_folders || preset.rule.kind === "folder"
+      types: [
+        ...(preset.rule.video_extensions?.length ? ["category:视频"] : []),
+        ...(preset.rule.include_folders || preset.rule.kind === "folder"
           ? ["@folder"]
-          : [],
+          : []),
+      ],
       custom: preset.rule.extensions.join(","),
     };
   }
@@ -129,7 +133,10 @@ export function selectFilter(
     ? {
         ...noFilter,
         types: [`category:${category.name}`],
-        rule: { ...emptyFileFilter, extensions: category.extensions },
+        rule:
+          category.name === "视频"
+            ? { ...emptyFileFilter, video_extensions: category.extensions }
+            : { ...emptyFileFilter, extensions: category.extensions },
       }
     : noFilter;
 }

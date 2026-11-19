@@ -128,7 +128,7 @@ export default function FileContextMenu({
             onClose();
           }}
         >
-          <span>预生成缩略图…</span>
+          <span>分析文件…</span>
         </button>
       )}
     </div>

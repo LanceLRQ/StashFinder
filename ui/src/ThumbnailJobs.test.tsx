@@ -105,3 +105,22 @@ test("opens a folder job with skip selected and shows safe progress after reques
     }),
   );
 });
+
+test("can identify videos without generating thumbnails", async () => {
+  render(
+    <ThumbnailJobs
+      scope={{ partitionId: "p", filesystemId: "fs", label: "磁盘" }}
+      onClose={() => {}}
+      onStarted={() => {}}
+      onRecovery={() => {}}
+    />,
+  );
+  fireEvent.click(screen.getByLabelText("识别视频文件"));
+  fireEvent.click(screen.getByLabelText("生成缩略图"));
+  fireEvent.click(screen.getByRole("button", { name: "开始" }));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("thumbnail_start", {
+      options: expect.objectContaining({ analyse: true, thumbnails: false }),
+    }),
+  );
+});
