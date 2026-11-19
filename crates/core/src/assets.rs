@@ -14,6 +14,7 @@ pub enum Layout {
         length: u64,
         device: Option<String>,
     },
+    UnsupportedPartition,
     Unknown,
 }
 
@@ -124,7 +125,7 @@ impl Identity {
                 length,
                 ..
             } => Some(format!("mbr:{signature}:{offset}:{length}")),
-            Layout::Unknown => None,
+            Layout::UnsupportedPartition | Layout::Unknown => None,
         }
     }
 }

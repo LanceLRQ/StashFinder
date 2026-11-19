@@ -258,10 +258,10 @@ pub fn probe(path: &str) -> Observation {
                 &part,
                 union + offset_of!(PARTITION_INFORMATION_GPT, PartitionType),
             )?;
-            ensure!(
-                kind.eq_ignore_ascii_case("ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"),
-                "不是受支持的基本数据分区"
-            );
+            if !kind.eq_ignore_ascii_case("ebd0a0a2-b9e5-4433-87c0-68b6b72699c7") {
+                item.identity.layout = Layout::UnsupportedPartition;
+                bail!("不是受支持的基本数据分区");
+            }
             Layout::Gpt {
                 disk: guid(
                     &layout,
@@ -276,10 +276,10 @@ pub fn probe(path: &str) -> Observation {
             let kind = *part
                 .get(union + offset_of!(PARTITION_INFORMATION_MBR, PartitionType))
                 .context("MBR 信息截断")?;
-            ensure!(
-                matches!(kind, 0x01 | 0x04 | 0x06 | 0x07 | 0x0b | 0x0c | 0x0e),
-                "不是受支持的 MBR 数据分区"
-            );
+            if !matches!(kind, 0x01 | 0x04 | 0x06 | 0x07 | 0x0b | 0x0c | 0x0e) {
+                item.identity.layout = Layout::UnsupportedPartition;
+                bail!("不是受支持的 MBR 数据分区");
+            }
             Layout::Mbr {
                 signature: read_field::<u32>(&layout, disk_union)?,
                 offset: offset.try_into()?,

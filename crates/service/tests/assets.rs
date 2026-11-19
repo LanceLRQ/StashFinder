@@ -46,6 +46,35 @@ fn settled(assets: &Assets) -> Snapshot {
 }
 
 #[test]
+fn registration_lists_unmounted_data_and_probe_errors_but_skips_unsupported_partitions() {
+    let root = tempfile::tempdir().unwrap();
+    let mut data = observation();
+    data.mounts.clear();
+    let mut inaccessible = data.clone();
+    inaccessible.candidate_id = "locked".into();
+    inaccessible.identity.layout = Layout::Unknown;
+    inaccessible.error = Some("拒绝访问".into());
+    let mut system = inaccessible.clone();
+    system.candidate_id = "efi".into();
+    system.identity.layout = Layout::UnsupportedPartition;
+    system.error = Some("不是受支持的基本数据分区".into());
+
+    let assets = Assets::start(root.path().into(), move || {
+        Ok(vec![data.clone(), inaccessible.clone(), system.clone()])
+    });
+    let snapshot = settled(&assets);
+    let candidates: Vec<_> = snapshot
+        .candidates
+        .iter()
+        .map(|c| (c.observation.candidate_id.as_str(), c.blocked.as_deref()))
+        .collect();
+    assert_eq!(
+        candidates,
+        [("volume-a", None), ("locked", Some("拒绝访问"))]
+    );
+}
+
+#[test]
 fn registration_can_queue_the_first_index_or_leave_it_for_manual_start() {
     for (auto_index, filesystem) in [(true, "NTFS"), (true, "exFAT"), (false, "NTFS")] {
         let root = tempfile::tempdir().unwrap();

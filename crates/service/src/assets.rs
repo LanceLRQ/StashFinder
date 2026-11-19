@@ -370,6 +370,7 @@ fn build_snapshot(
     let candidates = if discovered {
         observations
             .iter()
+            .filter(|o| o.identity.layout != Layout::UnsupportedPartition)
             .map(|o| {
                 let registered = assets.iter().any(|a| {
                     a.registration.state != "historical" && related(&a.registration.observation, o)
