@@ -329,7 +329,9 @@ async fn run(
                     && finding.is_none()
                     && page.analyse_indices.binary_search(&index).is_ok()
                 {
-                    match super::analysis::analyse(&record, exe, rebuild).await {
+                    match super::analysis::analyse(&record, exe, rebuild, crate::runtime::request)
+                        .await
+                    {
                         Ok(reason @ (Analysis::Busy | Analysis::Offline)) => {
                             let state = if matches!(reason, Analysis::Offline) {
                                 BatchState::Offline

@@ -1,5 +1,5 @@
 use super::{background, ffmpeg::wait_child};
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use stashfinder_core::{
     Action, Response,
     file_operations::{VideoFinding, VisualRecord},
@@ -22,8 +22,13 @@ pub(super) enum Analysis {
     Found(VideoFinding),
 }
 
-pub(super) async fn analyse(record: &VisualRecord, exe: &Path, rebuild: bool) -> Result<Analysis> {
-    let file = match crate::runtime::request(Action::VideoAnalysis {
+pub(super) async fn analyse(
+    record: &VisualRecord,
+    exe: &Path,
+    rebuild: bool,
+    mut request: impl AsyncFnMut(Action) -> Result<Response>,
+) -> Result<Analysis> {
+    let file = match request(Action::VideoAnalysis {
         reference: record.target.file.reference.clone(),
         result: None,
     })
@@ -49,19 +54,17 @@ pub(super) async fn analyse(record: &VisualRecord, exe: &Path, rebuild: bool) ->
     })
     .await
     .map_err(anyhow::Error::msg)?;
-    ensure!(
-        matches!(
-            crate::runtime::request(Action::VideoAnalysis {
-                reference,
-                result: Some(found)
-            })
-            .await?,
-            Response::Accepted
-        ),
-        "视频分析写回失败"
-    );
+    let reply = request(Action::VideoAnalysis {
+        reference,
+        result: Some(found),
+    })
+    .await?;
     drop(file);
-    Ok(Analysis::Found(found))
+    match reply {
+        Response::Accepted => Ok(Analysis::Found(found)),
+        Response::AnalysisOffline => Ok(Analysis::Offline),
+        _ => anyhow::bail!("视频分析写回失败"),
+    }
 }
 
 fn probe(exe: &Path, file: &mut std::fs::File) -> Result<VideoFinding> {
@@ -180,5 +183,47 @@ mod tests {
             assert_eq!(finding, expected, "{name}");
             assert!(file.stream_position().unwrap() <= LIMIT);
         }
+    }
+    #[tokio::test]
+    async fn disconnect_while_writing_a_finding_is_resumable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.ts");
+        std::fs::write(&path, "export const answer = 42;").unwrap();
+        let info = inspect(&path).unwrap();
+        let mut record = crate::visuals::tests::record();
+        record.target.volume = dir.path().display().to_string();
+        record.target.identity.serial = Some(Serial {
+            source: "ntfs64".into(),
+            value: format!("{:x}", info.volume64.unwrap()),
+        });
+        let file = &mut record.target.file;
+        file.relative = "test.ts".encode_utf16().collect();
+        file.identity = Some(ExpectedIdentity::Ntfs {
+            frn: info.identity.file,
+        });
+        file.size = info.size;
+        file.modified = info.modified;
+        let result = analyse(
+            &record,
+            Path::new("unused"),
+            false,
+            async |action| match action {
+                Action::VideoAnalysis { result: None, .. } => Ok(Response::VideoAnalysis {
+                    file: Box::new(record.target.file.clone()),
+                    finding: None,
+                }),
+                Action::VideoAnalysis {
+                    result: Some(Other),
+                    ..
+                } => Ok(Response::AnalysisOffline),
+                _ => panic!("unexpected analysis request"),
+            },
+        )
+        .await;
+        assert!(
+            matches!(result, Ok(Analysis::Offline)),
+            "{:?}",
+            result.err()
+        );
     }
 }
