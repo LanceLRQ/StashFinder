@@ -120,36 +120,38 @@ impl Indexes {
                                     .clone()
                             }))
                         })();
-                        match index {
-                            Ok(Some(index)) => {
-                                let needs_validation = states
-                                    .lock()
-                                    .unwrap_or_else(|e| e.into_inner())
-                                    .get(partition)
-                                    .is_some_and(|s| s.phase != "ready");
-                                let video_results = if job.options.video_extensions.is_empty() {
-                                    Default::default()
+                        let source = index.and_then(|index| {
+                            let Some(index) = index else { return Ok(None) };
+                            let needs_validation = states
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .get(partition)
+                                .is_some_and(|s| s.phase != "ready");
+                            let video_results = if job.options.video_extensions.is_empty() {
+                                Default::default()
+                            } else {
+                                stashfinder_store::file_operations::video_results(
+                                    &catalog.volume_path(&asset.registration.filesystem_id)?,
+                                    index.generation,
+                                )?
+                            };
+                            Ok(Some(Source {
+                                video_results,
+                                id: partition.clone(),
+                                name: asset.registration.name.clone(),
+                                filesystem: asset.registration.filesystem_id.clone(),
+                                connection: asset.connection.clone(),
+                                mounts: if asset.connection == "online" {
+                                    asset.mounts.clone()
                                 } else {
-                                    stashfinder_store::file_operations::video_results(
-                                        &catalog.volume_path(&asset.registration.filesystem_id)?,
-                                        index.generation,
-                                    )?
-                                };
-                                sources.push(Source {
-                                    video_results,
-                                    id: partition.clone(),
-                                    name: asset.registration.name.clone(),
-                                    filesystem: asset.registration.filesystem_id.clone(),
-                                    connection: asset.connection.clone(),
-                                    mounts: if asset.connection == "online" {
-                                        asset.mounts.clone()
-                                    } else {
-                                        vec![]
-                                    },
-                                    index,
-                                    needs_validation,
-                                });
-                            }
+                                    vec![]
+                                },
+                                index,
+                                needs_validation,
+                            }))
+                        });
+                        match source {
+                            Ok(Some(source)) => sources.push(source),
                             Ok(None) => unavailable
                                 .push(format!("{}：尚无可搜索索引", asset.registration.name)),
                             Err(e) => {
