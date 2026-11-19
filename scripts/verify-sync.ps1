@@ -5,6 +5,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$protocol = & (Join-Path $PSScriptRoot 'protocol-version.ps1')
 # Only the VHD created in this new directory may be formatted or have its journal changed.
 $Directory = [IO.Path]::GetFullPath($Directory)
 if (-not $Directory.StartsWith('D:\tmp\', [StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath $Directory)) { throw 'Use a new isolated directory under D:\tmp.' }
@@ -20,7 +21,7 @@ function Send-Action($Action) {
     $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', 'StashFinder.M0', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification)
     try {
         $pipe.Connect(3000)
-        $bytes = [Text.Encoding]::UTF8.GetBytes((@{ version=12; id = 1; action = $Action } | ConvertTo-Json -Depth 8 -Compress))
+        $bytes = [Text.Encoding]::UTF8.GetBytes((@{ version=$protocol; id = 1; action = $Action } | ConvertTo-Json -Depth 8 -Compress))
         $writer = [IO.BinaryWriter]::new($pipe)
         $writer.Write([int]$bytes.Length); $writer.Write($bytes); $writer.Flush()
         $reader = [IO.BinaryReader]::new($pipe)
@@ -48,18 +49,20 @@ function Wait-For([scriptblock]$Condition, [string]$Description) {
 }
 function Search([string]$Text, [string]$Id, [bool]$IncludeHistory = $false) {
     $queryId = Send-Action @{ search_start = @{ text = $Text; names_only = $false; partitions = @($Id); options = @{ include_history = $IncludeHistory } } }
-    $rows = @(); $offset = 0
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
-    do {
-        $page = Send-Action @{ search_page = @{ id = $queryId; offset = $offset } }
-        if ($page.error) { throw $page.error }
-        if ($page.done) {
-            if ($page.row) { $rows += $page.row }
-            if ($null -eq $page.next) { return ,$rows }
-            $offset = $page.next
-        } else { Start-Sleep -Milliseconds 25 }
-    } while ([DateTime]::UtcNow -lt $deadline)
-    throw 'Search timed out.'
+    try {
+        $rows = @(); $offset = 0
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        do {
+            $page = Send-Action @{ search_page = @{ id = $queryId; offset = $offset } }
+            if ($page.error) { throw $page.error }
+            if ($page.done) {
+                if ($page.row) { $rows += $page.row }
+                if ($null -eq $page.next) { return ,$rows }
+                $offset = $page.next
+            } else { Start-Sleep -Milliseconds 25 }
+        } while ([DateTime]::UtcNow -lt $deadline)
+        throw 'Search timed out.'
+    } finally { Send-Action @{ search_cancel = @{ id = $queryId } } }
 }
 function Assert-TestDisk {
     $current = Get-DiskImage -ImagePath $image | Get-Disk
@@ -150,15 +153,12 @@ try {
     & fsutil.exe usn createjournal m=33554432 a=8388608 ($root.TrimEnd('\'))
     if ($LASTEXITCODE -ne 0) { throw 'Test journal recreation failed.' }
     [IO.File]::WriteAllText($root + 'fixture\gap.txt', 'gap')
+    $generation = (Send-Action @{index_state=@{partition_id=$assetId}}).active_generation
     if ((Search 'restart.txt' $assetId).Count -ne 1) { throw 'Journal reset destroyed old search.' }
     Send-Action @{partition_pause=@{partition_id=$assetId;paused=$false}}
-    Wait-For { $s=Send-Action @{index_state=@{partition_id=$assetId}}; $s.phase -eq 'needs_rebuild' } 'journal gap confirmation'
-    if ((Send-Action @{index_state=@{partition_id=$assetId}}).active_generation -ne $generation) { throw 'Journal gap replaced the active index before confirmation.' }
-    if ((Search 'restart.txt' $assetId).Count -ne 1) { throw 'Waiting for confirmation hid old search results.' }
-    Send-Action @{index_start=@{partition_id=$assetId;mode='journal'}}
     Wait-For { $s=Send-Action @{index_state=@{partition_id=$assetId}}; $s.phase -eq 'ready' -and $s.active_generation -gt $generation } 'journal gap rebuild'
     if ((Search 'gap.txt' $assetId).Count -ne 1) { throw 'Rebuilt index omitted new file.' }
-    $report.checks += 'Journal replacement waits for confirmation before rebuilding and keeps old search available'
+    $report.checks += 'Journal replacement preserves the paused index and automatically rebuilds after resume'
     Send-Action @{partition_pause=@{partition_id=$assetId;paused=$true}}
     $disk = Assert-TestDisk
     $partition = Get-Partition -DiskNumber $disk.Number | Where-Object {$_.Size -eq 384MB}

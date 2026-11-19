@@ -1,10 +1,11 @@
-param(
+﻿param(
     [Parameter(Mandatory=$true)][string]$Binary,
     [Parameter(Mandatory=$true)][string]$Directory,
     [ValidateRange(0,600)][int]$HoldSeconds=0
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
+$protocol = & (Join-Path $PSScriptRoot 'protocol-version.ps1')
 $Directory=[IO.Path]::GetFullPath($Directory)
 if(-not $Directory.StartsWith('D:\tmp\',[StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath $Directory)){throw 'Use a new isolated directory under D:\tmp.'}
 New-Item -ItemType Directory -Path $Directory | Out-Null
@@ -16,7 +17,7 @@ function Send-Action($Action) {
     $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', 'StashFinder.M0', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification)
     try {
         $pipe.Connect(3000)
-        $bytes = [Text.Encoding]::UTF8.GetBytes((@{ version=12; id = 1; action = $Action } | ConvertTo-Json -Depth 8 -Compress))
+        $bytes = [Text.Encoding]::UTF8.GetBytes((@{ version=$protocol; id = 1; action = $Action } | ConvertTo-Json -Depth 8 -Compress))
         $writer = [IO.BinaryWriter]::new($pipe)
         $writer.Write([int]$bytes.Length); $writer.Write($bytes); $writer.Flush()
         $reader = [IO.BinaryReader]::new($pipe)
@@ -44,18 +45,20 @@ function Wait-For([scriptblock]$Condition, [string]$Description) {
 }
 function Search([string]$Text, [string]$Id) {
     $queryId = Send-Action @{ search_start = @{ text = $Text; names_only = $false; partitions = @($Id) } }
-    $rows = @(); $offset = 0
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
-    do {
-        $page = Send-Action @{ search_page = @{ id = $queryId; offset = $offset } }
-        if ($page.error) { throw $page.error }
-        if ($page.done) {
-            if ($page.row) { $rows += $page.row }
-            if ($null -eq $page.next) { return ,$rows }
-            $offset = $page.next
-        } else { Start-Sleep -Milliseconds 25 }
-    } while ([DateTime]::UtcNow -lt $deadline)
-    throw 'Search timed out.'
+    try {
+        $rows = @(); $offset = 0
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        do {
+            $page = Send-Action @{ search_page = @{ id = $queryId; offset = $offset } }
+            if ($page.error) { throw $page.error }
+            if ($page.done) {
+                if ($page.row) { $rows += $page.row }
+                if ($null -eq $page.next) { return ,$rows }
+                $offset = $page.next
+            } else { Start-Sleep -Milliseconds 25 }
+        } while ([DateTime]::UtcNow -lt $deadline)
+        throw 'Search timed out.'
+    } finally { Send-Action @{ search_cancel = @{ id = $queryId } } }
 }
 function Assert-TestDisk {
     $disk=Get-DiskImage -ImagePath $image | Get-Disk

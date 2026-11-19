@@ -1,10 +1,11 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)][string]$Binary,
     [Parameter(Mandatory = $true)][string]$Directory,
     [ValidateRange(0,600)][int]$HoldSeconds = 0
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$protocol = & (Join-Path $PSScriptRoot 'protocol-version.ps1')
 # This script only creates and formats a new file-backed test disk. It never
 # selects an existing disk by number or accepts an existing VHD directory.
 $Directory = [IO.Path]::GetFullPath($Directory)
@@ -22,7 +23,7 @@ function Invoke-AssetAction($Action) {
     $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', 'StashFinder.M0', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification)
     try {
         $pipe.Connect(3000)
-        $bytes = [Text.Encoding]::UTF8.GetBytes((@{version=12;id=1;action=$Action} | ConvertTo-Json -Depth 8 -Compress))
+        $bytes = [Text.Encoding]::UTF8.GetBytes((@{version=$protocol;id=1;action=$Action} | ConvertTo-Json -Depth 8 -Compress))
         $writer = [IO.BinaryWriter]::new($pipe)
         $writer.Write([int]$bytes.Length)
         $writer.Write($bytes)
@@ -92,8 +93,16 @@ try {
     $capacity = $snapshot.assets[0].registration.observation.capacity
     Dismount-DiskImage -ImagePath $image | Out-Null
     $attached = $false
+    $deadline = [DateTime]::UtcNow.AddSeconds(20)
+    do {
+        $snapshot = Invoke-AssetAction 'refresh'
+        if ($snapshot.assets[0].connection -eq 'offline') { break }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    $historical = $snapshot.assets[0].registration.observation.capacity
+    if ($snapshot.assets[0].connection -ne 'offline' -or $historical.total -ne $capacity.total -or $historical.sampled_at -lt $capacity.sampled_at) { throw 'Offline snapshot failed.' }
     $snapshot = Invoke-AssetAction 'refresh'
-    if ($snapshot.assets[0].connection -ne 'offline' -or $snapshot.assets[0].registration.observation.capacity.sampled_at -ne $capacity.sampled_at) { throw 'Offline snapshot failed.' }
+    if ($snapshot.assets[0].registration.observation.capacity.sampled_at -ne $historical.sampled_at) { throw 'Offline capacity was resampled.' }
     $report.checks += 'Detach preserves historical capacity'
     Mount-DiskImage -ImagePath $image | Out-Null
     $attached = $true

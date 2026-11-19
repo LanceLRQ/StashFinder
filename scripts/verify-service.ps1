@@ -30,7 +30,9 @@ if (Test-Path -LiteralPath $testDirectory) { throw 'Verification directory alrea
 $createdService = $false
 $createdDirectory = $false
 $result = [ordered]@{ started = $false; probe = $null; stopped = $false; removed = $false; dataDirectory = $dataDirectory }
+$oldEncoding = [Console]::OutputEncoding
 try {
+    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
     New-Item -ItemType Directory -Path $testDirectory | Out-Null
     $createdDirectory = $true
     Copy-Item -LiteralPath $source -Destination $binary
@@ -63,6 +65,7 @@ try {
         while ([DateTime]::UtcNow -lt $deadline) { Start-Sleep -Seconds 1 }
     }
 } finally {
+    [Console]::OutputEncoding = $oldEncoding
     if ($createdService) {
         if ((Get-Service -Name $serviceName).Status -ne 'Stopped') {
             Stop-Service -Name $serviceName

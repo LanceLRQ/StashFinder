@@ -4,6 +4,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
+$protocol = & (Join-Path $PSScriptRoot 'protocol-version.ps1')
 $Manifest=[IO.Path]::GetFullPath($Manifest)
 $directory=Split-Path $Manifest -Parent
 if(-not $directory.StartsWith('D:\tmp\StashFinder-M6-',[StringComparison]::OrdinalIgnoreCase) -or (Split-Path $Manifest -Leaf) -ne 'verification.json'){throw 'Use the authorized M6 verification manifest'}
@@ -14,7 +15,7 @@ function Request($Action){
     $pipe=[IO.Pipes.NamedPipeClientStream]::new('.','StashFinder.M0',[IO.Pipes.PipeDirection]::InOut,[IO.Pipes.PipeOptions]::None,[Security.Principal.TokenImpersonationLevel]::Identification)
     try{
         $pipe.Connect(3000)
-        $bytes=[Text.Encoding]::UTF8.GetBytes((@{version=12;id=1;action=$Action}|ConvertTo-Json -Depth 10 -Compress))
+        $bytes=[Text.Encoding]::UTF8.GetBytes((@{version=$protocol;id=1;action=$Action}|ConvertTo-Json -Depth 10 -Compress))
         $writer=[IO.BinaryWriter]::new($pipe);$writer.Write([int]$bytes.Length);$writer.Write($bytes);$writer.Flush()
         $reader=[IO.BinaryReader]::new($pipe);$length=$reader.ReadInt32()
         if($length -lt 1 -or $length -gt 16384){throw 'Invalid reply length'}
@@ -40,13 +41,15 @@ function Wait-Count([string]$Text,[int]$Count){
     $started=[DateTime]::UtcNow
     do{
         $start=Request @{search_start=@{text=$Text;names_only=$true;partitions=@($saved.fixtures|ForEach-Object {$_.id})}}
-        $queryDeadline=[DateTime]::UtcNow.AddSeconds(5)
-        do{
-            $page=Request @{search_batch=@{id=$start.data;offset=0;limit=32}}
-            if($page.data.done){break}
-            Start-Sleep -Milliseconds 100
-        }while([DateTime]::UtcNow -lt $queryDeadline)
-        if($page.data.done -and -not $page.data.error -and $page.data.total -eq $Count){return ([DateTime]::UtcNow-$started).TotalMilliseconds}
+        try {
+            $queryDeadline=[DateTime]::UtcNow.AddSeconds(5)
+            do{
+                $page=Request @{search_batch=@{id=$start.data;offset=0;limit=32}}
+                if($page.data.done){break}
+                Start-Sleep -Milliseconds 100
+            }while([DateTime]::UtcNow -lt $queryDeadline)
+            if($page.data.done -and -not $page.data.error -and $page.data.total -eq $Count){return ([DateTime]::UtcNow-$started).TotalMilliseconds}
+        } finally { $null = Request @{search_cancel=@{id=$start.data}} }
         Start-Sleep -Milliseconds 200
     }while(([DateTime]::UtcNow-$started).TotalSeconds -lt 45)
     throw "Catalog did not reach $Count matches for $Text within 45 seconds"

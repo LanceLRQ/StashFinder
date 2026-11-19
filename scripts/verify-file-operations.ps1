@@ -6,6 +6,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
+$protocol = & (Join-Path $PSScriptRoot 'protocol-version.ps1')
 $Directory=[IO.Path]::GetFullPath($Directory).TrimEnd('\')
 if(-not $Directory.StartsWith('D:\tmp\StashFinder-M6-',[StringComparison]::OrdinalIgnoreCase) -or $Directory.Contains('"')){throw 'Use a dedicated StashFinder-M6 directory under D:\tmp.'}
 $image=Join-Path $Directory 'file-operations.vhdx'
@@ -15,7 +16,7 @@ function Request($Action) {
     $pipe=[IO.Pipes.NamedPipeClientStream]::new('.','StashFinder.M0',[IO.Pipes.PipeDirection]::InOut,[IO.Pipes.PipeOptions]::None,[Security.Principal.TokenImpersonationLevel]::Identification)
     try {
         $pipe.Connect(3000)
-        $bytes=[Text.Encoding]::UTF8.GetBytes((@{version=12;id=1;action=$Action}|ConvertTo-Json -Depth 10 -Compress))
+        $bytes=[Text.Encoding]::UTF8.GetBytes((@{version=$protocol;id=1;action=$Action}|ConvertTo-Json -Depth 10 -Compress))
         $writer=[IO.BinaryWriter]::new($pipe);$writer.Write([int]$bytes.Length);$writer.Write($bytes);$writer.Flush()
         $reader=[IO.BinaryReader]::new($pipe);$length=$reader.ReadInt32()
         if($length -lt 1 -or $length -gt 16384){throw 'Invalid reply length'}

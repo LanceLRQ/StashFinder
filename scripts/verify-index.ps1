@@ -5,6 +5,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$protocol = & (Join-Path $PSScriptRoot 'protocol-version.ps1')
 # Run only after explicit authorization to create a journal and mutate test files.
 # The newly created image is the only disk this script initializes or formats.
 $Directory = [IO.Path]::GetFullPath($Directory)
@@ -20,7 +21,7 @@ function Send-Action($Action) {
     $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', 'StashFinder.M0', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification)
     try {
         $pipe.Connect(3000)
-        $bytes = [Text.Encoding]::UTF8.GetBytes((@{ version=12; id = 1; action = $Action } | ConvertTo-Json -Depth 8 -Compress))
+        $bytes = [Text.Encoding]::UTF8.GetBytes((@{ version=$protocol; id = 1; action = $Action } | ConvertTo-Json -Depth 8 -Compress))
         $writer = [IO.BinaryWriter]::new($pipe)
         $writer.Write([int]$bytes.Length); $writer.Write($bytes); $writer.Flush()
         $reader = [IO.BinaryReader]::new($pipe)
@@ -51,25 +52,27 @@ function Wait-Index([string]$Id) {
     $deadline = [DateTime]::UtcNow.AddMinutes(5)
     do {
         $state = Send-Action @{ index_state = @{ partition_id = $Id } }
-        if ($state.phase -notin @('loading', 'queued', 'enumerating', 'scanning', 'replaying', 'building')) { return $state }
+        if (-not $state.task_id -and $state.phase -notin @('loading', 'queued', 'enumerating', 'scanning', 'replaying', 'building')) { return $state }
         Start-Sleep -Milliseconds 100
     } while ([DateTime]::UtcNow -lt $deadline)
     throw 'Index timed out.'
 }
 function Search([string]$Text, [string]$Id) {
     $queryId = Send-Action @{ search_start = @{ text = $Text; names_only = $false; partitions = @($Id) } }
-    $rows = @(); $offset = 0
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
-    do {
-        $page = Send-Action @{ search_page = @{ id = $queryId; offset = $offset } }
-        if ($page.error) { throw $page.error }
-        if ($page.done) {
-            if ($page.row) { $rows += $page.row }
-            if ($null -eq $page.next) { return ,$rows }
-            $offset = $page.next
-        } else { Start-Sleep -Milliseconds 25 }
-    } while ([DateTime]::UtcNow -lt $deadline)
-    throw 'Search timed out.'
+    try {
+        $rows = @(); $offset = 0
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        do {
+            $page = Send-Action @{ search_page = @{ id = $queryId; offset = $offset } }
+            if ($page.error) { throw $page.error }
+            if ($page.done) {
+                if ($page.row) { $rows += $page.row }
+                if ($null -eq $page.next) { return ,$rows }
+                $offset = $page.next
+            } else { Start-Sleep -Milliseconds 25 }
+        } while ([DateTime]::UtcNow -lt $deadline)
+        throw 'Search timed out.'
+    } finally { Send-Action @{ search_cancel = @{ id = $queryId } } }
 }
 function Read-Fixture([string]$Root) {
     $result = @{}
@@ -89,11 +92,13 @@ function Read-Fixture([string]$Root) {
 }
 function Compare-Fixture($Expected, $Actual) {
     if ($Expected.Count -ne $Actual.Count) { throw "Fixture count mismatch: expected $($Expected.Count), actual $($Actual.Count)." }
+    $differences = @()
     foreach ($row in $Actual) {
-        if (-not $Expected.ContainsKey($row.file.path)) { throw ('Unexpected path: ' + $row.file.path) }
+        if (-not $Expected.ContainsKey($row.file.path)) { $differences += ('Unexpected path: ' + $row.file.path); continue }
         $item = $Expected[$row.file.path]
-        if ($item.size -ne $row.file.size -or $item.modified -ne $row.file.modified) { throw ('Metadata mismatch: ' + $row.file.path) }
+        if ($item.size -ne $row.file.size -or $item.modified -ne $row.file.modified) { $differences += ("Metadata mismatch: {0}; expected size={1} modified={2}, indexed size={3} modified={4}" -f $row.file.path,$item.size,$item.modified,$row.file.size,$row.file.modified) }
     }
+    if ($differences.Count) { throw ($differences -join [Environment]::NewLine) }
 }
 
 try {
@@ -143,7 +148,7 @@ try {
     $report.mount = $root
     Send-Action @{ index_start = @{ partition_id = $assetId; mode = 'journal' } }
     $state = Wait-Index $assetId
-    if ($state.phase -ne 'failed' -or $state.active_generation) { throw 'Expected absent journal to require a choice.' }
+    if (-not $state.journal_missing -or $state.active_generation) { throw ('Expected absent journal to require a choice: ' + ($state | ConvertTo-Json -Compress)) }
     $report.checks += 'Missing journal does not silently create or publish an index'
     Send-Action @{ index_start = @{ partition_id = $assetId; mode = 'scan_only' } }
     $state = Wait-Index $assetId

@@ -13,9 +13,7 @@ if (Test-Path -LiteralPath $OutputDirectory) { throw 'OutputDirectory must be a 
 if (-not $BinaryDirectory) { $BinaryDirectory = Join-Path $projectRoot 'target\release' }
 $BinaryDirectory = [IO.Path]::GetFullPath($BinaryDirectory)
 $version = (Get-Content -LiteralPath (Join-Path $projectRoot 'ui\src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json).version
-$protocolMatch = [regex]::Match((Get-Content -LiteralPath (Join-Path $projectRoot 'crates\core\src\lib.rs') -Raw), 'PROTOCOL_VERSION: u32 = (\d+)')
-if (-not $protocolMatch.Success) { throw 'Cannot determine protocol version.' }
-$protocol = [int]$protocolMatch.Groups[1].Value
+$protocol = & (Join-Path $PSScriptRoot 'protocol-version.ps1')
 Push-Location $projectRoot
 try {
     if (-not $SkipBuild) {
