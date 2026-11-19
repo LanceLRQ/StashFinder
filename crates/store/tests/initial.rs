@@ -70,7 +70,7 @@ fn children_before_parents_remain_hidden_until_relationship_import() {
     assert_eq!(
         sql.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        6
+        7
     );
 }
 

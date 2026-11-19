@@ -24,7 +24,7 @@ fn resolve_in(
     let revision: i64 = reference.revision.parse()?;
     let version = tx.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?;
     ensure!(
-        matches!(version, 4..=6) || records_only && version == 3,
+        matches!(version, 4..=7) || records_only && version == 3,
         "目录库需要升级"
     );
     let manifest: String =
@@ -105,18 +105,22 @@ fn resolve_in(
     } else {
         None
     };
-    let (size, created, modified) = tx.query_row(
-        "SELECT size,created,modified FROM objects WHERE generation=?1 AND id=?2",
-        params![generation, object],
-        |r| {
+    let metadata = if version >= 7 && source == "ntfs64" {
+        "SELECT size,created,modified,coalesce(content_version,(SELECT thumbnail_base FROM generations WHERE id=?1)) FROM objects WHERE generation=?1 AND id=?2"
+    } else {
+        "SELECT size,created,modified,NULL FROM objects WHERE generation=?1 AND id=?2"
+    };
+    let (size, created, modified, content_version) =
+        tx.query_row(metadata, params![generation, object], |r| {
             Ok((
                 r.get::<_, Option<i64>>(0)?,
                 r.get::<_, Option<Vec<u8>>>(1)?,
                 r.get::<_, Option<Vec<u8>>>(2)?,
+                r.get::<_, Option<i64>>(3)?,
             ))
-        },
-    )?;
+        })?;
     let result = ResolvedEntry {
+        content_version,
         size,
         created: crate::search::decode_time(created)?
             .map(|s| s.parse())

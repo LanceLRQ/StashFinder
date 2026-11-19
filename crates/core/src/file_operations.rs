@@ -26,6 +26,8 @@ pub enum ExpectedIdentity {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResolvedEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_version: Option<i64>,
     pub reference: EntryRef,
     pub relative: Vec<u16>,
     pub object: Vec<u8>,

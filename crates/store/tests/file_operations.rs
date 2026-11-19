@@ -402,6 +402,7 @@ fn video_analysis_survives_reopen_but_content_changes_invalidate_it() {
     db.finish_incremental(g).unwrap();
     let (renamed, cached) = file_operations::current_video(&path, &reference).unwrap();
     assert_eq!(cached, Some(true));
+    assert!(renamed.content_version.is_none());
     assert!(String::from_utf16_lossy(&renamed.relative).starts_with("renamed"));
     let manual = ThumbnailScope {
         analyse: true,
@@ -480,6 +481,13 @@ fn video_analysis_survives_reopen_but_content_changes_invalidate_it() {
     );
     let (current, previous) = file_operations::current_video(&path, &reference).unwrap();
     assert!(previous.is_none());
+    assert!(current.content_version.is_some());
+    assert_eq!(
+        file_operations::record(&path, &current.reference)
+            .unwrap()
+            .content_version,
+        current.content_version
+    );
     file_operations::save_video(&path, &current.reference, Some(false)).unwrap();
     let sql = rusqlite::Connection::open(&path).unwrap();
     assert!(
@@ -493,4 +501,60 @@ fn video_analysis_survives_reopen_but_content_changes_invalidate_it() {
         file_operations::video_results(&path, g).unwrap().get(&id),
         Some(&None)
     );
+}
+
+#[test]
+fn legacy_thumbnail_keys_survive_migration_until_a_journal_index_is_rebuilt() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("volume.sqlite");
+    let (db, reference) = fixture(&path);
+    drop(db);
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    sql.execute_batch(
+        "ALTER TABLE objects DROP COLUMN content_version;
+        ALTER TABLE generations DROP COLUMN thumbnail_base; PRAGMA user_version=6;",
+    )
+    .unwrap();
+    let before = file_operations::record(&path, &reference).unwrap();
+    assert_eq!(before.content_version, None);
+    let mut db = Volume::open(&path).unwrap();
+    assert_eq!(
+        file_operations::record(&path, &reference)
+            .unwrap()
+            .content_version,
+        None
+    );
+    let next = db.begin_generation().unwrap();
+    sql.execute("INSERT INTO objects(generation,id,source,kind,size,created,modified,attributes) SELECT ?1,id,source,kind,size,created,modified,attributes FROM objects WHERE generation=?2",rusqlite::params![next,reference.generation]).unwrap();
+    sql.execute(
+        "INSERT INTO paths SELECT ?1,id,object,parent,name FROM paths WHERE generation=?2",
+        rusqlite::params![next, reference.generation],
+    )
+    .unwrap();
+    sql.execute(
+        "UPDATE generations SET journal=zeroblob(8) WHERE id=?1",
+        [next],
+    )
+    .unwrap();
+    db.complete(next).unwrap();
+    db.publish(next).unwrap();
+    let revision: i64 = sql
+        .query_row(
+            "SELECT revision FROM generations WHERE id=?1",
+            [next],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let refreshed = file_operations::record(
+        &path,
+        &EntryRef {
+            generation: next.to_string(),
+            revision: revision.to_string(),
+            ..reference
+        },
+    )
+    .unwrap();
+    assert_eq!(before.size, refreshed.size);
+    assert_eq!(before.modified, refreshed.modified);
+    assert!(refreshed.content_version.is_some());
 }

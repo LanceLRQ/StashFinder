@@ -334,7 +334,7 @@ fn rejects_pages_after_incremental_update_or_generation_switch_and_migrates_v2()
     );
     drop(db);
     let sql = rusqlite::Connection::open(&path).unwrap();
-    sql.execute_batch("ALTER TABLE objects DROP COLUMN video_current; DROP TABLE video_analysis; DROP TABLE video_analysis_history; DROP TABLE native_identity; ALTER TABLE generations DROP COLUMN revision; PRAGMA user_version=2;")
+    sql.execute_batch("ALTER TABLE generations DROP COLUMN thumbnail_base; ALTER TABLE objects DROP COLUMN content_version; ALTER TABLE objects DROP COLUMN video_current; DROP TABLE video_analysis; DROP TABLE video_analysis_history; DROP TABLE native_identity; ALTER TABLE generations DROP COLUMN revision; PRAGMA user_version=2;")
         .unwrap();
     drop(sql);
     let _db = Volume::open(&path).unwrap();

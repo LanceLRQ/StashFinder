@@ -22,6 +22,7 @@ fn target() -> PreparedTarget {
     PreparedTarget {
         mounts: vec![],
         file: ResolvedEntry {
+            content_version: None,
             reference: EntryRef {
                 partition_id: "p".into(),
                 filesystem_id: "fs".into(),

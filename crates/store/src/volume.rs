@@ -80,7 +80,7 @@ impl Volume {
         ensure!(
             matches!(
                 db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
-                1..=6
+                1..=7
             ),
             "不支持的分区库版本"
         );
@@ -135,8 +135,8 @@ impl Volume {
 
     pub(crate) fn open_connection(db: Connection, check: bool) -> Result<Self> {
         let version = db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?;
-        ensure!(matches!(version, 1..=6), "不支持的分区库版本");
-        if check || version < 6 {
+        ensure!(matches!(version, 1..=7), "不支持的分区库版本");
+        if check || version < 7 {
             ensure!(
                 db.query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))? == "ok",
                 "分区库损坏"
@@ -144,7 +144,7 @@ impl Volume {
         }
         configure(&db)?;
         let mut volume = Self { db };
-        if version < 6 {
+        if version < 7 {
             volume.migrate()?;
         }
         Ok(volume)
@@ -199,6 +199,15 @@ impl Volume {
                 CREATE TABLE video_analysis_history(generation INTEGER NOT NULL, object BLOB NOT NULL,
                     revision INTEGER NOT NULL, video INTEGER NOT NULL);
                 PRAGMA user_version=6;")?;
+            tx.commit()?;
+        }
+        if version < 7 {
+            let tx = self.db.transaction()?;
+            tx.execute_batch(
+                "ALTER TABLE objects ADD COLUMN content_version INTEGER;
+                ALTER TABLE generations ADD COLUMN thumbnail_base INTEGER;
+                PRAGMA user_version=7;",
+            )?;
             tx.commit()?;
         }
         Ok(())
@@ -362,11 +371,12 @@ impl Volume {
             )?
         };
         let mut write_object = tx.prepare_cached(
-            "INSERT INTO objects(generation,id,source,kind,size,created,modified,attributes)
-                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+            "INSERT INTO objects(generation,id,source,kind,size,created,modified,attributes,content_version)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,CASE WHEN ?9 THEN random() END)
                  ON CONFLICT(generation,id) DO UPDATE SET source=excluded.source,kind=excluded.kind,
                     size=excluded.size,created=excluded.created,modified=excluded.modified,
                     attributes=excluded.attributes,
+                    content_version=coalesce(excluded.content_version,objects.content_version),
                     video_current=CASE WHEN ?9 THEN NULL ELSE objects.video_current END",
         )?;
         for object in objects {
@@ -419,7 +429,7 @@ impl Volume {
         }
         // A USN event can be committed before its metadata becomes readable.
         for id in invalidated {
-            tx.prepare_cached("UPDATE objects SET video_current=NULL WHERE generation=?1 AND id=?2 AND video_current=1")?
+            tx.prepare_cached("UPDATE objects SET content_version=random(),video_current=NULL WHERE generation=?1 AND id=?2")?
                 .execute(params![generation,id])?;
         }
         let mut pending = pending.iter().collect::<Vec<_>>();
@@ -550,6 +560,12 @@ impl Volume {
             )?;
         ensure!(complete && !pending, "索引尚未完成或仍有元数据待补齐");
         if !incremental {
+            // A full NTFS rebuild cannot prove what happened before its initial journal cursor.
+            tx.execute(
+                "UPDATE generations SET thumbnail_base=random() WHERE id=?1 AND length(journal)=8
+                 AND EXISTS(SELECT 1 FROM index_state WHERE active_generation<>?1)",
+                [generation],
+            )?;
             tx.execute(
                 "INSERT OR IGNORE INTO video_analysis(generation,object,video,revision)
                 SELECT ?1,a.object,a.video,a.revision FROM video_analysis a

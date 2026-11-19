@@ -108,12 +108,16 @@ impl Provider for WindowsProvider {
 }
 fn file_key(record: &VisualRecord, kind: Kind, size: u32) -> Result<Key> {
     let file = &record.target.file;
-    Ok(Key::new(&serde_json::to_vec(&serde_json::json!({
+    let mut fields = serde_json::json!({
         "version": 1, "kind": kind, "size": size,
         "partition": file.reference.partition_id, "filesystem": file.reference.filesystem_id,
         "entry": file.reference.entry, "object": file.object, "identity": file.identity,
         "path": file.relative, "folder": file.folder, "bytes": file.size, "created": file.created, "modified": file.modified,
-    }))?))
+    });
+    if let Some(version) = file.content_version {
+        fields["content_version"] = version.into();
+    }
+    Ok(Key::new(&serde_json::to_vec(&fields)?))
 }
 struct Shared {
     batch: batch::Batch,
@@ -212,19 +216,28 @@ impl Shared {
         }
         ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
         notify("system_cache");
-        let (bytes, source) = match self
-            .provider
-            .thumbnail(&record.target, canonical_size, true)?
-        {
-            Some(bytes) => (Some(bytes), "system_cache"),
-            None => {
-                ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
-                notify("system_generate");
-                (
-                    self.provider
-                        .thumbnail(&record.target, canonical_size, false)?,
-                    "system_generated",
-                )
+        let (bytes, source) = if record.target.file.content_version.is_some() {
+            notify("system_generate");
+            (
+                self.provider
+                    .rebuild_thumbnail(&record.target, canonical_size)?,
+                "system_generated",
+            )
+        } else {
+            match self
+                .provider
+                .thumbnail(&record.target, canonical_size, true)?
+            {
+                Some(bytes) => (Some(bytes), "system_cache"),
+                None => {
+                    ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
+                    notify("system_generate");
+                    (
+                        self.provider
+                            .thumbnail(&record.target, canonical_size, false)?,
+                        "system_generated",
+                    )
+                }
             }
         };
         ensure!(!cancel.load(Ordering::Acquire), "图片请求已取消");
@@ -522,6 +535,7 @@ mod tests {
             online: true,
             target: PreparedTarget {
                 file: ResolvedEntry {
+                    content_version: None,
                     reference: EntryRef {
                         partition_id: "p".into(),
                         filesystem_id: "fs".into(),

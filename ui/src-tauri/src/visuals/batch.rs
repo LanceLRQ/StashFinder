@@ -519,7 +519,7 @@ impl Shared {
             return Ok(Outcome::Skipped);
         }
         ensure!(record.online, "分区离线");
-        let extracted = if rebuild {
+        let extracted = if rebuild || record.target.file.content_version.is_some() {
             self.provider
                 .rebuild_thumbnail(&record.target, THUMBNAIL_SIZE)
         } else {
@@ -669,6 +669,9 @@ mod tests {
         write_bmp([32, 112, 217]);
         let mut row = record();
         let native = inspect(&sample).unwrap();
+        row.target.file.size = native.size;
+        row.target.file.modified = native.modified;
+        row.target.file.created = native.created;
         row.target.volume = source.display().to_string();
         row.target.identity.serial = Some(Serial {
             source: "win32_volume32".into(),
@@ -715,16 +718,38 @@ mod tests {
                 ))
                 .unwrap()
         );
+        let timestamp = fs::metadata(&sample).unwrap().modified().unwrap();
         write_bmp([191, 50, 22]);
+        fs::File::options()
+            .write(true)
+            .open(&sample)
+            .unwrap()
+            .set_modified(timestamp)
+            .unwrap();
+        let after = inspect(&sample).unwrap();
+        assert_eq!(after.identity, native.identity);
+        assert_eq!(after.size, native.size);
+        assert_eq!(after.modified, native.modified);
+        row.target.file.reference.revision = "2".into();
         assert_eq!(
-            shared.prebuild(&paths, &row, true, 0).unwrap(),
+            shared.prebuild(&paths, &row, false, 0).unwrap(),
+            Outcome::Skipped
+        );
+        row.target.file.content_version = Some(123);
+        assert_eq!(
+            shared.prebuild(&paths, &row, false, 0).unwrap(),
             Outcome::Saved
         );
+        let key = file_key(&row, Kind::Thumbnail, THUMBNAIL_SIZE).unwrap();
         let rebuilt = shared
             .cached(&paths, |cache| cache.get(key))
             .unwrap()
             .unwrap();
         assert_ne!(original, rebuilt);
+        assert_eq!(
+            shared.prebuild(&paths, &row, true, 0).unwrap(),
+            Outcome::Saved
+        );
         fs::rename(&source, temp.path().join("detached")).unwrap();
         assert_eq!(
             shared.prebuild(&paths, &row, true, 0).unwrap(),
@@ -742,6 +767,6 @@ mod tests {
             assert!(image.historical);
             assert_eq!(image.data_url, expected);
         }
-        assert_eq!(restarted.status(&paths).unwrap().stats.files, 1);
+        assert_eq!(restarted.status(&paths).unwrap().stats.files, 2);
     }
 }

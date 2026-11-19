@@ -56,7 +56,7 @@ fn existing_catalog_gains_an_object_link_index_without_changing_records() {
     db.publish(generation).unwrap();
     drop(db);
     let sql = rusqlite::Connection::open(&path).unwrap();
-    sql.execute_batch("ALTER TABLE objects DROP COLUMN video_current; DROP TABLE video_analysis; DROP TABLE video_analysis_history; DROP INDEX IF EXISTS paths_object; PRAGMA user_version=4;")
+    sql.execute_batch("ALTER TABLE generations DROP COLUMN thumbnail_base; ALTER TABLE objects DROP COLUMN content_version; ALTER TABLE objects DROP COLUMN video_current; DROP TABLE video_analysis; DROP TABLE video_analysis_history; DROP INDEX IF EXISTS paths_object; PRAGMA user_version=4;")
         .unwrap();
     drop(sql);
     let db = Volume::open(&path).unwrap();
