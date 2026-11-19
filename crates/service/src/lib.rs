@@ -4,6 +4,7 @@ pub mod index;
 pub mod jobs;
 pub mod scan;
 pub mod supervisor;
+mod thumbnails;
 use anyhow::{Context, Result, bail};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use stashfinder_core::{
@@ -67,6 +68,8 @@ pub async fn serve_runtime(
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(2));
     let mut refreshed = std::time::Instant::now();
     let mut searches = FuturesUnordered::new();
+    let mut thumbnail_job = None;
+    let mut thumbnail_id = 0_u64;
     loop {
         let result = tokio::select! {
             _ = stop.changed() => return Ok(()),
@@ -241,13 +244,27 @@ pub async fn serve_runtime(
                         .context("索引服务未配置")?
                         .runner
                         .video_analysis(&reference, result, &assets.snapshot()),
-                    Action::ThumbnailPage(request) => Ok(Response::ThumbnailPage(
-                        indexes
-                            .context("索引服务未配置")?
-                            .runner
-                            .thumbnail_page(&request, &assets.snapshot())?
-                            .map(Box::new),
-                    )),
+                    Action::ThumbnailBegin(scope) => {
+                        thumbnail_job = Some(
+                            indexes
+                                .context("索引服务未配置")?
+                                .runner
+                                .thumbnail_job(scope)?,
+                        );
+                        thumbnail_id += 1;
+                        Ok(Response::ThumbnailStarted(thumbnail_id))
+                    }
+                    Action::ThumbnailPage { id, offset } if id == thumbnail_id => thumbnail_job
+                        .as_ref()
+                        .context("分析任务已结束")?
+                        .page(offset, &assets.snapshot()),
+                    Action::ThumbnailEnd { id } => {
+                        if id == thumbnail_id {
+                            thumbnail_job = None;
+                        }
+                        Ok(Response::Accepted)
+                    }
+                    Action::ThumbnailPage { .. } => bail!("分析任务已过期，请重新开始"),
                     Action::SearchPage { id, offset } => Ok(Response::SearchPage(Box::new(
                         indexes.context("索引服务未配置")?.page(id, offset)?,
                     ))),

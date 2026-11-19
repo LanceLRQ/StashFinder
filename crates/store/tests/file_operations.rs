@@ -92,38 +92,33 @@ fn thumbnail_pages_cover_the_selected_scope_and_keep_the_generation() {
         )
         .unwrap();
     }
-    let mut request = ThumbnailPageRequest {
+    let mut request = ThumbnailScope {
         analyse: false,
         partition_id: "p".into(),
         filesystem_id: "fs".into(),
         generation: None,
         folder: Some(vec![2]),
-        after: None,
         types: ThumbnailTypes::default(),
     };
-    for (folder, expected) in [(Some(vec![2]), 81), (None, 82)] {
+    for (folder, expected) in [(Some(vec![2]), 81), (Some(vec![1]), 82), (None, 82)] {
         request.folder = folder;
-        request.after = None;
+        let plan = file_operations::ThumbnailPlan::build(&path, &request, &false.into()).unwrap();
+        assert_eq!(plan.total(), expected);
         let mut entries = std::collections::HashSet::new();
         let mut pages = 0;
-        loop {
-            let page = file_operations::thumbnail_candidates(&path, &request).unwrap();
+        while entries.len() < plan.total() {
+            let page = plan.page(entries.len()).unwrap();
             assert_eq!(page.unavailable, 0);
             pages += 1;
             for f in page.files {
                 assert!(entries.insert(f.reference.entry));
-            }
-            request.generation = Some(page.generation);
-            request.after = page.next;
-            if request.after.is_none() {
-                break;
             }
         }
         assert!(pages > 1);
         assert_eq!(entries.len(), expected);
     }
     request.generation = Some("999".into());
-    assert!(file_operations::thumbnail_candidates(&path, &request).is_err());
+    assert!(file_operations::ThumbnailPlan::build(&path, &request, &false.into()).is_err());
 
     sql.execute(
         "UPDATE paths SET name=?1 WHERE id=?2",
@@ -143,16 +138,16 @@ fn thumbnail_pages_cover_the_selected_scope_and_keep_the_generation() {
         documents: false,
         extensions: vec![".JXL".into()],
     };
-    let mut custom = Vec::new();
-    loop {
-        let page = file_operations::thumbnail_candidates(&path, &request).unwrap();
-        custom.extend(page.files.into_iter().map(|f| f.reference.entry));
-        request.after = page.next;
-        if request.after.is_none() {
-            break;
-        }
-    }
-    assert_eq!(custom, vec![vec![4]]);
+    let plan = file_operations::ThumbnailPlan::build(&path, &request, &false.into()).unwrap();
+    assert_eq!(plan.total(), 1);
+    assert_eq!(plan.page(0).unwrap().files[0].reference.entry, vec![4]);
+    // Reusing the same path entry for another file cannot redirect the frozen task.
+    sql.execute(
+        "UPDATE paths SET object=?1 WHERE id=?2",
+        rusqlite::params![7u64.to_le_bytes(), [4u8]],
+    )
+    .unwrap();
+    assert_eq!(plan.page(0).unwrap().unavailable, 1);
 }
 
 #[test]
@@ -408,13 +403,12 @@ fn video_analysis_survives_reopen_but_content_changes_invalidate_it() {
     let (renamed, cached) = file_operations::current_video(&path, &reference).unwrap();
     assert_eq!(cached, Some(true));
     assert!(String::from_utf16_lossy(&renamed.relative).starts_with("renamed"));
-    let manual = ThumbnailPageRequest {
+    let manual = ThumbnailScope {
         analyse: true,
         partition_id: "p".into(),
         filesystem_id: "fs".into(),
         generation: None,
         folder: None,
-        after: None,
         types: ThumbnailTypes {
             images: false,
             videos: false,
@@ -422,7 +416,8 @@ fn video_analysis_survives_reopen_but_content_changes_invalidate_it() {
             extensions: vec![],
         },
     };
-    let page = file_operations::thumbnail_candidates(&path, &manual).unwrap();
+    let plan = file_operations::ThumbnailPlan::build(&path, &manual, &false.into()).unwrap();
+    let page = plan.page(0).unwrap();
     assert_eq!(page.analyse_indices, [0, 1]);
     let request = stashfinder_core::browse::DirectoryRequest {
         partition_id: "p".into(),

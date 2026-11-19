@@ -292,55 +292,21 @@ impl Runner {
             })
         }
     }
-    pub fn thumbnail_page(
+    pub(crate) fn thumbnail_job(
         &self,
-        request: &stashfinder_core::file_operations::ThumbnailPageRequest,
-        snapshot: &Snapshot,
-    ) -> Result<Option<stashfinder_core::file_operations::ThumbnailPage>> {
+        scope: stashfinder_core::file_operations::ThumbnailScope,
+    ) -> Result<crate::thumbnails::ThumbnailJob> {
         let catalog = Catalog::read(&self.shared.root)?;
-        let row = catalog.get(&request.partition_id)?;
+        let row = catalog.get(&scope.partition_id)?;
         ensure!(
-            row.filesystem_id == request.filesystem_id && row.state == "ready",
+            row.filesystem_id == scope.filesystem_id && row.state == "ready",
             "缩略图范围已变化或登记未完成"
         );
-        let Some(asset) = snapshot.assets.iter().find(|a| {
-            a.registration.partition_id == row.partition_id
-                && a.registration.filesystem_id == row.filesystem_id
-                && a.registration.state == "ready"
-                && a.connection == "online"
-                && a.error.is_none()
-                && snapshot.error.is_none()
-        }) else {
-            return Ok(None);
-        };
-        if request.analyse {
-            ensure!(
-                asset
-                    .registration
-                    .observation
-                    .identity
-                    .filesystem
-                    .as_deref()
-                    == Some("NTFS"),
-                "视频识别需要 NTFS 分区"
-            );
-        }
-        let candidates = stashfinder_store::file_operations::thumbnail_candidates(
-            &catalog.volume_path(&row.filesystem_id)?,
-            request,
-        )?;
-        Ok(Some(stashfinder_core::file_operations::ThumbnailPage {
-            analyse_indices: candidates.analyse_indices,
-            generation: candidates.generation,
-            files: candidates.files,
-            folders: candidates.folders,
-            next: candidates.next,
-            unavailable: candidates.unavailable,
-            mounts: asset.mounts.clone(),
-            volume: asset.registration.observation.candidate_id.clone(),
-            identity: asset.registration.observation.identity.clone(),
-            partition_name: row.name,
-        }))
+        ensure!(
+            !scope.analyse || row.observation.identity.filesystem.as_deref() == Some("NTFS"),
+            "视频识别需要 NTFS 分区"
+        );
+        crate::thumbnails::ThumbnailJob::start(catalog.volume_path(&row.filesystem_id)?, scope)
     }
     pub fn observe(&self, snapshot: Snapshot) {
         let active = self.shared.active.lock().unwrap_or_else(|e| e.into_inner());

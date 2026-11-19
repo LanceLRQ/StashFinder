@@ -54,7 +54,6 @@ test("opens a folder job with skip selected and shows safe progress after reques
       ? {
           state: "running",
           label: scope.label,
-          discovered: 5,
           total: 10,
           saved: 2,
           skipped: 1,

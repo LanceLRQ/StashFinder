@@ -27,7 +27,6 @@ const states = {
 type Job = {
   label: string;
   state: keyof typeof states;
-  discovered: number;
   total: number | null;
   saved: number;
   skipped: number;
@@ -197,7 +196,7 @@ export function ThumbnailProgress({ revision }: { revision: number }) {
   const processed = job.saved + skipped + job.failed;
   const status =
     counting && job.state === "running"
-      ? "正在清点文件"
+      ? "正在从索引统计待处理文件"
       : job.analysing && job.state === "running"
         ? "正在分析"
         : states[job.state];
@@ -232,14 +231,11 @@ export function ThumbnailProgress({ revision }: { revision: number }) {
       </header>
       <div className="thumbnail-job-status">
         <span role="status">{status}</span>
-        <span>
-          {counting
-            ? "已清点 " + job.discovered.toLocaleString() + " 项"
-            : processed.toLocaleString() +
-              " / " +
-              total.toLocaleString() +
-              " 项"}
-        </span>
+        {total != null && (
+          <span>
+            {processed.toLocaleString()} / {total.toLocaleString()} 项
+          </span>
+        )}
       </div>
       {((counting && job.state === "running") ||
         (total != null && total > 0)) && (

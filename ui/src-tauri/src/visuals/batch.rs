@@ -5,10 +5,9 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use stashfinder_core::{
     Action, Response,
-    file_operations::{PreparedTarget, ThumbnailPage, ThumbnailPageRequest, VisualRecord},
+    file_operations::{PreparedTarget, ThumbnailScope, ThumbnailTypes, VisualRecord},
 };
 use std::{
-    collections::HashSet,
     fs::{self, OpenOptions},
     io::Write,
     sync::{Arc, Mutex, MutexGuard, atomic::Ordering},
@@ -41,7 +40,6 @@ pub struct BatchStatus {
     partition_id: String,
     label: String,
     state: BatchState,
-    discovered: usize,
     total: Option<usize>,
     saved: usize,
     skipped: usize,
@@ -122,7 +120,6 @@ pub async fn thumbnail_start(
         partition_id: options.partition_id.clone(),
         label: options.label,
         state: BatchState::Running,
-        discovered: 0,
         total: None,
         saved: 0,
         skipped: 0,
@@ -137,26 +134,39 @@ pub async fn thumbnail_start(
     let epoch = shared.epoch.load(Ordering::Acquire);
     drop(slot);
     tauri::async_runtime::spawn(async move {
-        let result = run(
-            &shared,
-            &paths,
-            ThumbnailPageRequest {
+        let context = &shared;
+        let cache_paths = &paths;
+        let result = async move {
+            let scope = ThumbnailScope {
                 analyse: options.analyse,
                 partition_id: options.partition_id,
                 filesystem_id: options.filesystem_id,
                 generation: options.generation,
                 folder: options.folder,
-                after: None,
+                types: types.clone(),
+            };
+            let Response::ThumbnailStarted(id) =
+                crate::runtime::request(Action::ThumbnailBegin(scope)).await?
+            else {
+                anyhow::bail!("分析任务启动响应无效");
+            };
+            let result = run(
+                context,
+                cache_paths,
                 types,
-            },
-            options.rebuild,
-            probe,
-            epoch,
-            async |request| match crate::runtime::request(Action::ThumbnailPage(request)).await? {
-                Response::ThumbnailPage(page) => Ok(page.map(|page| *page)),
-                _ => anyhow::bail!("缩略图候选响应无效"),
-            },
-        )
+                options.rebuild,
+                probe,
+                epoch,
+                async move |offset| {
+                    crate::runtime::request(Action::ThumbnailPage { id, offset }).await
+                },
+            )
+            .await;
+            let ended = crate::runtime::request(Action::ThumbnailEnd { id }).await;
+            result?;
+            ended?;
+            Ok::<(), anyhow::Error>(())
+        }
         .await;
         if let Err(error) = &result {
             let label = shared.batch.lock().as_ref().unwrap().label.clone();
@@ -238,73 +248,63 @@ async fn wait(batch: &Batch) -> bool {
 async fn run(
     shared: &Arc<Shared>,
     paths: &Paths,
-    mut request: ThumbnailPageRequest,
+    types: ThumbnailTypes,
     rebuild: bool,
     probe: Option<std::path::PathBuf>,
     epoch: u64,
-    mut fetch: impl AsyncFnMut(ThumbnailPageRequest) -> Result<Option<ThumbnailPage>>,
+    mut fetch: impl AsyncFnMut(Option<usize>) -> Result<Response>,
 ) -> Result<()> {
-    let mut candidates = Vec::new();
-    let mut folders = Vec::new();
-    let mut seen = HashSet::new();
-    if let Some(folder) = &request.folder {
-        seen.insert(folder.clone());
-    }
-    while wait(&shared.batch).await {
-        let Some(mut page) = fetch(request.clone()).await? else {
-            {
-                let mut lock = shared.batch.lock();
-                let job = lock.as_mut().unwrap();
-                if job.state == BatchState::Running {
-                    job.state = BatchState::Offline;
-                }
+    let thumbnail_extensions = types.selected_extensions();
+    let label = shared.batch.lock().as_ref().unwrap().label.clone();
+    let mut offset = 0;
+    let mut total = None;
+    while wait(&shared.batch).await && total != Some(offset) {
+        let page = match fetch(total.map(|_| offset)).await? {
+            Response::ThumbnailCounting => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            continue;
+            Response::ThumbnailCount(count) if total.is_none() => {
+                total = Some(count);
+                shared.batch.lock().as_mut().unwrap().total = total;
+                continue;
+            }
+            Response::AnalysisOffline => {
+                {
+                    let mut slot = shared.batch.lock();
+                    let job = slot.as_mut().unwrap();
+                    if job.state == BatchState::Running {
+                        job.state = BatchState::Offline;
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+            Response::ThumbnailPage(page) => page,
+            _ => anyhow::bail!("分析候选响应无效"),
         };
+        let received = page.files.len() + page.unavailable;
+        ensure!(
+            received > 0 && total.is_some_and(|n| received <= n - offset),
+            "分析候选数量与清点结果不一致"
+        );
+        offset += received;
         {
-            let mut lock = shared.batch.lock();
-            let job = lock.as_mut().unwrap();
+            let mut slot = shared.batch.lock();
+            let job = slot.as_mut().unwrap();
             if job.state == BatchState::Offline {
                 job.state = BatchState::Running;
             }
-            job.discovered += page.files.len() + page.unavailable;
             job.failed += page.unavailable;
         }
-        request.generation = Some(std::mem::take(&mut page.generation));
-        folders.extend(page.folders.drain(..).filter(|id| seen.insert(id.clone())));
-        let next = page.next;
-        if !page.files.is_empty() {
-            candidates.push(page);
+        if page.unavailable > 0 {
+            log_error(
+                paths,
+                &label,
+                None,
+                &format!("{} 个索引候选无法解析", page.unavailable),
+            );
         }
-        if let Some(next) = next {
-            request.after = Some(next);
-        } else if let Some(folder) = folders.pop() {
-            request.folder = Some(folder);
-            request.after = None;
-        } else {
-            break;
-        }
-    }
-    if !wait(&shared.batch).await {
-        return Ok(());
-    }
-    let (label, unavailable) = {
-        let mut lock = shared.batch.lock();
-        let job = lock.as_mut().unwrap();
-        job.total = Some(job.discovered);
-        (job.label.clone(), job.failed)
-    };
-    if unavailable > 0 {
-        log_error(
-            paths,
-            &label,
-            None,
-            &format!("{unavailable} 个索引候选无法解析"),
-        );
-    }
-    let thumbnail_extensions = request.types.selected_extensions();
-    for page in candidates {
         for (index, file) in page.files.into_iter().enumerate() {
             let record = VisualRecord {
                 online: true,
@@ -386,7 +386,7 @@ async fn run(
                 }
                 if probe.is_some()
                     && !(thumbnail_extensions.contains(ext)
-                        || request.types.videos
+                        || types.videos
                             && finding
                                 == Some(stashfinder_core::file_operations::VideoFinding::Video))
                 {
@@ -588,7 +588,6 @@ mod tests {
             partition_id: "p".into(),
             label: "Photos".into(),
             state: BatchState::Running,
-            discovered: 0,
             total: None,
             saved: 0,
             skipped: 0,
@@ -604,49 +603,40 @@ mod tests {
         run(
             &shared,
             &paths,
-            ThumbnailPageRequest {
-                analyse: false,
-                partition_id: "p".into(),
-                filesystem_id: "fs".into(),
-                generation: None,
-                folder: None,
-                after: None,
-                types: Default::default(),
-            },
+            ThumbnailTypes::default(),
             false,
             None,
             0,
-            async |request: ThumbnailPageRequest| {
-                let target = record().target;
+            async |offset| {
                 let slot = shared.batch.lock();
                 let status = slot.as_ref().unwrap();
-                assert_eq!(status.total, None);
-                assert_eq!((status.saved, status.skipped, status.failed), (0, 0, 0));
-                assert_eq!(status.discovered, pages);
-                assert_eq!(request.after, (pages == 1).then_some(1));
+                let Some(offset) = offset else {
+                    assert_eq!(status.total, None);
+                    return Ok(Response::ThumbnailCount(2));
+                };
+                assert_eq!(status.total, Some(2));
+                assert_eq!(status.failed, offset);
+                assert_eq!(offset, pages);
                 pages += 1;
-                Ok(Some(ThumbnailPage {
-                    analyse_indices: vec![],
-                    generation: "1".into(),
-                    files: vec![target.file],
-                    folders: vec![],
-                    next: (pages == 1).then_some(1),
-                    unavailable: 0,
-                    mounts: vec![],
-                    volume: temp.path().display().to_string(),
-                    identity: target.identity,
-                    partition_name: "Photos".into(),
-                }))
+                let target = record().target;
+                Ok(Response::ThumbnailPage(Box::new(
+                    stashfinder_core::file_operations::ThumbnailPage {
+                        analyse_indices: vec![],
+                        files: vec![target.file],
+                        unavailable: 0,
+                        mounts: vec![],
+                        volume: temp.path().display().to_string(),
+                        identity: target.identity,
+                        partition_name: "Photos".into(),
+                    },
+                )))
             },
         )
         .await
         .unwrap();
         let status = shared.batch.lock();
         let status = status.as_ref().unwrap();
-        assert_eq!(
-            (status.discovered, status.total, status.failed),
-            (2, Some(2), 2)
-        );
+        assert_eq!((pages, status.total, status.failed), (2, Some(2), 2));
         let errors = fs::read_to_string(paths.root.with_file_name("thumbnail-jobs.log")).unwrap();
         assert_eq!(errors.lines().count(), 2);
         let public = serde_json::to_value(status).unwrap();
@@ -692,7 +682,6 @@ mod tests {
             partition_id: "p".into(),
             label: "Photos".into(),
             state: BatchState::Running,
-            discovered: 1,
             total: Some(1),
             saved: 0,
             skipped: 0,

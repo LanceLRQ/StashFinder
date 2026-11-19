@@ -184,144 +184,148 @@ pub fn directory_refs(
 
 pub use stashfinder_core::file_operations::top_level;
 
+/// Stable path and object identities from one index snapshot. Full paths are resolved per batch.
+pub struct ThumbnailPlan {
+    path: std::path::PathBuf,
+    reference: EntryRef,
+    entries: Vec<(Vec<u8>, Vec<u8>, bool)>,
+}
+
 #[derive(Default)]
 pub struct ThumbnailCandidates {
     pub analyse_indices: Vec<usize>,
-    pub generation: String,
     pub files: Vec<ResolvedEntry>,
-    pub folders: Vec<Vec<u8>>,
-    pub next: Option<i64>,
     pub unavailable: usize,
 }
 
-pub fn thumbnail_candidates(
-    path: &Path,
-    request: &ThumbnailPageRequest,
-) -> Result<ThumbnailCandidates> {
-    let mut types = request.types.clone();
-    types.normalize()?;
-    let extensions = types.selected_extensions();
-    let mut db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    if request.analyse
-        && request.after.is_none()
-        && db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))? < 6
-    {
-        crate::volume::Volume::open(path)?;
-    }
-    let tx = db.transaction()?;
-    let (generation, revision): (i64, i64) = tx.query_row(
-        "SELECT g.id,g.revision FROM index_state s JOIN generations g ON g.id=s.active_generation WHERE s.id=1",
-        [],
-        |r| Ok((r.get(0)?,r.get(1)?)),
-    ).context("分区尚无可用索引")?;
-    if request.analyse && request.after.is_none() {
+impl ThumbnailPlan {
+    pub fn build(
+        path: &Path,
+        scope: &ThumbnailScope,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<Self> {
+        let mut types = scope.types.clone();
+        types.normalize()?;
+        let extensions = types.selected_extensions();
+        let mut db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        if scope.analyse && db.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))? < 6 {
+            crate::volume::Volume::open(path)?;
+        }
+        let tx = db.transaction()?;
+        let (generation, revision, journal): (i64, i64, bool) = tx.query_row(
+            "SELECT g.id,g.revision,coalesce(length(g.journal)=8,0) FROM index_state s JOIN generations g ON g.id=s.active_generation WHERE s.id=1",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        ).context("分区尚无可用索引")?;
         ensure!(
-            tx.query_row(
-                "SELECT coalesce(length(journal)=8,0) FROM generations WHERE id=?1",
-                [generation],
-                |r| r.get::<_, bool>(0)
-            )?,
+            !scope.analyse || journal,
             "视频识别需要已建立 USN 索引的 NTFS 分区"
         );
-    }
-    let generation_text = generation.to_string();
-    ensure!(
-        request
-            .generation
-            .as_ref()
-            .is_none_or(|g| g == &generation_text),
-        "索引代次已变化，请重新开始"
-    );
-    let mut reference = EntryRef {
-        partition_id: request.partition_id.clone(),
-        filesystem_id: request.filesystem_id.clone(),
-        generation: generation_text.clone(),
-        revision: revision.to_string(),
-        entry: request.folder.clone().unwrap_or_default(),
-    };
-    if request.folder.is_some() && request.after.is_none() {
+        let reference = EntryRef {
+            partition_id: scope.partition_id.clone(),
+            filesystem_id: scope.filesystem_id.clone(),
+            generation: generation.to_string(),
+            revision: revision.to_string(),
+            entry: scope.folder.clone().unwrap_or_default(),
+        };
         ensure!(
-            resolve_in(&tx, &reference, true, false)?.folder,
-            "缩略图范围不是文件夹"
+            scope
+                .generation
+                .as_ref()
+                .is_none_or(|g| g == &reference.generation),
+            "索引代次已变化，请重新开始"
         );
-    }
-    let query = if request.folder.is_some() {
-        "SELECT p.rowid,p.id,p.name,o.kind,o.attributes,p.object FROM paths p INDEXED BY paths_parent JOIN objects o
-         ON o.generation=p.generation AND o.id=p.object
-         WHERE p.generation=?1 AND p.parent=?2 AND p.rowid>?3 ORDER BY p.rowid LIMIT 65"
-    } else {
-        "SELECT p.rowid,p.id,p.name,o.kind,o.attributes,p.object FROM paths p NOT INDEXED JOIN objects o
-         ON o.generation=p.generation AND o.id=p.object
-         WHERE p.generation=?1 AND ?2 IS NULL AND p.rowid>?3 ORDER BY p.rowid LIMIT 65"
-    };
-    let mut stmt = tx.prepare(query)?;
-    let rows = stmt
-        .query_map(
-            params![generation, request.folder, request.after.unwrap_or(0)],
-            |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, Vec<u8>>(1)?,
-                    r.get::<_, Vec<u8>>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, u32>(4)?,
-                    r.get::<_, Vec<u8>>(5)?,
-                ))
-            },
-        )?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    let mut result = ThumbnailCandidates {
-        generation: generation_text,
-        ..Default::default()
-    };
-    let mut last = None;
-    // Leave space for the shared volume identity and the IPC envelope.
-    let mut bytes = 0;
-    for (i, (rowid, id, name, kind, attributes, object)) in rows.into_iter().enumerate() {
-        if i == 64 {
-            result.next = last;
-            break;
-        }
-        if kind == "folder" && request.folder.is_some() && attributes & 1024 == 0 {
-            bytes += serde_json::to_vec(&id)?.len() + 1;
-            if bytes > MAX_FRAME / 2 {
-                result.next = last;
-                break;
+        let active = || !cancelled.load(std::sync::atomic::Ordering::Relaxed);
+        let mut analysed = HashSet::<Vec<u8>>::new();
+        if scope.analyse {
+            let mut stmt = tx.prepare("SELECT object FROM video_analysis WHERE generation=?1")?;
+            for row in stmt.query_map([generation], |r| r.get(0))? {
+                ensure!(active(), "分析任务已取消");
+                analysed.insert(row?);
             }
-            result.folders.push(id.clone());
         }
-        if kind == "file" && attributes & 1024 == 0 {
-            let ext = crate::search::extension(&crate::search::decode_name(&name)?).to_lowercase();
-            let analyse = request.analyse && (VIDEO_EXTENSIONS.contains(&ext.as_str()) ||
-                tx.prepare_cached("SELECT EXISTS(SELECT 1 FROM video_analysis WHERE generation=?1 AND object=?2)")?
-                    .query_row(params![generation,object], |r| r.get::<_,bool>(0))?);
-            if !analyse && !extensions.contains(ext.as_str()) {
-                last = Some(rowid);
+        let mut eligible = HashSet::<Vec<u8>>::new();
+        let query = if scope.folder.is_some() {
+            ensure!(
+                resolve_in(&tx, &reference, true, false)?.folder,
+                "缩略图范围不是文件夹"
+            );
+            "WITH RECURSIVE dirs(id) AS (
+                SELECT ?2 UNION SELECT p.id FROM dirs CROSS JOIN paths p INDEXED BY paths_parent
+                JOIN objects o ON o.generation=p.generation AND o.id=p.object
+                WHERE p.generation=?1 AND p.parent=dirs.id AND o.kind='folder' AND o.attributes & 1024=0
+             ) SELECT p.name,p.id,p.object FROM dirs CROSS JOIN paths p INDEXED BY paths_parent
+               JOIN objects o ON o.generation=p.generation AND o.id=p.object
+               WHERE p.generation=?1 AND p.parent=dirs.id AND o.kind='file' AND o.attributes & 1024=0"
+        } else {
+            // Two sequential reads avoid a random object lookup for every path on a whole volume.
+            let mut stmt = tx.prepare("SELECT id FROM objects NOT INDEXED WHERE generation=?1 AND kind='file' AND attributes & 1024=0")?;
+            for row in stmt.query_map([generation], |r| r.get(0))? {
+                ensure!(active(), "分析任务已取消");
+                eligible.insert(row?);
+            }
+            "SELECT name,id,object FROM paths NOT INDEXED WHERE generation=?1 AND ?2 IS NULL"
+        };
+        let mut stmt = tx.prepare(query)?;
+        let mut rows = stmt.query(params![generation, scope.folder])?;
+        let mut entries = Vec::new();
+        while let Some(row) = rows.next()? {
+            ensure!(active(), "分析任务已取消");
+            let object = row.get_ref(2)?.as_blob()?;
+            if scope.folder.is_none() && !eligible.contains(object) {
                 continue;
             }
-            reference.entry.clone_from(&id);
-            match resolve_in(&tx, &reference, false, false) {
-                Ok(file) => {
-                    let n = serde_json::to_vec(&file)?.len() + 1;
-                    if n > MAX_FRAME / 2 {
-                        result.unavailable += 1;
-                    } else if bytes + n > MAX_FRAME / 2 {
-                        result.next = last;
-                        break;
-                    } else {
-                        bytes += n;
-                        if analyse {
-                            result.analyse_indices.push(result.files.len());
-                        }
-                        result.files.push(file);
-                    }
-                }
-                Err(_) => result.unavailable += 1,
+            let name = crate::search::decode_name(row.get_ref(0)?.as_blob()?)?;
+            let ext = crate::search::extension(&name).to_lowercase();
+            let analyse = scope.analyse
+                && (VIDEO_EXTENSIONS.contains(&ext.as_str()) || analysed.contains(object));
+            if analyse || extensions.contains(ext.as_str()) {
+                entries.push((row.get(1)?, object.to_vec(), analyse));
             }
         }
-        last = Some(rowid);
+        Ok(Self {
+            path: path.to_owned(),
+            reference,
+            entries,
+        })
     }
-    Ok(result)
+
+    pub fn total(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn page(&self, offset: usize) -> Result<ThumbnailCandidates> {
+        ensure!(offset < self.total(), "缩略图批次超出范围");
+        let mut db = Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let tx = db.transaction()?;
+        let mut reference = self.reference.clone();
+        let revision: i64 = tx.query_row("SELECT g.revision FROM index_state s JOIN generations g ON g.id=s.active_generation WHERE s.id=1 AND g.id=?1",
+            [&reference.generation], |r| r.get(0)).context("索引代次已变化，请重新开始")?;
+        reference.revision = revision.to_string();
+        let mut result = ThumbnailCandidates::default();
+        let mut bytes = 0;
+        for (entry, object, analyse) in self.entries[offset..].iter().take(64) {
+            reference.entry.clone_from(entry);
+            if let Ok(file) = resolve_in(&tx, &reference, false, false)
+                && !file.folder
+                && &file.object == object
+            {
+                let size = serde_json::to_vec(&file)?.len() + 1;
+                if size <= MAX_FRAME / 2 {
+                    if bytes + size > MAX_FRAME / 2 {
+                        break;
+                    }
+                    bytes += size;
+                    if *analyse {
+                        result.analyse_indices.push(result.files.len());
+                    }
+                    result.files.push(file);
+                    continue;
+                }
+            }
+            result.unavailable += 1;
+        }
+        Ok(result)
+    }
 }
 
 pub fn video_results(

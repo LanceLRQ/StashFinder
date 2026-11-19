@@ -141,24 +141,20 @@ impl ThumbnailTypes {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ThumbnailPageRequest {
+pub struct ThumbnailScope {
     #[serde(default)]
     pub analyse: bool,
     pub partition_id: String,
     pub filesystem_id: String,
     pub generation: Option<String>,
     pub folder: Option<Vec<u8>>,
-    pub after: Option<i64>,
     pub types: ThumbnailTypes,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ThumbnailPage {
     pub analyse_indices: Vec<usize>,
-    pub generation: String,
     pub files: Vec<ResolvedEntry>,
-    pub folders: Vec<Vec<u8>>,
-    pub next: Option<i64>,
     pub unavailable: usize,
     pub mounts: Vec<String>,
     pub volume: String,
