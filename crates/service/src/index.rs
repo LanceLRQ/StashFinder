@@ -5,7 +5,8 @@ use stashfinder_store::search::SearchIndex;
 use stashfinder_store::volume::{Changes, Cursor, Entry, Object, Volume};
 use stashfinder_windows::ntfs::{
     DirectoryEntry, Journal, METADATA_ONLY_USN_REASONS, NativeObject,
-    USN_REASONS_PRESERVING_CONTENT, UsnPage, UsnRecord, VolumeReader,
+    USN_REASONS_CHANGING_DIRECTORY, USN_REASONS_PRESERVING_CONTENT, UsnPage, UsnRecord,
+    VolumeReader,
     mft::{ControlRecordTailMismatch, FastScanStats, FastScanUnavailable},
 };
 use std::{
@@ -123,24 +124,20 @@ pub fn has_relevant_changes(
             page.next > next as u64 && page.next <= i64::MAX as u64,
             "USN 回放未前进"
         );
-        let mut candidates = BTreeMap::<u64, (u32, bool)>::new();
-        for record in &page.records {
-            ensure!(
-                record.usn >= next && record.usn < page.next as i64,
-                "USN 记录范围无效"
-            );
-            let candidate = candidates.entry(record.id).or_default();
-            candidate.0 |= record.reason;
-            candidate.1 |= !ignored_record(source, db, generation, record)?;
-        }
+        let candidates = replay_targets(&page, next, |record| {
+            Ok(!ignored_record(source, db, generation, record)?)
+        })?;
         let mut later_deletions = None;
-        for (id, (reason, inspect)) in candidates {
-            if !inspect {
+        for (id, target) in candidates {
+            if !target.inspect {
                 continue;
             }
             if db.has_object(generation, &id.to_le_bytes())? {
                 return Ok(true);
             }
+            let Some(reason) = target.reason else {
+                continue;
+            };
             match source.object(id)? {
                 Some(current) => {
                     if visible_object(source, current)?.is_some() {
@@ -179,6 +176,35 @@ pub fn has_relevant_changes(
         return Ok(true);
     }
     Ok(false)
+}
+
+#[derive(Default)]
+struct ReplayTarget {
+    // A parent may need fresh metadata without a USN record of its own.
+    reason: Option<u32>,
+    inspect: bool,
+}
+
+fn replay_targets(
+    page: &UsnPage,
+    start: i64,
+    mut visible: impl FnMut(&UsnRecord) -> Result<bool>,
+) -> Result<BTreeMap<u64, ReplayTarget>> {
+    let mut targets = BTreeMap::<u64, ReplayTarget>::new();
+    for record in &page.records {
+        ensure!(
+            record.usn >= start && record.usn < page.next as i64,
+            "USN 记录范围无效"
+        );
+        let inspect = visible(record)?;
+        let target = targets.entry(record.id).or_default();
+        *target.reason.get_or_insert(0) |= record.reason;
+        target.inspect |= inspect;
+        if inspect && record.reason & USN_REASONS_CHANGING_DIRECTORY != 0 {
+            targets.entry(record.parent).or_default().inspect = true;
+        }
+    }
+    Ok(targets)
 }
 
 fn ignored_record(
@@ -564,20 +590,20 @@ fn build_strategy_checked(
                         page.next > next as u64 && page.next <= i64::MAX as u64,
                         "USN 回放未前进"
                     );
-                    let mut ids = BTreeMap::<u64, (u32, bool)>::new();
-                    for record in page.records {
-                        ensure!(record.usn >= next, "USN 记录倒退");
-                        let candidate = ids.entry(record.id).or_default();
-                        candidate.0 |= record.reason;
-                        candidate.1 |= !ignored_record(source, db, generation, &record)?;
-                    }
+                    let ids = replay_targets(&page, next, |record| {
+                        Ok(!ignored_record(source, db, generation, record)?)
+                    })?;
                     let mut objects = Vec::new();
                     let mut entries = Vec::new();
                     let mut removed = Vec::new();
                     let mut added = HashSet::new();
                     let mut later_deletions = None;
-                    for (id, (reason, inspect)) in ids {
-                        if !inspect {
+                    for (id, target) in ids {
+                        let reason = target.reason.unwrap_or_default();
+                        if !target.inspect
+                            || (target.reason.is_none()
+                                && !db.has_object(generation, &id.to_le_bytes())?)
+                        {
                             continue;
                         }
                         ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
@@ -602,6 +628,7 @@ fn build_strategy_checked(
                                     removed.push(id.to_le_bytes().to_vec());
                                 }
                             }
+                            None if target.reason.is_none() => continue,
                             None => {
                                 verify_deletion(
                                     source,
@@ -871,16 +898,9 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
                 page.next > next as u64 && page.next <= i64::MAX as u64,
                 "USN 回放未前进"
             );
-            let mut ids = BTreeMap::<u64, (u32, bool)>::new();
-            for record in page.records {
-                ensure!(
-                    record.usn >= next && record.usn < page.next as i64,
-                    "USN 记录范围无效"
-                );
-                let candidate = ids.entry(record.id).or_default();
-                candidate.0 |= record.reason;
-                candidate.1 |= !ignored_record(source, db, generation, &record)?;
-            }
+            let ids = replay_targets(&page, next, |record| {
+                Ok(!ignored_record(source, db, generation, record)?)
+            })?;
             let mut objects = Vec::new();
             let mut entries = Vec::new();
             let mut removed = Vec::new();
@@ -888,8 +908,11 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
             let mut added = HashSet::new();
             let mut later_deletions = None;
             let mut content_changes = Vec::new();
-            for (id, (reason, inspect)) in ids {
-                if !inspect {
+            for (id, target) in ids {
+                let reason = target.reason.unwrap_or_default();
+                if !target.inspect
+                    || (target.reason.is_none() && !db.has_object(generation, &id.to_le_bytes())?)
+                {
                     continue;
                 }
                 ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
@@ -905,8 +928,8 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
                 let current = match source.object(id) {
                     Err(error)
                         if error.is::<ControlRecordTailMismatch>()
-                            && reason != 0
-                            && reason & !METADATA_ONLY_USN_REASONS == 0
+                            && (target.reason.is_none()
+                                || reason != 0 && reason & !METADATA_ONLY_USN_REASONS == 0)
                             && db.has_object(generation, &id.to_le_bytes())? =>
                     {
                         pending.push(id.to_le_bytes().to_vec());
@@ -930,6 +953,7 @@ pub fn synchronize(source: &dyn Source, db: &mut Volume, cancelled: &AtomicBool)
                             removed.push(id.to_le_bytes().to_vec());
                         }
                     }
+                    None if target.reason.is_none() => continue,
                     None => {
                         verify_deletion(
                             source,

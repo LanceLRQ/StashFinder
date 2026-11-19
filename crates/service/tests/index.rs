@@ -363,6 +363,9 @@ impl Source for FastFixture {
         if self.failure == Some("directory_delete") && id == 20 {
             return Ok(None);
         }
+        if id == 20 {
+            return Ok(Some(changed_parent(id)));
+        }
         if self.failure == Some("move") {
             if id == 21 {
                 return Ok(Some(NativeObject {
@@ -667,6 +670,16 @@ fn sequential_replay_removes_all_links_of_a_deleted_file_before_publication() {
     assert_eq!(db.index_status().unwrap().records, 1);
     assert_eq!(db.object_count(generation).unwrap(), 2);
     assert_eq!(source.legacy.get(), 0);
+    let index = SearchIndex::load(&db).unwrap().unwrap();
+    let rows = index
+        .search(
+            &Query::parse("folder", false).unwrap(),
+            &[],
+            1,
+            &false.into(),
+        )
+        .unwrap();
+    assert_eq!(rows.rows[0].modified.as_deref(), Some("789"));
 }
 
 #[cfg(feature = "memory-index-bench")]
@@ -771,6 +784,9 @@ impl Source for Delta {
     }
     fn object(&self, id: u64) -> anyhow::Result<Option<NativeObject>> {
         anyhow::ensure!(!self.unreadable, "device disconnected");
+        if id == 5 {
+            return Ok(Some(changed_parent(id)));
+        }
         assert_eq!(id, 20);
         Ok(Some(NativeObject {
             entry: entry(20, "later.txt", false, 42),
@@ -901,6 +917,9 @@ impl Source for MetadataDelta {
     }
 
     fn object(&self, id: u64) -> anyhow::Result<Option<NativeObject>> {
+        if matches!(id, 5 | 20) {
+            return Ok(Some(changed_parent(id)));
+        }
         if id == self.target {
             if self.unreadable {
                 torn_control_record()?;
@@ -1328,6 +1347,20 @@ fn cancellation_after_final_scan_batch_does_not_publish() {
         .is_err()
     );
     assert_eq!(db.active_generation().unwrap(), None);
+}
+
+fn changed_parent(id: u64) -> NativeObject {
+    let (name, links) = match id {
+        5 => ("\\", vec![]),
+        20 => ("folder", vec![(5, "folder".encode_utf16().collect())]),
+        _ => panic!("unexpected directory ID {id}"),
+    };
+    let mut folder = entry(id, name, true, 0);
+    folder.modified = 789;
+    NativeObject {
+        entry: folder,
+        links,
+    }
 }
 
 struct ChangesFixture {

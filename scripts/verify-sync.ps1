@@ -83,6 +83,8 @@ try {
     $partition | Format-Volume -FileSystem NTFS -NewFileSystemLabel 'SF-M3-Test' -Confirm:$false | Out-Null
     $root = $partition.DriveLetter + ':\'
     [IO.Directory]::CreateDirectory($root + 'fixture\aaa') | Out-Null
+    $parentNames = @('parent-time-left','parent-time-right')
+    foreach ($name in $parentNames) { [IO.Directory]::CreateDirectory($root + $name) | Out-Null }
     [IO.File]::WriteAllText($root + 'fixture\aaa\bbb.txt', 'initial')
     [IO.File]::WriteAllText($root + 'fixture\remove.txt', 'remove')
     & fsutil.exe hardlink create ($root + 'fixture\alias.txt') ($root + 'fixture\aaa\bbb.txt') | Out-Null
@@ -100,6 +102,25 @@ try {
     Wait-For { (Send-Action @{index_state=@{partition_id=$assetId}}).phase -eq 'ready' } 'automatic initial index'
     $generation = (Send-Action @{index_state=@{partition_id=$assetId}}).active_generation
     $report.checks += 'Device discovery and initial indexing run without GUI requests to refresh or start indexing'
+    $left = Join-Path ($root + $parentNames[0]) 'child.txt'
+    $right = Join-Path ($root + $parentNames[1]) 'child.txt'
+    foreach ($operation in @('create','move','delete')) {
+        switch ($operation) {
+            'create' { [IO.File]::WriteAllText($left, 'parent timestamp test') }
+            'move' { [IO.File]::Move($left, $right) }
+            'delete' { [IO.File]::Delete($right) }
+        }
+        Wait-For {
+            $folders = @((Search 'parent-time-' $assetId) | Where-Object { $_.file.kind -eq 'folder' })
+            if ($folders.Count -ne 2) { return $false }
+            foreach ($name in $parentNames) {
+                $match = @($folders | Where-Object { $_.file.path -eq $name })
+                if ($match.Count -ne 1 -or $match[0].file.modified -ne [IO.Directory]::GetLastWriteTimeUtc($root + $name).ToFileTimeUtc().ToString()) { return $false }
+            }
+            return $true
+        } "both indexed directory timestamps after $operation"
+    }
+    $report.checks += 'Create, cross-directory move and delete refresh directory timestamps to the exact filesystem values'
     [IO.Directory]::Move($root + 'fixture\aaa', $root + 'fixture\renamed')
     [IO.File]::WriteAllText($root + 'fixture\renamed\bbb.txt', 'updated automatically')
     [IO.File]::Delete($root + 'fixture\remove.txt')

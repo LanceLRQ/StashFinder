@@ -274,21 +274,16 @@ fn collect_rows(
                 page.next > next as u64 && page.next <= i64::MAX as u64,
                 "USN 回放未前进"
             );
-            let mut ids = BTreeMap::<u64, (u32, bool)>::new();
-            for record in page.records {
-                ensure!(
-                    record.usn >= next && record.usn < page.next as i64,
-                    "USN 记录范围无效"
-                );
-                let candidate = ids.entry(record.id).or_default();
-                candidate.0 |= record.reason;
-                candidate.1 |= records.contains_key(&record.id)
-                    || !source.excluded_directory(record.parent)?;
-            }
+            let ids =
+                replay_targets(&page, next, |record| {
+                    Ok(records.contains_key(&record.id)
+                        || !source.excluded_directory(record.parent)?)
+                })?;
             let mut later_deletions = None;
-            for (id, (reason, inspect)) in ids {
+            for (id, target) in ids {
                 ensure!(!cancelled.load(Ordering::Relaxed), "索引已取消");
-                if !inspect
+                if !target.inspect
+                    || (target.reason.is_none() && !records.contains_key(&id))
                     || (id & 0x0000ffffffffffff < 16 && id != root)
                     || excluded.contains(&id)
                 {
@@ -316,12 +311,13 @@ fn collect_rows(
                             continue;
                         }
                     }
+                    None if target.reason.is_none() => continue,
                     None => verify_deletion(
                         source,
                         journal.id,
                         page.next as i64,
                         id,
-                        reason,
+                        target.reason.unwrap_or_default(),
                         &mut later_deletions,
                         cancelled,
                     )?,
