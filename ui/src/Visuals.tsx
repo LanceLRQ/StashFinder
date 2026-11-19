@@ -16,6 +16,7 @@ import "./visuals.css";
 
 const Context = createContext<{
   epoch: number;
+  thumbnailRevision: number;
   icon: (name: string, folder: boolean, size: number) => Promise<VisualImage>;
   invalidate: () => void;
   openThumbnails: (scope: ThumbnailScope) => void;
@@ -29,6 +30,7 @@ export default function Visuals({
   onOpenCache?: () => void;
 }) {
   const [epoch, setEpoch] = useState(0);
+  const [thumbnailRevision, setThumbnailRevision] = useState(0);
   const [thumbnailView, setThumbnailView] = useState<ThumbnailScope | null>(
     null,
   );
@@ -38,7 +40,7 @@ export default function Visuals({
     let live = true;
     let stop: (() => void) | undefined;
     void listen("thumbnail-cache-updated", () => {
-      if (live) setEpoch((value) => value + 1);
+      if (live) setThumbnailRevision((value) => value + 1);
     })
       .then((unlisten) => {
         if (live) stop = unlisten;
@@ -53,6 +55,7 @@ export default function Visuals({
   const value = useMemo(
     () => ({
       epoch,
+      thumbnailRevision,
       icon(name: string, folder: boolean, size: number) {
         const dot = name.lastIndexOf(".");
         const extension =
@@ -84,7 +87,7 @@ export default function Visuals({
       openThumbnails: setThumbnailView,
       thumbnailTaskRevision,
     }),
-    [epoch, thumbnailTaskRevision],
+    [epoch, thumbnailRevision, thumbnailTaskRevision],
   );
   return (
     <Context.Provider value={value}>
@@ -157,8 +160,10 @@ export function useFileVisual(
   queued = false,
 ) {
   const context = useVisuals();
+  const thumbnailRevision =
+    kind === "thumbnail" ? context?.thumbnailRevision : undefined;
   const key = JSON.stringify([
-    reference,
+    reference && { ...reference, revision: undefined },
     kind,
     size,
     connection,
@@ -182,7 +187,12 @@ export function useFileVisual(
       unlisten = undefined;
     }
     const requestId = crypto.randomUUID();
-    setState({ key, image: null, phase: "waiting", error: "" });
+    setState((previous) => ({
+      key,
+      image: previous.key === key ? previous.image : null,
+      phase: "waiting",
+      error: "",
+    }));
     const request = () => {
       // Progress reporting is optional, even when the image request is queued.
       void listen<{ request_id: string; phase: string }>(
@@ -219,12 +229,16 @@ export function useFileVisual(
           if (live) {
             done = true;
             stopListening();
-            setState({
+            const message = String(error).replace(/^Error: /, "");
+            setState((previous) => ({
               key,
-              image: null,
+              image:
+                previous.key === key && message === "索引记录已变化，请刷新重选"
+                  ? previous.image
+                  : null,
               phase: "",
-              error: String(error).replace(/^Error: /, ""),
-            });
+              error: message,
+            }));
           }
         })
         .finally(() => {
@@ -245,9 +259,11 @@ export function useFileVisual(
       if (started && !done)
         void invoke("visual_cancel", { requestId }).catch(() => {});
     };
-  }, [key, context]);
+  }, [key, reference?.revision, thumbnailRevision]);
   return state.key === key
-    ? state
+    ? state.image?.data_url
+      ? { ...state, phase: "" }
+      : state
     : {
         key,
         image: null,

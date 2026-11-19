@@ -35,6 +35,7 @@ export default function FileDetails({
                 reference.partition_id,
                 reference.filesystem_id,
                 reference.entry,
+                file.object,
                 connection,
               ])}
               file={file}

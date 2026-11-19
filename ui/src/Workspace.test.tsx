@@ -1358,3 +1358,39 @@ test("a saved directory does not override Home when the snapshot arrives", () =>
   ).toBeTruthy();
   expect(readDirectory).not.toHaveBeenCalled();
 });
+
+test("a background index refresh keeps loaded directory pages and the same selected file", async () => {
+  const view = setup();
+  let revision = "2";
+  vi.mocked(readDirectory).mockImplementation(async (request) => {
+    if (request.folders_only) return { ...root, entries: [] };
+    return {
+      ...root,
+      revision,
+      entries: request.offset ? [row(4, "second.jpg")] : [row(3, "first.jpg")],
+      next: request.offset ? null : 1,
+    };
+  });
+  choosePartition();
+  fireEvent.click(await screen.findByRole("button", { name: "加载更多文件" }));
+  fireEvent.click(await screen.findByRole("row", { name: /second.jpg/ }));
+  revision = "3";
+  view.rerender(
+    <Workspace
+      assets={[asset]}
+      includePath
+      request={{ text: "", revision: 0 }}
+      indexes={{ p: { index_version: "1:3", indexed_at: 1 } }}
+    />,
+  );
+  await waitFor(() =>
+    expect(readDirectory).toHaveBeenCalledWith(
+      expect.objectContaining({ offset: 1, revision: "3" }),
+    ),
+  );
+  expect(
+    (await screen.findByRole("row", { name: /second.jpg/ })).getAttribute(
+      "aria-selected",
+    ),
+  ).toBe("true");
+});

@@ -24,7 +24,7 @@ export default function FileListItem({
   index: number;
   total: number;
   selected: boolean;
-  file?: Pick<FileRow, "name" | "kind">;
+  file?: Pick<FileRow, "name" | "kind" | "object">;
   active: boolean;
   reference?: EntryRef;
   connection?: string;
@@ -39,6 +39,7 @@ export default function FileListItem({
   const Item = grid ? "div" : "tr";
   const icon = file && (
     <FileIcon
+      key={JSON.stringify(file.object)}
       active={active}
       name={file.name}
       folder={file.kind === "folder"}

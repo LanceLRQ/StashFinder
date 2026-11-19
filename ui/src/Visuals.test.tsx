@@ -327,3 +327,49 @@ test("offers a manual FFmpeg repair after Windows fails and cancels on selection
   expect(screen.queryByText("缩略图已补建")).toBeNull();
   expect(screen.queryByRole("button", { name: "用 FFmpeg 补建" })).toBeNull();
 });
+
+test("an index revision keeps the visible thumbnail until its replacement arrives", async () => {
+  const pending: ((value: unknown) => void)[] = [];
+  vi.mocked(invoke).mockImplementation((command) =>
+    command === "visual_preview"
+      ? new Promise((resolve) => pending.push(resolve))
+      : Promise.resolve(image()),
+  );
+  const grid = (revision: string, entry: number) => (
+    <Visuals>
+      <FileList
+        view="medium"
+        rows={[row("movie.mp4", entry)]}
+        context={{ ...reference, revision }}
+        connection="online"
+        selection={[]}
+        onSelect={() => {}}
+        onOpen={() => {}}
+        next={null}
+        busy={false}
+        onMore={() => {}}
+      />
+    </Visuals>
+  );
+  const view = render(grid("1", 2));
+  const src = () =>
+    view.container.querySelector(".thumbnail-art img")?.getAttribute("src");
+  await waitFor(() => expect(pending).toHaveLength(1));
+  await act(async () => pending[0](image(png + "old")));
+  view.rerender(grid("2", 2));
+  await waitFor(() => expect(pending).toHaveLength(2));
+  expect(src()).toBe(png + "old");
+  expect(view.container.querySelector(".thumbnail-pending")).toBeNull();
+  await act(async () => pending[1](image(png + "updated")));
+  expect(src()).toBe(png + "updated");
+  const updated = vi
+    .mocked(listen)
+    .mock.calls.find(([event]) => event === "thumbnail-cache-updated")![1];
+  await act(async () =>
+    updated({ event: "thumbnail-cache-updated", id: 1, payload: null }),
+  );
+  await waitFor(() => expect(pending).toHaveLength(3));
+  expect(src()).toBe(png + "updated");
+  view.rerender(grid("3", 3));
+  expect(src()).not.toBe(png + "updated");
+});

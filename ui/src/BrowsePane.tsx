@@ -137,6 +137,8 @@ export default function BrowsePane({
   const composing = useRef(false);
   const request = useRef(0);
   const currentPage = useRef(page);
+  const allSelectedNow = useRef(allSelected);
+  allSelectedNow.current = allSelected;
   const usedHistoryPage = useRef<DirectoryPage>(undefined);
   const partition = asset?.registration.partition_id;
   const filesystem = asset?.registration.filesystem_id;
@@ -204,12 +206,61 @@ export default function BrowsePane({
       }
       if (token !== request.current) return;
       const previous = currentPage.current;
+      const sameDirectory =
+        previous?.filesystem_id === result.filesystem_id &&
+        previous.location.join(",") === result.location.join(",") &&
+        appliedFilter.current === filterKey &&
+        appliedSort.current === sort;
+      if (
+        previous &&
+        sameDirectory &&
+        result.next !== null &&
+        result.entries.length < previous.entries.length
+      ) {
+        // Replace the visible pages together so a refresh cannot collapse the viewport.
+        result = { ...result, entries: [...result.entries] };
+        while (
+          result.next !== null &&
+          result.entries.length < previous.entries.length
+        ) {
+          const next = await readDirectory({
+            partition_id: partition!,
+            filesystem_id: filesystem!,
+            parent: result.location,
+            generation: result.generation,
+            revision: result.revision,
+            offset: result.next,
+            ...(sort && { sort }),
+            ...(rule && { filter: rule }),
+          });
+          if (token !== request.current) return;
+          result.entries.push(...next.entries);
+          result.next = next.next;
+        }
+      }
       if (
         previous &&
         (previous.generation !== result.generation ||
           previous.revision !== result.revision)
       ) {
-        setSelection([]);
+        const keepSingle =
+          sameDirectory &&
+          previous.generation === result.generation &&
+          !allSelectedNow.current;
+        setSelection((ids) => {
+          if (!keepSingle || ids.length !== 1) return [];
+          const before = previous.entries.find(
+            (row) => row.entry.join(",") === ids[0],
+          );
+          const after = result.entries.find(
+            (row) => row.entry.join(",") === ids[0],
+          );
+          return before &&
+            after &&
+            before.object.join(",") === after.object.join(",")
+            ? ids
+            : [];
+        });
         setAllSelected(false);
         setNotice("");
       }
