@@ -38,13 +38,15 @@ export default function Tasks({
   const [sending, setSending] = useState(false);
   const [actionError, setActionError] = useState("");
   const rows = (data?.tasks || []).filter(
-    (t) => !partition || t.partition_id === partition,
+    (t) =>
+      (!t.automatic || taskGroup(t) === "attention") &&
+      (!partition || t.partition_id === partition),
   );
   const shown =
     group === "recent"
       ? rows.sort((a, b) => b.updated - a.updated).slice(0, 5)
       : rows.filter((task) => taskGroup(task) === group);
-  const details = data?.tasks.find((task) => task.id === detailsId);
+  const details = rows.find((task) => task.id === detailsId);
   async function command(action: Parameters<typeof taskCommand>[0]) {
     if (sending) return;
     setSending(true);
