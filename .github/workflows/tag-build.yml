@@ -1,0 +1,45 @@
+name: Build Windows packages
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: ${{ !github.event.deleted }}
+    runs-on: windows-2022
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - name: Preserve repository line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - name: Verify tag matches the application version
+        run: |
+          $version = (Get-Content ui/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_NAME -cne "v$version") { throw "Expected tag v$version" }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install the project's pnpm version
+        run: npm install --global (Get-Content package.json -Raw | ConvertFrom-Json).packageManager
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StashFinder-${{ github.ref_name }}-portable
+          path: |
+            .local/packages/*/*.zip
+            .local/packages/*/*.zip.sha256
+          include-hidden-files: true
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StashFinder-${{ github.ref_name }}-installer
+          path: target/release/bundle/nsis/*_x64-setup.exe
+          if-no-files-found: error
