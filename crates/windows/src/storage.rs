@@ -13,22 +13,40 @@ use windows::{
             DACL_SECURITY_INFORMATION, GetAce, GetSecurityDescriptorControl,
             OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
         },
+        UI::Shell::{FOLDERID_ProgramData, FOLDERID_ProgramFiles},
     },
-    core::{HSTRING, PWSTR},
+    core::{GUID, HSTRING, PWSTR},
 };
 
 pub fn program_data() -> Result<PathBuf> {
+    known_folder(&FOLDERID_ProgramData)
+}
+
+fn known_folder(id: &GUID) -> Result<PathBuf> {
     use windows::Win32::{
         System::Com::CoTaskMemFree,
-        UI::Shell::{FOLDERID_ProgramData, KF_FLAG_DEFAULT, SHGetKnownFolderPath},
+        UI::Shell::{KF_FLAG_DEFAULT, SHGetKnownFolderPath},
     };
     // SAFETY: The known folder API returns an allocated, null-terminated path.
     unsafe {
-        let path = SHGetKnownFolderPath(&FOLDERID_ProgramData, KF_FLAG_DEFAULT, None)?;
+        let path = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None)?;
         let result = path.to_string().map(PathBuf::from);
         CoTaskMemFree(Some(path.0.cast()));
         Ok(result?)
     }
+}
+
+pub fn is_installed_program(executable: &Path) -> Result<bool> {
+    let marker = executable.with_file_name("installed.marker");
+    if !marker.is_file() {
+        return Ok(false);
+    }
+    // Tauri also stages the marker next to Cargo's release binaries. The installer
+    // accepts only the StashFinder directory under the system Program Files folder.
+    let installed = known_folder(&FOLDERID_ProgramFiles)?
+        .join("StashFinder")
+        .join("installed.marker");
+    Ok(installed.is_file() && marker.canonicalize()? == installed.canonicalize()?)
 }
 
 pub fn lock_backend(root: &Path) -> Result<File> {
@@ -221,6 +239,14 @@ pub fn desktop_data_directories(owner: &str) -> Result<Vec<PathBuf>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn staged_installer_resources_do_not_turn_a_build_into_an_installation() {
+        let build = tempfile::tempdir().unwrap();
+        std::fs::write(build.path().join("installed.marker"), "1").unwrap();
+        let exe = build.path().join("stashfinder-native-search.exe");
+        assert!(!super::is_installed_program(&exe).unwrap());
+    }
+
     #[test]
     fn installed_backends_cannot_write_the_same_catalog_concurrently() {
         let directory = tempfile::tempdir().unwrap();

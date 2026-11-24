@@ -1,16 +1,14 @@
 use crate::{
-    drag,
+    actions::{self, FileAction, Prepared},
     search::{self, Page, View},
 };
 use anyhow::{Result, ensure};
 use stashfinder_core::{
     SEARCH_SNAPSHOT_EXPIRED, file_operations::MAX_SELECTED, index::SearchHit, search::SortField,
 };
-use stashfinder_windows::shell;
 use std::{
     cell::{Cell, RefCell},
     mem::size_of,
-    path::PathBuf,
     rc::Rc,
     sync::mpsc,
 };
@@ -27,7 +25,9 @@ use windows::{
         UI::{
             Controls::*,
             HiDpi::*,
-            Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_A, VK_CONTROL, VK_RETURN, VK_TAB},
+            Input::KeyboardAndMouse::{
+                GetKeyState, SetFocus, VK_A, VK_C, VK_CONTROL, VK_RETURN, VK_SHIFT, VK_TAB,
+            },
             Shell::{DefSubclassProc, SetWindowSubclass},
             WindowsAndMessaging::*,
         },
@@ -38,6 +38,8 @@ use windows::{
 const RESULTS: u32 = WM_APP + 1;
 const SCROLL: u32 = WM_APP + 2;
 const DEBOUNCE: usize = 1;
+const OPEN: usize = 101;
+const COPY_PATH: usize = 102;
 const COLUMNS: [(&str, i32, Option<SortField>); 5] = [
     ("名称", 235, Some(SortField::Name)),
     ("卷内路径", 375, Some(SortField::Path)),
@@ -48,7 +50,7 @@ const COLUMNS: [(&str, i32, Option<SortField>); 5] = [
 
 enum Update {
     Page(View, Result<Page>),
-    Drag(u64, Result<Vec<PathBuf>>),
+    Files(u64, FileAction, Result<Prepared>),
 }
 
 struct Window {
@@ -69,7 +71,7 @@ struct Window {
     composing: Cell<bool>,
     scroll_posted: Cell<bool>,
     page: RefCell<Option<(usize, Page)>>,
-    drag: RefCell<Option<JoinHandle<()>>>,
+    file_task: RefCell<Option<JoinHandle<()>>>,
 }
 
 thread_local! { static WINDOW: RefCell<Option<Rc<Window>>> = const { RefCell::new(None) }; }
@@ -103,7 +105,7 @@ pub fn run(pipe: String) -> Result<()> {
         let hwnd = CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             class,
-            w!("StashFinder · 原生搜索"),
+            w!("StashFinder · 快速搜索"),
             WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -114,6 +116,12 @@ pub fn run(pipe: String) -> Result<()> {
             Some(instance),
             None,
         )?;
+        let menu = CreateMenu()?;
+        let file = CreatePopupMenu()?;
+        AppendMenuW(file, MF_STRING, OPEN, w!("打开(&O)\tEnter"))?;
+        AppendMenuW(file, MF_STRING, COPY_PATH, w!("复制路径(&P)\tCtrl+Shift+C"))?;
+        AppendMenuW(menu, MF_POPUP, file.0 as usize, w!("文件(&F)"))?;
+        SetMenu(hwnd, Some(menu))?;
         let child = |class, text, style, edge, id| {
             CreateWindowExW(
                 edge,
@@ -197,7 +205,7 @@ pub fn run(pipe: String) -> Result<()> {
             font: Cell::new(HFONT::default()),
             dpi: Cell::new(GetDpiForWindow(hwnd)),
             page: RefCell::new(None),
-            drag: RefCell::new(None),
+            file_task: RefCell::new(None),
         });
         WINDOW.with(|slot| slot.replace(Some(app.clone())));
         app.scale(true)?;
@@ -220,6 +228,18 @@ pub fn run(pipe: String) -> Result<()> {
                     app.submit();
                     continue;
                 }
+                if message.hwnd == list && key == VK_RETURN.0 {
+                    app.start_action(FileAction::Open);
+                    continue;
+                }
+                if message.hwnd == list
+                    && key == VK_C.0
+                    && GetKeyState(VK_CONTROL.0 as i32) < 0
+                    && GetKeyState(VK_SHIFT.0 as i32) < 0
+                {
+                    app.start_action(FileAction::CopyPath);
+                    continue;
+                }
                 if message.hwnd == list && key == VK_A.0 && GetKeyState(VK_CONTROL.0 as i32) < 0 {
                     let item = LVITEMW {
                         stateMask: LVIS_SELECTED,
@@ -239,11 +259,11 @@ pub fn run(pipe: String) -> Result<()> {
             DispatchMessageW(&message);
         };
         WINDOW.with(|slot| slot.take());
-        let drag = app.drag.take();
+        let file_task = app.file_task.take();
         drop(app);
         runtime.block_on(worker)?;
-        if let Some(drag) = drag {
-            runtime.block_on(drag)?;
+        if let Some(task) = file_task {
+            runtime.block_on(task)?;
         }
         result
     }
@@ -325,6 +345,30 @@ impl Window {
                 {
                     self.edited()
                 }
+                WM_COMMAND if lp.0 == 0 && wp.0 == OPEN => self.start_action(FileAction::Open),
+                WM_COMMAND if lp.0 == 0 && wp.0 == COPY_PATH => {
+                    self.start_action(FileAction::CopyPath)
+                }
+                WM_INITMENUPOPUP if (lp.0 >> 16) == 0 => {
+                    let menu = HMENU(wp.0 as *mut _);
+                    let count =
+                        SendMessageW(self.list, LVM_GETSELECTEDCOUNT, None, None).0 as usize;
+                    let idle = self.file_task.borrow().is_none();
+                    for (id, enabled) in [
+                        (OPEN, count == 1),
+                        (COPY_PATH, (1..=MAX_SELECTED).contains(&count)),
+                    ] {
+                        let _ = EnableMenuItem(
+                            menu,
+                            id as u32,
+                            if idle && enabled {
+                                MF_ENABLED
+                            } else {
+                                MF_GRAYED
+                            },
+                        );
+                    }
+                }
                 WM_TIMER if wp.0 == DEBOUNCE => self.submit(),
                 WM_NOTIFY => {
                     let hdr = &*(lp.0 as *const NMHDR);
@@ -369,7 +413,12 @@ impl Window {
                                 self.submit();
                             }
                         }
-                        LVN_BEGINDRAG => self.start_drag(),
+                        NM_DBLCLK => {
+                            if (*(lp.0 as *const NMITEMACTIVATE)).iItem >= 0 {
+                                self.start_action(FileAction::Open);
+                            }
+                        }
+                        LVN_BEGINDRAG => self.start_action(FileAction::Drag),
                         _ => return false,
                     }
                 }
@@ -619,25 +668,27 @@ impl Window {
                         }
                     }
                 }
-                Update::Drag(generation, result) => {
-                    self.drag.take();
+                Update::Files(generation, action, result) => {
+                    self.file_task.take();
                     if generation != self.generation.get() {
                         continue;
                     }
-                    let outcome = result.and_then(|paths| {
-                        ensure!(shell::left_button_down(), "已松开鼠标，拖出已取消");
-                        shell::drag_samples(&paths)
-                    });
+                    let outcome =
+                        result.and_then(|prepared| prepared.perform(self.hwnd.0 as usize));
                     match outcome {
-                        Ok(true) => self.status("目标已接受复制"),
-                        Ok(false) => self.status("拖出已取消"),
+                        Ok(label) => self.status(label),
                         Err(e) => {
                             if e.to_string() == SEARCH_SNAPSHOT_EXPIRED {
                                 self.generation.set(self.generation.get() + 1);
                                 self.requests.send_replace(None);
                                 self.clear();
                             }
-                            self.status(&format!("无法拖出：{e:#}"));
+                            let verb = match action {
+                                FileAction::Open => "打开",
+                                FileAction::CopyPath => "复制路径",
+                                FileAction::Drag => "拖出",
+                            };
+                            self.status(&format!("无法{verb}：{e:#}"));
                         }
                     }
                 }
@@ -645,11 +696,11 @@ impl Window {
         }
     }
 
-    fn start_drag(&self) {
+    fn start_action(&self, action: FileAction) {
         let Some(id) = self.page.borrow().as_ref().map(|(_, page)| page.id) else {
             return;
         };
-        if self.drag.borrow().is_some() {
+        if self.file_task.borrow().is_some() {
             return;
         }
         // SAFETY: Owner-data selection indices refer to the whole list, including unloaded pages.
@@ -658,8 +709,12 @@ impl Window {
             if count == 0 {
                 return;
             }
+            if action == FileAction::Open && count != 1 {
+                self.status("打开文件时请选择一项");
+                return;
+            }
             if count > MAX_SELECTED {
-                self.status("单次最多拖出 10,000 项");
+                self.status("单次最多操作 10,000 项");
                 return;
             }
             let mut positions = Vec::with_capacity(count);
@@ -673,21 +728,25 @@ impl Window {
                 )
                 .0;
                 if last < 0 {
-                    self.status("选择已变化，请重新拖出");
+                    self.status("选择已变化，请重新选择");
                     return;
                 }
                 positions.push(last as usize);
             }
             positions
         };
-        self.status("正在核验所选文件…");
+        self.status(if action == FileAction::CopyPath {
+            "正在读取所选路径…"
+        } else {
+            "正在核验所选文件…"
+        });
         let pipe = self.pipe.clone();
         let sender = self.send.clone();
         let target = self.hwnd.0 as usize;
         let generation = self.generation.get();
-        self.drag.replace(Some(self.runtime.spawn(async move {
-            let result = drag::prepare(&pipe, id, positions).await;
-            notify(&sender, target, Update::Drag(generation, result));
+        self.file_task.replace(Some(self.runtime.spawn(async move {
+            let result = actions::prepare(&pipe, id, positions, action).await;
+            notify(&sender, target, Update::Files(generation, action, result));
         })));
     }
 }

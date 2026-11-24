@@ -59,6 +59,11 @@ fn search_window_accepts_input_and_reports_a_disconnected_backend() {
         let edit = FindWindowExW(Some(window), None, w!("Edit"), PCWSTR::null()).unwrap();
         let list = FindWindowExW(Some(window), None, w!("SysListView32"), PCWSTR::null()).unwrap();
         let status: HWND = GetDlgItem(Some(window), 3).unwrap();
+        let menu = GetSubMenu(GetMenu(window), 0);
+        assert!(
+            !menu.is_invalid() && GetMenuItemCount(Some(menu)) == 2,
+            "the native window must expose Open and Copy path without opening the desktop"
+        );
         SendMessageW(
             edit,
             WM_SETTEXT,

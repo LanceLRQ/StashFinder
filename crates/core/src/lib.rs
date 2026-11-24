@@ -13,6 +13,7 @@ pub const PROTOCOL_VERSION: u32 = 17;
 pub const MAX_FRAME: usize = 16 * 1024;
 pub const SNAPSHOT_EXPIRED: &str = "设备快照已更新，请刷新";
 pub const SEARCH_SNAPSHOT_EXPIRED: &str = "搜索结果已过期，请重新搜索";
+pub const SEARCH_CATALOG_LOADING: &str = "正在读取资产目录，请稍后搜索";
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

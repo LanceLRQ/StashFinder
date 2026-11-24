@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use stashfinder_core::{
-    MAX_FRAME, SEARCH_SNAPSHOT_EXPIRED,
+    MAX_FRAME, SEARCH_CATALOG_LOADING, SEARCH_SNAPSHOT_EXPIRED,
     assets::{Asset, Snapshot},
     index::*,
     search::{Query, QueryOptions},
@@ -310,7 +310,7 @@ impl Indexes {
         );
         ensure!(
             !snapshot.busy || !snapshot.assets.is_empty(),
-            "正在读取资产目录，请稍后搜索"
+            SEARCH_CATALOG_LOADING
         );
         let mut assets = snapshot.assets.clone();
         let query = Query::compile(&request.text, request.names_only, &request.options)?;

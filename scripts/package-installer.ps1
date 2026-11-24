@@ -5,8 +5,8 @@ try {
     $originalRustFlags = [Environment]::GetEnvironmentVariable('RUSTFLAGS', 'Process')
     try {
         [Environment]::SetEnvironmentVariable('RUSTFLAGS', ($originalRustFlags + ' -C target-feature=+crt-static').Trim(), 'Process')
-        & cargo build -p stashfinder-service --release --locked
-        if ($LASTEXITCODE -ne 0) { throw 'Backend release build failed.' }
+        & cargo build -p stashfinder-service -p stashfinder-native-search --release --locked
+        if ($LASTEXITCODE -ne 0) { throw 'Service or native quick search release build failed.' }
     } finally {
         [Environment]::SetEnvironmentVariable('RUSTFLAGS', $originalRustFlags, 'Process')
     }

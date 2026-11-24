@@ -20,6 +20,8 @@ When you first use the desktop-managed backend, choose to start it and approve t
 
 ## Searching and browsing
 
+If you selected Windows service mode during installation, open **StashFinder 快速搜索** (Quick Search) directly from Start. Type a query to search registered partitions with the main desktop closed. In the results list, press Enter or double-click to open an online item, or press Ctrl+Shift+C to copy the path of an online or offline record.
+
 Search includes both online and offline registered partitions by default. Browse folders and open search results in separate tabs, then return to where you left off. While a drive is offline, you can see the last saved names, paths, sizes, and timestamps, along with any cached thumbnails. Reconnect the drive to open or work with the files. You can include historical records from before a reformat in the search scope.
 
 - Search by name or path, or filter by type, size, and date. For example, `*.mkv size:>=1GiB` finds MKV files at least 1 GiB in size. Save filters as presets or bookmark the whole search. [Search syntax and examples](docs/search.en.md)

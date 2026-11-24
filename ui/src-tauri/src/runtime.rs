@@ -53,19 +53,13 @@ fn ensure_backend_requested() -> Result<()> {
 
 pub async fn status() -> Result<stashfinder_core::Status> {
     ensure_backend_requested()?;
-    let pid = if windows_service() {
-        Some(tokio::task::spawn_blocking(stashfinder_windows::scm::ensure_running).await??)
+    if windows_service() {
+        stashfinder_windows::scm::installed_status()
+            .await
+            .map_err(connection_error)
     } else {
-        None
-    };
-    let status = ipc::status(pipe()).await.map_err(connection_error)?;
-    if let Some(pid) = pid {
-        ensure!(
-            status.process_id == pid && status.mode == "windows_service",
-            "StashFinder 后台与 Windows 服务身份不匹配"
-        );
+        ipc::status(pipe()).await.map_err(connection_error)
     }
-    Ok(status)
 }
 
 pub async fn snapshot() -> Result<stashfinder_core::assets::Snapshot> {

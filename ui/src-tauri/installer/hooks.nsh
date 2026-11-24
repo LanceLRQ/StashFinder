@@ -1,5 +1,6 @@
 !define STASHFINDER_SERVICE_SCRIPT "${__FILEDIR__}\service.ps1"
 !include nsDialogs.nsh
+!define STASHFINDER_SEARCH_LINK "$SMPROGRAMS\StashFinder 快速搜索.lnk"
 
 Var StashFinderService
 Var StashFinderServiceCheck
@@ -76,8 +77,14 @@ FunctionEnd
 !macro NSIS_HOOK_POSTINSTALL
   !insertmacro STASHFINDER_SERVICE_PHASE Install $StashFinderService
   WriteRegDWORD HKLM "Software\StashFinder" "InstallService" $StashFinderService
+  ${If} $StashFinderService == 1
+    CreateShortcut "${STASHFINDER_SEARCH_LINK}" "$INSTDIR\stashfinder-native-search.exe"
+  ${Else}
+    Delete "${STASHFINDER_SEARCH_LINK}"
+  ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro STASHFINDER_SERVICE_PHASE Uninstall 0
+  Delete "${STASHFINDER_SEARCH_LINK}"
 !macroend

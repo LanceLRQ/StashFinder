@@ -37,7 +37,9 @@ The launcher clears orphaned development backends from this checkout, then allow
 
 The app opens on the Overview tab, pinned at the far left. Double-click a partition card to browse its directories. Open the Settings dialog from Tools → Settings or press Ctrl+P. Multiple search tabs run independently in the same desktop window. Open Tools → Tasks to see progress and history for manual indexing. Automatic indexing appears in the task list only after a failure or interruption, or when confirmation is required. The Overview sidebar shows partition details and index status. Cancellation targets a task ID and pauses its partition until updates are explicitly resumed. An ordinary foreground process may lack access to physical disk layouts. The UI reports this explicitly. Use the LocalSystem verification service below for complete device validation. Help → About and diagnostics reports the actual app version, backend mode and connection state. The local pipe allows the configured account, SYSTEM and administrators and rejects remote clients. IPC accepts neither database paths nor arbitrary commands.
 
-### Native Win32 search prototype
+### Native Win32 Quick Search
+
+Select Windows service mode during installation to add **StashFinder 快速搜索** (Quick Search) to Start. You can also run `stashfinder-native-search.exe` from the installation directory as an ordinary user. The first search starts the registered service if needed and checks its mode and process ID. Closing all search windows leaves the service running. Close Quick Search before upgrading, changing modes, or uninstalling.
 
 Start the development backend and native search window from a non-elevated terminal at the repository root:
 
@@ -45,7 +47,9 @@ Start the development backend and native search window from a non-elevated termi
 pnpm dev:native
 ```
 
-The window connects to `\\.\pipe\StashFinder.M0` by default. The launcher can reuse a running development backend. To connect to a separate running backend, run `target/release/stashfinder-native-search.exe --pipe '\\.\pipe\StashFinder.name'`. Update both the window and the backend to protocol 17 together. Its Windows system controls run without WebView2.
+Development builds connect to `\\.\pipe\StashFinder.M0` by default. The launcher can reuse a running development backend. To connect to a separate running backend, run `target/release/stashfinder-native-search.exe --pipe '\\.\pipe\StashFinder.name'`. The installed window connects to `\\.\pipe\StashFinder.Installed`. The window and backend must use the same protocol version. Quick Search uses Windows system controls.
+
+In the results list, press Enter or double-click to open one online file or directory. Ctrl+Shift+C copies the selected paths in list order. Both actions are available from the File menu. An offline path uses the registered partition name and volume-relative path. Opening an online item rechecks the file identity.
 
 Type to search, or press Enter to submit immediately or retry. Click Name, Volume path, Partition, or Size to sort the entire result set. Ctrl and Shift select across pages. Ctrl+A selects all results when the list has focus. Drag up to 10,000 selected entries into Explorer to copy them. The status column shows the partition connection state at search time. Dragging rechecks the current partition and file identities. After a backend restart, dragging an old result clears the expired list and prompts you to search again. Press Enter in the search field, then select and drag the file again.
 

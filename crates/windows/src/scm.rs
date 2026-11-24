@@ -21,12 +21,24 @@ pub fn registered() -> Result<bool> {
     }
 }
 
+pub async fn installed_status() -> Result<stashfinder_core::Status> {
+    let pid = tokio::task::spawn_blocking(ensure_running).await??;
+    let status = crate::ipc::status(INSTALLED_PIPE).await?;
+    ensure!(
+        status.process_id == pid && status.mode == "windows_service",
+        "StashFinder 后台与 Windows 服务身份不匹配"
+    );
+    Ok(status)
+}
+
 pub fn ensure_running() -> Result<u32> {
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
         .context("无法访问 Windows 服务管理器")?;
     let service = match manager.open_service(INSTALLED_SERVICE, ServiceAccess::QUERY_STATUS) {
         Err(Error::Winapi(error)) if error.raw_os_error() == Some(1060) => {
-            bail!("未安装 StashFinder 后台服务，请运行 StashFinder 安装程序")
+            bail!(
+                "未注册 StashFinder Windows 服务，请使用主界面搜索，或重新运行安装程序并选择 Windows 服务模式"
+            )
         }
         result => result.context("无法查询 StashFinder 后台服务")?,
     };

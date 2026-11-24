@@ -1,12 +1,15 @@
 use anyhow::{Result, bail, ensure};
 use stashfinder_core::{
-    Action, Response,
+    Action, Response, SEARCH_CATALOG_LOADING,
     index::{SearchHit, SearchRequest},
     search::{QueryOptions, SortField},
 };
-use stashfinder_windows::ipc;
+use stashfinder_windows::{ipc, scm};
 use std::ops::Range;
-use tokio::sync::watch;
+use tokio::{
+    sync::watch,
+    time::{Duration, Instant, sleep},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct View {
@@ -37,6 +40,9 @@ pub async fn serve(
                 let id = match active {
                     Some((generation, id)) if generation == view.generation => id,
                     _ => {
+                        if pipe == scm::INSTALLED_PIPE {
+                            scm::installed_status().await?;
+                        }
                         let query = SearchRequest {
                             text: view.text.clone(),
                             names_only: false,
@@ -49,11 +55,24 @@ pub async fn serve(
                                 ..Default::default()
                             }),
                         };
-                        // Finish the start handshake even if the input changes: we need the ID to release it.
-                        let Response::SearchStarted(id) =
-                            ipc::request(pipe, Action::SearchStart(query)).await?
-                        else {
-                            bail!("搜索启动响应无效");
+                        let deadline = Instant::now() + Duration::from_secs(15);
+                        let id = loop {
+                            // Finish each start handshake so we can release any allocated ID.
+                            match ipc::request(pipe, Action::SearchStart(query.clone())).await {
+                                Ok(Response::SearchStarted(id)) => break id,
+                                Ok(_) => bail!("搜索启动响应无效"),
+                                Err(error)
+                                    if error.to_string() == SEARCH_CATALOG_LOADING
+                                        && Instant::now() < deadline =>
+                                {
+                                    tokio::select! {
+                                        biased;
+                                        _ = requests.changed() => return Ok(None),
+                                        _ = sleep(Duration::from_millis(200)) => {}
+                                    }
+                                }
+                                Err(error) => return Err(error),
+                            }
                         };
                         active = Some((view.generation, id));
                         id

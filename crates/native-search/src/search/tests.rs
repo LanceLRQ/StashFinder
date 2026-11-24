@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::{sync::mpsc, time::timeout};
 
 #[tokio::test]
-async fn short_frames_paging_sort_replacement_and_close_share_a_snapshot() {
+async fn cold_start_retries_then_paging_sort_and_close_share_a_snapshot() {
     let pipe = format!(r"\\.\pipe\StashFinder.native-test-{}", std::process::id());
     let owner = current_user_sid().unwrap();
     let mut server = create_pipe(&pipe, &owner, true).unwrap();
@@ -17,6 +17,7 @@ async fn short_frames_paging_sort_replacement_and_close_share_a_snapshot() {
     let (trace, mut actions) = mpsc::unbounded_channel();
     let backend = tokio::spawn(async move {
         let mut next_id = 10;
+        let mut loading = true;
         loop {
             server.connect().await.unwrap();
             let mut client = server;
@@ -26,8 +27,13 @@ async fn short_frames_paging_sort_replacement_and_close_share_a_snapshot() {
             let body = match &request.action {
                 Action::SearchStart(query) => {
                     assert!(!query.names_only && query.partitions.is_empty());
-                    next_id += 1;
-                    Response::SearchStarted(next_id)
+                    if loading {
+                        loading = false;
+                        Response::Error("正在读取资产目录，请稍后搜索".into())
+                    } else {
+                        next_id += 1;
+                        Response::SearchStarted(next_id)
+                    }
                 }
                 Action::SearchBatch { id, offset, .. } => {
                     let mut rows = Vec::new();
@@ -154,7 +160,14 @@ async fn short_frames_paging_sort_replacement_and_close_share_a_snapshot() {
             _ => {}
         }
     }
-    assert_eq!(starts, [(SortField::Name, false), (SortField::Size, true)]);
+    assert_eq!(
+        starts,
+        [
+            (SortField::Name, false),
+            (SortField::Name, false),
+            (SortField::Size, true)
+        ]
+    );
     assert!(cancelled.contains(&11) && cancelled.contains(&12));
     backend.abort();
 }

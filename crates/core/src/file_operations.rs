@@ -83,6 +83,27 @@ pub struct PreparedTarget {
     pub identity: crate::assets::Identity,
     pub partition_name: String,
 }
+
+pub fn record_text(rows: &[PreparedTarget], names_only: bool) -> Vec<u16> {
+    let mut text = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
+        if index > 0 {
+            text.extend([13, 10]);
+        }
+        if names_only {
+            text.extend(row.file.relative.rsplit(|c| *c == 92).next().unwrap_or(&[]));
+        } else {
+            if let Some(root) = row.mounts.first() {
+                text.extend(root.encode_utf16());
+            } else {
+                text.extend(row.partition_name.encode_utf16());
+                text.extend(" / ".encode_utf16());
+            }
+            text.extend(&row.file.relative);
+        }
+    }
+    text
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VisualRecord {
     pub target: PreparedTarget,

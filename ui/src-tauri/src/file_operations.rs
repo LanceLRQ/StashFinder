@@ -496,25 +496,7 @@ pub async fn file_run(
         .run_on_main_thread(move || {
             let result = (|| -> Result<String> {
                 if matches!(action, FileAction::CopyName | FileAction::CopyPath) {
-                    let mut text = Vec::new();
-                    for (index, row) in rows.iter().enumerate() {
-                        if index > 0 {
-                            text.extend([13, 10]);
-                        }
-                        if matches!(action, FileAction::CopyName) {
-                            text.extend(
-                                row.file.relative.rsplit(|c| *c == 92).next().unwrap_or(&[]),
-                            );
-                        } else {
-                            let root = row
-                                .mounts
-                                .first()
-                                .cloned()
-                                .unwrap_or_else(|| format!("{} / ", row.partition_name));
-                            text.extend(root.encode_utf16());
-                            text.extend(&row.file.relative);
-                        }
-                    }
+                    let text = record_text(&rows, matches!(action, FileAction::CopyName));
                     shell::copy_text(&text, owner)?;
                     return Ok("已复制记录文字".into());
                 }

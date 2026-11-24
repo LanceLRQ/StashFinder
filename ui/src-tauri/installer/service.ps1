@@ -84,6 +84,10 @@ Assert-ProtectedPath $directory
 if (Test-Path -LiteralPath $binary) { Assert-ProtectedPath $binary }
 
 if ($Phase -in @('Prepare', 'Uninstall')) {
+    $quickSearch = Join-Path $directory 'stashfinder-native-search.exe'
+    $runningSearch = Get-CimInstance Win32_Process -Filter "Name='stashfinder-native-search.exe'" |
+        Where-Object ExecutablePath -eq $quickSearch
+    if ($runningSearch) { throw 'Close StashFinder Quick Search before changing the installation.' }
     $desktopBackend = Get-CimInstance Win32_Process -Filter "Name='stashfinder-service.exe'" |
         Where-Object { $_.ExecutablePath -eq $binary -and $_.CommandLine -match '\s--desktop-session\s' }
     if ($desktopBackend) { throw 'Close StashFinder and wait for its indexing backend to exit before changing the installation.' }

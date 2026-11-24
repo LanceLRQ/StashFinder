@@ -188,9 +188,12 @@ pub async fn request(name: &str, action: Action) -> Result<Response> {
         write_frame(&mut client, &serde_json::to_vec(&request)?).await?;
         let response: Reply = serde_json::from_slice(&read_frame(&mut client).await?)?;
         ensure!(
-            response.version == PROTOCOL_VERSION && response.id == request.id,
-            "response version or request ID mismatch"
+            response.version == PROTOCOL_VERSION,
+            "后台协议版本为 {}，当前程序需要 {}，请一起更新后台和界面",
+            response.version,
+            PROTOCOL_VERSION
         );
+        ensure!(response.id == request.id, "后台响应的请求编号不匹配");
         match response.body {
             Response::Error(message) => anyhow::bail!(message),
             body => Ok(body),
