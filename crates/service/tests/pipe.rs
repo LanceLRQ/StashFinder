@@ -142,7 +142,9 @@ async fn unavailable_service_has_a_bounded_wait() {
 
 #[tokio::test]
 async fn rename_over_real_pipe_survives_process_termination_and_restart() {
-    use stashfinder_core::{Action, assets::*};
+    use stashfinder_core::{
+        Action, SEARCH_SNAPSHOT_EXPIRED, assets::*, file_operations::SelectionOrigin,
+    };
     use stashfinder_store::catalog::Catalog;
     use stashfinder_windows::ipc::{request, snapshot};
     let data = tempfile::tempdir().unwrap();
@@ -218,6 +220,7 @@ async fn rename_over_real_pipe_survives_process_termination_and_restart() {
     }
     drop(catalog);
     let name = format!(r"\\.\pipe\StashFinder.restart-{}", std::process::id());
+    let mut previous_search = None;
     for attempt in 0..2 {
         let server = Server(
             Command::new(env!("CARGO_BIN_EXE_stashfinder-service"))
@@ -296,6 +299,18 @@ async fn rename_over_real_pipe_survives_process_termination_and_restart() {
             }
             assert!(std::time::Instant::now() < deadline);
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        if let Some(stale) = previous_search.replace(id) {
+            let error = request(
+                &name,
+                Action::FileSelectionBegin(SelectionOrigin::Search {
+                    id: stale,
+                    range: None,
+                }),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.to_string(), SEARCH_SNAPSHOT_EXPIRED);
         }
         let stashfinder_core::Response::SearchPosition(position) = request(
             &name,

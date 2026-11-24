@@ -272,6 +272,77 @@ fn preflight_rejects_offline_identity_change_and_stale_directory_versions() {
 }
 
 #[test]
+fn restarting_the_backend_invalidates_old_searches_and_file_selections() {
+    let (dir, old, snapshot, _) = fixture();
+    let search = |jobs: &Indexes, name: &str, replaces| {
+        let id = jobs
+            .search(
+                stashfinder_core::index::SearchRequest {
+                    text: name.into(),
+                    names_only: true,
+                    partitions: vec![],
+                    filesystem_id: None,
+                    replaces,
+                    options: Default::default(),
+                },
+                &snapshot,
+            )
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let page = jobs.page(id, 0).unwrap();
+            if page.done {
+                assert_eq!(page.row.unwrap().file.name, name);
+                return id;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    let origin = |id| SelectionOrigin::Search { id, range: None };
+    let old_search = search(&old, "2.txt", None);
+    let old_selection = old.selection_begin(origin(old_search), &snapshot).unwrap();
+    drop(old);
+
+    let current = Indexes::start(dir.path().into());
+    let peer_search = search(&current, "3.txt", None);
+    let peer_selection = current
+        .selection_begin(origin(peer_search), &snapshot)
+        .unwrap();
+    assert_eq!(
+        current
+            .selection_begin(origin(old_search), &snapshot)
+            .unwrap_err()
+            .to_string(),
+        "搜索结果已过期，请重新搜索"
+    );
+    assert!(
+        current
+            .selection_add(old_selection, SelectionChunk::Positions(vec![0]))
+            .is_err()
+    );
+    current.selection_cancel(old_selection);
+    current.cancel_search(old_search);
+    search(&current, "2.txt", Some(old_search));
+
+    assert_eq!(
+        current.page(peer_search, 0).unwrap().row.unwrap().file.name,
+        "3.txt"
+    );
+    current
+        .selection_add(peer_selection, SelectionChunk::Positions(vec![0]))
+        .unwrap();
+    assert_eq!(current.selection_seal(peer_selection).unwrap(), 1);
+    let page = current
+        .selection_page(peer_selection, 0, &snapshot)
+        .unwrap();
+    assert_eq!(
+        String::from_utf16(&page.rows[0].file.relative).unwrap(),
+        "3.txt"
+    );
+}
+
+#[test]
 fn search_range_uses_all_positions_and_survives_query_replacement() {
     let (_dir, jobs, snapshot, _context) = fixture();
     let search = jobs

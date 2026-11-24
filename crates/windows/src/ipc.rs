@@ -10,8 +10,9 @@ use tokio::{
 };
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree},
+        Foundation::{CloseHandle, HANDLE, HLOCAL, LUID, LocalFree},
         Security::{
+            AllocateLocallyUniqueId,
             Authorization::{
                 ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
                 SDDL_REVISION_1,
@@ -26,6 +27,17 @@ use windows::{
 
 pub const DEFAULT_PIPE: &str = r"\\.\pipe\StashFinder.M0";
 pub const IO_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// A search or file-selection ID must outlive service restarts while a desktop window is open.
+pub fn allocate_operation_id() -> Result<u64> {
+    let mut luid = LUID::default();
+    // SAFETY: Windows writes a boot-unique LUID to the provided structure.
+    unsafe { AllocateLocallyUniqueId(&mut luid)? };
+    let id = (u64::from(luid.HighPart as u32) << 32) | u64::from(luid.LowPart);
+    // The desktop also passes these JSON integers through JavaScript Number.
+    ensure!(id < 1_u64 << 53, "操作编号超出界面可精确表示的范围");
+    Ok(id)
+}
 
 pub fn current_user_sid() -> Result<String> {
     // SAFETY: GetCurrentProcess returns the current process pseudo-handle.

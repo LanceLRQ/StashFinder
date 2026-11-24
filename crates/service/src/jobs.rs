@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use stashfinder_core::{
-    MAX_FRAME,
+    MAX_FRAME, SEARCH_SNAPSHOT_EXPIRED,
     assets::{Asset, Snapshot},
     index::*,
     search::{Query, QueryOptions},
@@ -12,12 +12,13 @@ use stashfinder_store::{
         query::{ResultSet, Source},
     },
 };
+use stashfinder_windows::ipc::allocate_operation_id;
 use std::{
     collections::{HashMap, VecDeque},
     path::PathBuf,
     sync::{
         Arc, Condvar, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     thread,
     time::Duration,
@@ -53,7 +54,6 @@ pub struct Indexes {
     selection: Mutex<crate::file_operations::Selection>,
     pub runner: crate::supervisor::Runner,
     mailbox: Arc<(Mutex<Mailbox>, Condvar)>,
-    sequence: AtomicU64,
 }
 impl Indexes {
     pub fn start(root: PathBuf) -> Self {
@@ -177,7 +177,6 @@ impl Indexes {
             selection,
             runner,
             mailbox,
-            sequence: AtomicU64::new(1),
         }
     }
     pub fn scan(&self, partition: &str, mode: IndexMode, snapshot: &Snapshot) -> Result<()> {
@@ -208,11 +207,8 @@ impl Indexes {
         } = &origin
         {
             let mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
-            let state = mailbox
-                .searches
-                .get(id)
-                .filter(|state| state.done)
-                .ok_or_else(|| anyhow::anyhow!("搜索尚未完成或已经过期"))?;
+            let state = mailbox.searches.get(id).context(SEARCH_SNAPSHOT_EXPIRED)?;
+            ensure!(state.done, "搜索尚未完成");
             Some(
                 state
                     .result
@@ -222,7 +218,7 @@ impl Indexes {
         } else {
             None
         };
-        let id = self.sequence.fetch_add(1, Ordering::Relaxed);
+        let id = allocate_operation_id()?;
         self.selection
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -353,7 +349,7 @@ impl Indexes {
                 .partition_id
                 .cmp(&b.registration.partition_id)
         });
-        let id = self.sequence.fetch_add(1, Ordering::Relaxed);
+        let id = allocate_operation_id()?;
         let cancel = Arc::new(AtomicBool::new(false));
         let mut mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(previous) = request.replaces {
@@ -399,10 +395,7 @@ impl Indexes {
         ensure!((1..=100).contains(&limit), "搜索页大小无效");
         let finished = {
             let mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
-            let state = mailbox
-                .searches
-                .get(&id)
-                .ok_or_else(|| anyhow::anyhow!("搜索请求已过期"))?;
+            let state = mailbox.searches.get(&id).context(SEARCH_SNAPSHOT_EXPIRED)?;
             // Register before releasing the lock so completion or cancellation cannot be missed.
             (!state.done).then(|| state.finished.clone().notified_owned())
         };
@@ -441,10 +434,7 @@ impl Indexes {
     }
     pub fn batch(&self, id: u64, offset: usize, limit: usize) -> Result<SearchPage> {
         let mailbox = self.mailbox.0.lock().unwrap_or_else(|e| e.into_inner());
-        let state = mailbox
-            .searches
-            .get(&id)
-            .ok_or_else(|| anyhow::anyhow!("搜索请求已过期"))?;
+        let state = mailbox.searches.get(&id).context(SEARCH_SNAPSHOT_EXPIRED)?;
         ensure!((1..=100).contains(&limit), "搜索页大小无效");
         let result = state.result.clone();
         let mut page = SearchPage {
