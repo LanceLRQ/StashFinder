@@ -121,12 +121,20 @@ fn portable_backend_rejects_a_different_data_directory_pipe_and_session() {
     }
 }
 
-#[test]
-fn removing_the_gui_session_releases_a_waiting_background_process() {
+#[tokio::test]
+async fn removing_the_gui_session_releases_a_waiting_background_process() {
     let session = tempfile::NamedTempFile::new().unwrap();
     let path = session.path().to_owned();
     let parent = Process::open(std::process::id()).unwrap();
-    let worker = std::thread::spawn(move || parent.wait_session(&path));
+    let mut worker = std::pin::pin!(parent.wait_session(&path));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(20), &mut worker)
+            .await
+            .is_err()
+    );
     drop(session);
-    assert!(worker.join().unwrap().is_ok());
+    tokio::time::timeout(std::time::Duration::from_secs(2), worker)
+        .await
+        .unwrap()
+        .unwrap();
 }

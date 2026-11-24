@@ -41,6 +41,8 @@ pnpm dev
 
 安装时勾选 Windows 服务后，开始菜单会出现「StashFinder 快速搜索」。也可用普通权限直接运行安装目录的 `stashfinder-native-search.exe`。首次查询会按需启动已注册服务，并核对服务模式和进程 ID；关闭所有搜索窗口后服务继续运行。切换安装模式、升级或卸载前请退出快速搜索。
 
+在便携目录双击 `QuickSearch.exe`，即可独立搜索该目录的 `data/index`。主界面和搜索窗口复用一个后台。最后一个使用它的程序退出后，后台释放索引。
+
 开发环境在仓库根目录以普通权限启动后台和快速搜索窗口：
 
 ```powershell
@@ -279,8 +281,8 @@ cargo build -p stashfinder-store --bin baseline --release --locked
 
 ## 便携构建
 
-运行 `pnpm package:portable` 生成 release GUI、后台、白名单 ZIP 和 SHA256 清单。默认输出到忽略的 `.local/packages/`；已有输出目录会被拒绝。包验证入口为 `scripts/verify-portable-package.ps1 -Archive <zip路径>`，不执行包内程序。
+运行 `pnpm package:portable` 构建主界面、原生快速搜索和后台，生成白名单 ZIP 和 SHA256 清单。默认输出到忽略的 `.local/packages/`；已有输出目录会被拒绝。包验证入口为 `scripts/verify-portable-package.ps1 -Archive <zip路径>`，不执行包内程序。
 
-`portable.json` 标记启用程序目录旁的 `data`，覆盖索引、界面设置、图片缓存及 WebView2 用户数据路径；GUI 仍以普通权限运行，后台每次单独提升，不注册服务。托盘和设置中的退出会撤销会话并等待后台停止，异常 GUI 退出另由父进程检测处理。没有标记则沿用现有模式。使用和依赖见[便携版说明](portable.md)。
+`portable.json` 标记启用程序目录旁的 `data`，覆盖索引、界面设置、图片缓存及 WebView2 用户数据路径。两个入口均以普通权限运行，首个使用者确认后单独提升后台。共享文件锁随窗口进程退出而释放，最后一个使用者正常退出时会等待后台释放索引。使用和依赖见[便携版说明](portable.md)。
 
 专项回归：`cargo test -p stashfinder-windows --test portable --locked`、`cargo test -p stashfinder-service --test portable --locked`、`cargo test -p stashfinder-desktop runtime --locked`。服务集成测试仅在临时目录建立空登记，不注册或扫描资料盘；真实 UAC、托盘和目录搬迁另行实机验收。

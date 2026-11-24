@@ -13,7 +13,7 @@ pnpm install --frozen-lockfile
 pnpm package
 ```
 
-- **便携版**在 `.local/packages/`。把 ZIP 完整解压到可写目录，运行 `StashFinder.exe`。索引、设置和图片缓存都保存在程序旁的 `data/` 中。[便携版使用说明](docs/portable.md)
+- **便携版**在 `.local/packages/`。把 ZIP 完整解压到可写目录。用 `StashFinder.exe` 登记和管理分区，之后可以直接双击 `QuickSearch.exe` 搜索，主界面可以保持关闭。两个入口共用程序旁 `data/` 中的索引。[便携版使用说明](docs/portable.md)
 - **安装版**在 `target/release/bundle/nsis/`。运行安装程序，后台默认随应用启动和退出。需要关闭窗口后继续更新索引时，可在安装时选择 Windows 服务模式。
 
 首次使用桌面管理的后台时，选择「启动索引后台」并确认 Windows 的管理员授权。进入「概览 → 登记分区…」，选中要管理的分区，保留「登记后自动建立索引」。建库完成后，可以双击分区打开目录，也可以在概览输入关键词，按 Enter 搜索所有已登记分区。

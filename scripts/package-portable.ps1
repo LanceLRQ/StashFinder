@@ -23,8 +23,8 @@ try {
         $originalRustFlags = [Environment]::GetEnvironmentVariable('RUSTFLAGS', 'Process')
         try {
             [Environment]::SetEnvironmentVariable('RUSTFLAGS', ($originalRustFlags + ' -C target-feature=+crt-static').Trim(), 'Process')
-            & cargo build -p stashfinder-service --release --locked
-            if ($LASTEXITCODE -ne 0) { throw 'Backend release build failed.' }
+            & cargo build -p stashfinder-service -p stashfinder-native-search --release --locked
+            if ($LASTEXITCODE -ne 0) { throw 'Backend or native quick search release build failed.' }
         } finally {
             [Environment]::SetEnvironmentVariable('RUSTFLAGS', $originalRustFlags, 'Process')
         }
@@ -36,6 +36,7 @@ try {
     $folder = Join-Path $OutputDirectory $name
     $sources = [ordered]@{
         'StashFinder.exe' = (Join-Path $BinaryDirectory 'stashfinder-desktop.exe')
+        'QuickSearch.exe' = (Join-Path $BinaryDirectory 'stashfinder-native-search.exe')
         'stashfinder-service.exe' = (Join-Path $BinaryDirectory 'stashfinder-service.exe')
         'README.md' = (Join-Path $projectRoot 'docs\portable.md')
         'README.en.md' = (Join-Path $projectRoot 'docs\portable.en.md')

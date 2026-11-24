@@ -1,3 +1,5 @@
+pub mod session;
+
 use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -192,6 +194,37 @@ impl Process {
         // SAFETY: The owned process handle is alive for the duration of this call.
         unsafe { GetProcessId(self.0) }
     }
+
+    pub fn wait_ready(
+        &self,
+        runtime: &tokio::runtime::Runtime,
+        pipe: &str,
+        mode: &str,
+    ) -> Result<()> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            ensure!(
+                !self.wait(0)?,
+                "索引后台启动失败。请确认当前账户有权访问索引，且没有其他索引后台在运行。"
+            );
+            match runtime.block_on(crate::ipc::status(pipe)) {
+                Ok(status) => {
+                    ensure!(
+                        status.process_id == self.id() && status.mode == mode,
+                        "索引后台身份不匹配"
+                    );
+                    return Ok(());
+                }
+                Err(error)
+                    if error
+                        .downcast_ref::<tokio::time::error::Elapsed>()
+                        .is_some() => {}
+                Err(error) => return Err(error),
+            }
+            ensure!(std::time::Instant::now() < deadline, "索引后台启动超时");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
     pub fn user_sid(&self) -> Result<String> {
         crate::ipc::process_user_sid(self.0)
     }
@@ -203,9 +236,9 @@ impl Process {
             _ => Err(std::io::Error::last_os_error()).context("无法等待便携进程"),
         }
     }
-    pub fn wait_session(self, session: &Path) -> Result<()> {
-        while session.exists() && !self.wait(250)? {
-            std::thread::sleep(Duration::from_millis(10));
+    pub async fn wait_session(self, session: &Path) -> Result<()> {
+        while session.is_file() && !self.wait(0)? {
+            tokio::time::sleep(Duration::from_millis(250)).await;
         }
         Ok(())
     }
@@ -289,7 +322,12 @@ pub fn enable_backup_read() -> Result<()> {
     }
 }
 
-pub fn confirm_index_backend() -> Result<bool> {
+pub enum ClientKind {
+    Desktop,
+    QuickSearch,
+}
+
+pub fn confirm_index_backend(kind: ClientKind) -> Result<bool> {
     use windows::{
         Win32::UI::Controls::{
             TASKDIALOG_BUTTON, TASKDIALOGCONFIG, TASKDIALOGCONFIG_0, TD_INFORMATION_ICON,
@@ -314,7 +352,14 @@ pub fn confirm_index_backend() -> Result<bool> {
         dwFlags: TDF_ALLOW_DIALOG_CANCELLATION,
         pszWindowTitle: w!("StashFinder"),
         pszMainInstruction: w!("磁盘索引需要管理员权限"),
-        pszContent: w!("启动后台时，Windows 可能会请求授权。选择稍后启动仍可打开设置。"),
+        pszContent: match kind {
+            ClientKind::Desktop => {
+                w!("启动后台时，Windows 可能会请求授权。选择稍后启动仍可打开设置。")
+            }
+            ClientKind::QuickSearch => {
+                w!("启动后台时，Windows 可能会请求授权。选择稍后启动将退出快速搜索。")
+            }
+        },
         Anonymous1: TASKDIALOGCONFIG_0 {
             pszMainIcon: TD_INFORMATION_ICON,
         },

@@ -2,7 +2,9 @@ use anyhow::{Context, Result, ensure};
 pub use stashfinder_windows::portable::show_error;
 use stashfinder_windows::{
     ipc,
-    portable::{Layout, Process, confirm_index_backend, is_elevated},
+    portable::{
+        ClientKind, Layout, Process, confirm_index_backend, is_elevated, session::PortableSession,
+    },
 };
 use std::{
     fs::File,
@@ -10,7 +12,6 @@ use std::{
         OnceLock,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
 };
 use tauri::{
     Manager,
@@ -115,6 +116,7 @@ pub fn configure(config: &mut Config, layout: Option<&Layout>) {
 
 pub struct Session {
     _backend: Option<Backend>,
+    _portable: Option<PortableSession>,
     _lock: Option<File>,
 }
 impl Session {
@@ -122,6 +124,7 @@ impl Session {
         BACKEND_DEFERRED.store(true, Ordering::Relaxed);
         Self {
             _backend: None,
+            _portable: None,
             _lock: lock,
         }
     }
@@ -158,72 +161,53 @@ pub fn start(config: &mut Config) -> Result<Option<Session>> {
         !is_elevated(),
         "请以普通权限双击 StashFinder。程序会单独为索引后台申请管理员权限。"
     );
+    if let Some(layout) = &layout {
+        let lock = layout.lock()?;
+        return Ok(Some(
+            match PortableSession::start(layout, || confirm_index_backend(ClientKind::Desktop))? {
+                Some(session) => Session {
+                    _backend: None,
+                    _portable: Some(session),
+                    _lock: Some(lock),
+                },
+                None => Session::defer(Some(lock)),
+            },
+        ));
+    }
     let backend = executable.with_file_name("stashfinder-service.exe");
     ensure!(
         backend.is_file(),
-        "缺少 stashfinder-service.exe，请重新安装或完整解压便携包"
+        "缺少 stashfinder-service.exe，请重新安装"
     );
-    let lock = layout.as_ref().map(Layout::lock).transpose()?;
-    if !confirm_index_backend()? {
-        return Ok(Some(Session::defer(lock)));
+    if !confirm_index_backend(ClientKind::Desktop)? {
+        return Ok(Some(Session::defer(None)));
     }
 
-    let (marker, mode) = if let Some(layout) = &layout {
-        (
-            tempfile::Builder::new()
-                .prefix("session-")
-                .suffix(".guard")
-                .tempfile_in(&layout.runtime)?,
-            "portable",
-        )
-    } else {
-        (
-            tempfile::Builder::new()
-                .prefix("stashfinder-session-")
-                .suffix(".guard")
-                .tempfile()?,
-            "desktop_session",
-        )
-    };
-    let mut args = if let Some(layout) = &layout {
-        vec![
-            "--portable".into(),
-            ipc::current_user_sid()?,
-            layout.pipe.clone(),
-            layout.index.to_string_lossy().into_owned(),
-        ]
-    } else {
-        vec!["--desktop-session".into()]
-    };
-    args.push(std::process::id().to_string());
-    args.push(marker.path().to_string_lossy().into_owned());
+    let marker = tempfile::Builder::new()
+        .prefix("stashfinder-session-")
+        .suffix(".guard")
+        .tempfile()?;
+    let args = [
+        "--desktop-session".into(),
+        std::process::id().to_string(),
+        marker.path().to_string_lossy().into_owned(),
+    ];
     let Some(process) = Process::launch_elevated(&backend, &args)? else {
-        return Ok(Some(Session::defer(lock)));
+        return Ok(Some(Session::defer(None)));
     };
     let backend = Backend {
         marker: Some(marker),
         process,
     };
     let runtime = tokio::runtime::Runtime::new()?;
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        ensure!(
-            !backend.process.wait(0)?,
-            "索引后台启动失败。请确认当前账户是安装时的桌面账户，且没有其他索引后台在运行。"
-        );
-        if let Ok(status) = runtime.block_on(ipc::status(pipe())) {
-            ensure!(
-                status.process_id == backend.process.id() && status.mode == mode,
-                "索引后台身份不匹配"
-            );
-            return Ok(Some(Session {
-                _backend: Some(backend),
-                _lock: lock,
-            }));
-        }
-        ensure!(Instant::now() < deadline, "索引后台启动超时");
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    backend
+        .process
+        .wait_ready(&runtime, pipe(), "desktop_session")?;
+    Ok(Some(Session {
+        _backend: Some(backend),
+        _portable: None,
+        _lock: None,
+    }))
 }
 
 pub fn setup(app: &tauri::AppHandle) -> Result<()> {

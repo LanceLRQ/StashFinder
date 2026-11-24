@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use stashfinder_windows::ipc::{DEFAULT_PIPE, create_pipe, current_user_sid, status};
 use stashfinder_windows::scm::{INSTALLED_PIPE, INSTALLED_SERVICE};
 use stashfinder_windows::{
-    portable::{Process, enable_backup_read, is_elevated},
+    portable::{Layout, Process, enable_backup_read, is_elevated, session::SessionFiles},
     storage,
 };
 use std::{ffi::OsString, path::PathBuf, time::Duration};
@@ -24,6 +24,20 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("--portable") => run_portable(&args[1..])?,
+        Some("--portable-shared") if args.len() == 2 => {
+            let layout = Layout::discover(&std::env::current_exe()?)?.context("缺少便携配置")?;
+            let owner = Process::open(args[1].parse().context("启动进程 ID 无效")?)?.user_sid()?;
+            let clients = SessionFiles::open(&layout.runtime)?;
+            if is_elevated() {
+                enable_backup_read()?;
+            }
+            let _shutdown_gate =
+                run_session(layout.index, &layout.pipe, &owner, "portable", async {
+                    Ok(Some(clients.until_unused().await?))
+                })?;
+            // Windows releases the gate on process exit, after all worker threads stop.
+            std::process::exit(0);
+        }
         Some("--desktop-session") if args.len() == 3 => {
             anyhow::ensure!(is_elevated(), "索引后台需要管理员权限");
             let parent = Process::open(args[1].parse().context("桌面进程 ID 无效")?)?;
@@ -34,7 +48,7 @@ fn main() -> Result<()> {
             anyhow::ensure!(parent.user_sid()? == owner, "桌面账户与安装账户不匹配");
             storage::use_admin_file_owner()?;
             enable_backup_read()?;
-            run_session(
+            run_window_session(
                 root,
                 INSTALLED_PIPE,
                 owner,
@@ -135,7 +149,7 @@ fn run_portable(args: &[String]) -> Result<()> {
         enable_backup_read()?;
     }
     let parent = Process::open(config.parent)?;
-    run_session(
+    run_window_session(
         config.layout.index,
         &config.layout.pipe,
         &config.owner,
@@ -145,7 +159,7 @@ fn run_portable(args: &[String]) -> Result<()> {
     )
 }
 
-fn run_session(
+fn run_window_session(
     root: PathBuf,
     endpoint: &str,
     owner: &str,
@@ -154,23 +168,34 @@ fn run_session(
     mode: &str,
 ) -> Result<()> {
     anyhow::ensure!(!parent.wait(0)? && session.is_file(), "桌面会话已结束");
+    run_session(root, endpoint, owner, mode, async {
+        parent.wait_session(&session).await?;
+        Ok(None)
+    })
+    .map(drop)
+}
+
+fn run_session(
+    root: PathBuf,
+    endpoint: &str,
+    owner: &str,
+    mode: &str,
+    until_closed: impl Future<Output = Result<Option<std::fs::File>>>,
+) -> Result<Option<std::fs::File>> {
+    let mut shutdown_gate = None;
     std::fs::create_dir_all(&root)?;
     let _lock = storage::lock_backend(&root)?;
     tokio::runtime::Runtime::new()?.block_on(async {
         // Own the endpoint before starting any writer for this portable directory.
         let pipe = create_pipe(endpoint, owner, true)?;
         let (stop, receiver) = watch::channel(false);
-        std::thread::spawn(move || {
-            let _ = parent.wait_session(&session);
-            let _ = stop.send(true);
-        });
         stashfinder_store::catalog::Catalog::open(&root)?;
         let indexes = stashfinder_service::jobs::Indexes::start(root.clone());
         let assets = stashfinder_service::assets::Assets::start(
             root,
             stashfinder_windows::volumes::discover,
         );
-        stashfinder_service::serve_runtime(
+        let server = stashfinder_service::serve_runtime(
             pipe,
             endpoint,
             owner,
@@ -180,9 +205,18 @@ fn run_session(
                 assets: Some(&assets),
                 indexes: Some(&indexes),
             },
-        )
-        .await
-    })
+        );
+        tokio::pin!(server);
+        tokio::select! {
+            result = &mut server => result,
+            guard = until_closed => {
+                shutdown_gate = guard?;
+                let _ = stop.send(true);
+                server.await
+            }
+        }
+    })?;
+    Ok(shutdown_gate)
 }
 
 fn data_root(args: &[String], service: bool) -> Result<PathBuf> {

@@ -16,10 +16,22 @@ fn main() {
 
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    let installed = storage::is_installed_program(&std::env::current_exe()?)?;
-    let pipe = search_pipe(&args, installed)?;
+    let executable = std::env::current_exe()?;
     ensure!(!portable::is_elevated(), "请用普通用户权限启动搜索窗口");
-    window::run(pipe)
+    if let Some(layout) = portable::Layout::discover(&executable)? {
+        ensure!(args.is_empty(), "便携版快速搜索只连接本目录的索引后台");
+        let Some(_session) = portable::session::PortableSession::start(&layout, || {
+            portable::confirm_index_backend(portable::ClientKind::QuickSearch)
+        })?
+        else {
+            return Ok(());
+        };
+        return window::run(layout.pipe);
+    }
+    window::run(search_pipe(
+        &args,
+        storage::is_installed_program(&executable)?,
+    )?)
 }
 
 fn search_pipe(args: &[String], installed: bool) -> Result<String> {

@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 stashfinder-core = { path = "../core" }
-windows = { workspace = true, features = ["Win32_UI_Controls"] }
+windows = { workspace = true, features = ["Win32_UI_Controls", "Win32_System_Pipes"] }
 windows-core = "=0.62.2"
 windows-service = "=0.8.1"
 anyhow.workspace = true

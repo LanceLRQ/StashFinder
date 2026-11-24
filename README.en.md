@@ -13,7 +13,7 @@ pnpm install --frozen-lockfile
 pnpm package
 ```
 
-- The **portable ZIP** is in `.local/packages/`. Extract it to a writable folder and run `StashFinder.exe`. Indexes, settings, and cached images live in the `data/` folder next to the executable. [Using the portable build](docs/portable.en.md)
+- The **portable ZIP** is in `.local/packages/`. Extract it to a writable folder. Use `StashFinder.exe` to register and manage partitions. You can then double-click `QuickSearch.exe` to search with the main window closed. Both programs use the index in the adjacent `data/` folder. [Using the portable build](docs/portable.en.md)
 - The **Windows installer** is in `target/release/bundle/nsis/`. Run the installer. By default, the backend starts and stops with the app. Choose Windows service mode during installation to keep indexing after you close the window.
 
 When you first use the desktop-managed backend, choose to start it and approve the Windows administrator prompt. In the overview, open the partition registration dialog, select the partitions you want, and leave automatic initial indexing enabled. Once indexing finishes, double-click a partition to browse it, or enter a query in the overview and press Enter to search all registered partitions.

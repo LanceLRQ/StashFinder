@@ -41,6 +41,8 @@ The app opens on the Overview tab, pinned at the far left. Double-click a partit
 
 Select Windows service mode during installation to add **StashFinder 快速搜索** (Quick Search) to Start. You can also run `stashfinder-native-search.exe` from the installation directory as an ordinary user. The first search starts the registered service if needed and checks its mode and process ID. Closing all search windows leaves the service running. Close Quick Search before upgrading, changing modes, or uninstalling.
 
+In a portable folder, double-click `QuickSearch.exe` to search that folder's `data/index` independently. The main application and search windows share one backend. The backend releases the index after the last client exits.
+
 Start the development backend and native search window from a non-elevated terminal at the repository root:
 
 ```powershell
@@ -279,8 +281,8 @@ See [system icons and thumbnails](system-visuals.en.md). The desktop obtains sys
 
 ## Portable builds
 
-Run `pnpm package:portable` to build the release GUI and backend, an allowlisted ZIP, and SHA256 metadata. Output defaults to the ignored `.local/packages/` directory; existing output directories are rejected. Validate with `scripts/verify-portable-package.ps1 -Archive <zip-path>` without executing packaged programs.
+Run `pnpm package:portable` to build the main application, native Quick Search, and backend into an allowlisted ZIP with SHA256 metadata. Output defaults to the ignored `.local/packages/` directory. Existing output directories are rejected. Validate with `scripts/verify-portable-package.ps1 -Archive <zip-path>` without executing packaged programs.
 
-The `portable.json` marker enables `data` beside the executable for indexes, preferences, image caches, and WebView2 user data. The GUI remains unelevated; the backend is elevated separately on each run without service registration. Tray and settings exits revoke the session and wait for the backend; parent-process detection handles abnormal GUI exits. Without a marker, existing behavior remains. See the [portable guide](portable.en.md) for usage and dependencies.
+The `portable.json` marker enables the adjacent `data` folder for indexes, preferences, image caches, and WebView2 user data. Both frontends run as an ordinary user. The first client asks for confirmation before elevating the backend separately. Shared file locks are released when a client exits, including after a crash. On a normal exit, the last client waits for the backend to release the index. See the [portable guide](portable.en.md) for usage and dependencies.
 
 Focused regression commands: `cargo test -p stashfinder-windows --test portable --locked`, `cargo test -p stashfinder-service --test portable --locked`, and `cargo test -p stashfinder-desktop runtime --locked`. The service integration test creates empty registrations in a temporary directory without registering or scanning data disks. Actual UAC, tray behavior, and directory relocation need separate machine verification.
