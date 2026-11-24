@@ -1,4 +1,4 @@
-param([switch]$CleanupOnly)
+param([switch]$CleanupOnly, [switch]$NativeSearch)
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
@@ -66,7 +66,11 @@ try {
         throw 'The readiness probe reached a different backend.'
     }
     Write-Output ('StashFinder backend ready ({0}, PID {1}).' -f $status.mode, $status.process_id)
-    & pnpm --dir ui run tauri dev
+    if ($NativeSearch) {
+        & cargo run --release --locked -p stashfinder-native-search
+    } else {
+        & pnpm --dir ui run tauri dev
+    }
     $exitCode = $LASTEXITCODE
 } finally {
     if ($backend) {

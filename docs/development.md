@@ -37,6 +37,20 @@ pnpm dev
 
 启动进入固定在最左侧的概览标签。双击分区卡片打开目录浏览。从「工具 → 设置…」或按 Ctrl+P 打开设置弹层。多个搜索标签在同一桌面窗口内独立运行。在「工具 → 任务」查看手动索引的进度和历史。自动索引仅在失败、中断或需要确认时出现在任务列表。概览右栏保留分区详情和索引状态。取消按任务 ID 定位，取消后分区暂停，需显式继续更新。普通用户前台模式可能无权读取物理磁盘布局，界面应明确显示不可访问；完整设备验收需使用下述 LocalSystem 服务。「帮助 → 关于与诊断」可检查实际应用版本、后台模式和连接状态。命名管道限定配置账户、SYSTEM 和管理员，拒绝远程连接；IPC 不接受数据库路径或任意执行命令。
 
+### Win32 原生搜索原型
+
+在仓库根目录以普通权限启动开发后台和原生搜索窗口：
+
+```powershell
+pnpm dev:native
+```
+
+窗口默认连接 `\\.\pipe\StashFinder.M0`。启动器可以复用已运行的开发后台。要连接已有的隔离后台，运行 `target/release/stashfinder-native-search.exe --pipe '\\.\pipe\StashFinder.名称'`。窗口和后台须一同更新到协议 17。界面使用 Windows 系统控件，无需 WebView2。
+
+输入关键词实时搜索，Enter 立即提交或重试。点击名称、卷内路径、分区或大小列可对全部结果排序。Ctrl／Shift 可跨页选择，聚焦结果列表时 Ctrl+A 全选。拖到资源管理器执行复制，最多 10,000 项。“查询时状态”显示搜索时的分区连接状态，实际拖出会重新核对分区和文件身份。后台重启后，拖动旧结果会清空已过期的列表并提示重新搜索。在搜索框按 Enter，即可重新选择并拖出。
+
+在交互式 Windows 桌面执行 `cargo test -p stashfinder-native-search --locked -- --ignored --test-threads=1` 可单独验证断开后台时的提示，以及窗口处理 DPI 变化后的控件尺寸。
+
 ## 正式 Windows 安装包
 
 从仓库根目录运行 `pnpm package`，依次生成便携 ZIP 和 NSIS 安装包。也可单独运行 `pnpm package:portable` 或 `pnpm package:installer`。便携包位于 `.local/packages/`，NSIS 安装包位于 `target/release/bundle/nsis/`。

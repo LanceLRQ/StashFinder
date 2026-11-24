@@ -37,6 +37,20 @@ The launcher clears orphaned development backends from this checkout, then allow
 
 The app opens on the Overview tab, pinned at the far left. Double-click a partition card to browse its directories. Open the Settings dialog from Tools → Settings or press Ctrl+P. Multiple search tabs run independently in the same desktop window. Open Tools → Tasks to see progress and history for manual indexing. Automatic indexing appears in the task list only after a failure or interruption, or when confirmation is required. The Overview sidebar shows partition details and index status. Cancellation targets a task ID and pauses its partition until updates are explicitly resumed. An ordinary foreground process may lack access to physical disk layouts. The UI reports this explicitly. Use the LocalSystem verification service below for complete device validation. Help → About and diagnostics reports the actual app version, backend mode and connection state. The local pipe allows the configured account, SYSTEM and administrators and rejects remote clients. IPC accepts neither database paths nor arbitrary commands.
 
+### Native Win32 search prototype
+
+Start the development backend and native search window from a non-elevated terminal at the repository root:
+
+```powershell
+pnpm dev:native
+```
+
+The window connects to `\\.\pipe\StashFinder.M0` by default. The launcher can reuse a running development backend. To connect to a separate running backend, run `target/release/stashfinder-native-search.exe --pipe '\\.\pipe\StashFinder.name'`. Update both the window and the backend to protocol 17 together. Its Windows system controls run without WebView2.
+
+Type to search, or press Enter to submit immediately or retry. Click Name, Volume path, Partition, or Size to sort the entire result set. Ctrl and Shift select across pages. Ctrl+A selects all results when the list has focus. Drag up to 10,000 selected entries into Explorer to copy them. The status column shows the partition connection state at search time. Dragging rechecks the current partition and file identities. After a backend restart, dragging an old result clears the expired list and prompts you to search again. Press Enter in the search field, then select and drag the file again.
+
+On an interactive Windows desktop, run `cargo test -p stashfinder-native-search --locked -- --ignored --test-threads=1` to check the disconnected-backend message and control dimensions after a DPI change.
+
 ## Windows installer
 
 Run `pnpm package` from the repository root to build the portable ZIP and the NSIS installer in sequence. To build either artifact individually, run `pnpm package:portable` or `pnpm package:installer`. The portable ZIP goes to `.local/packages/` and the NSIS installer to `target/release/bundle/nsis/`.

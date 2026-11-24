@@ -3056,6 +3056,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "stashfinder-native-search"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "serde_json",
+ "stashfinder-core",
+ "stashfinder-windows",
+ "tokio",
+ "windows",
+]
+
+[[package]]
 name = "stashfinder-service"
 version = "0.0.1"
 dependencies = [
