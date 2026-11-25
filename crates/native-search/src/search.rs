@@ -1,10 +1,11 @@
+use crate::Endpoint;
 use anyhow::{Result, bail, ensure};
 use stashfinder_core::{
     Action, Response, SEARCH_CATALOG_LOADING,
     index::{SearchHit, SearchRequest},
     search::{QueryOptions, SortField},
 };
-use stashfinder_windows::{ipc, scm};
+use stashfinder_windows::ipc;
 use std::ops::Range;
 use tokio::{
     sync::watch,
@@ -27,11 +28,12 @@ pub struct Page {
     pub unavailable: Vec<String>,
 }
 
-pub async fn serve(
-    pipe: &str,
+pub(super) async fn serve(
+    endpoint: &Endpoint,
     mut requests: watch::Receiver<Option<View>>,
     deliver: impl Fn(View, Result<Page>),
 ) {
+    let pipe = endpoint.pipe();
     let mut active: Option<(u64, u64)> = None;
     loop {
         let wanted = requests.borrow_and_update().clone();
@@ -40,9 +42,7 @@ pub async fn serve(
                 let id = match active {
                     Some((generation, id)) if generation == view.generation => id,
                     _ => {
-                        if pipe == scm::INSTALLED_PIPE {
-                            scm::installed_status().await?;
-                        }
+                        endpoint.ready().await?;
                         let query = SearchRequest {
                             text: view.text.clone(),
                             names_only: false,

@@ -31,19 +31,25 @@ fn backup_read_enumerates_a_protected_test_directory() {
 }
 
 #[test]
-fn portable_data_is_explicit_versioned_and_moves_with_the_executable() {
+fn portable_data_supports_the_product_name_or_versioned_marker_and_moves_with_the_executable() {
     let temp = tempfile::tempdir().unwrap();
     let first = temp.path().join("便携 目录");
     std::fs::create_dir(&first).unwrap();
     let executable = first.join("StashFinder.exe");
     std::fs::write(&executable, b"test").unwrap();
-    assert!(Layout::discover(&executable).unwrap().is_none());
+    assert!(
+        Layout::discover(&first.join("stashfinder-desktop.exe"))
+            .unwrap()
+            .is_none()
+    );
+    let without_marker = Layout::discover(&executable).unwrap().unwrap();
     std::fs::write(first.join("portable.json"), b"not json").unwrap();
     assert!(Layout::discover(&executable).is_err());
     std::fs::write(first.join("portable.json"), br#"{"version":2}"#).unwrap();
     assert!(Layout::discover(&executable).is_err());
     std::fs::write(first.join("portable.json"), br#"{"version":1}"#).unwrap();
     let original = Layout::discover(&executable).unwrap().unwrap();
+    assert_eq!(original.pipe, without_marker.pipe);
     assert_eq!(
         original.index,
         std::fs::canonicalize(&first).unwrap().join("data/index")

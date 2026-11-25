@@ -1,4 +1,5 @@
 use crate::{
+    Endpoint,
     actions::{self, FileAction, Prepared},
     search::{self, Page, View},
 };
@@ -60,7 +61,7 @@ struct Window {
     status: HWND,
     font: Cell<HFONT>,
     dpi: Cell<u32>,
-    pipe: String,
+    endpoint: Endpoint,
     runtime: Handle,
     requests: watch::Sender<Option<View>>,
     send: mpsc::Sender<Update>,
@@ -76,7 +77,7 @@ struct Window {
 
 thread_local! { static WINDOW: RefCell<Option<Rc<Window>>> = const { RefCell::new(None) }; }
 
-pub fn run(pipe: String) -> Result<()> {
+pub(super) fn run(endpoint: Endpoint) -> Result<()> {
     let runtime = Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -180,9 +181,9 @@ pub fn run(pipe: String) -> Result<()> {
         let (send, updates) = mpsc::channel();
         let worker_send = send.clone();
         let target = hwnd.0 as usize;
-        let endpoint = pipe.clone();
+        let search_endpoint = endpoint.clone();
         let worker = runtime.spawn(async move {
-            search::serve(&endpoint, rx, |view, result| {
+            search::serve(&search_endpoint, rx, |view, result| {
                 notify(&worker_send, target, Update::Page(view, result));
             })
             .await;
@@ -192,7 +193,7 @@ pub fn run(pipe: String) -> Result<()> {
             edit,
             list,
             status,
-            pipe,
+            endpoint,
             requests,
             send,
             updates,
@@ -740,12 +741,12 @@ impl Window {
         } else {
             "正在核验所选文件…"
         });
-        let pipe = self.pipe.clone();
+        let endpoint = self.endpoint.clone();
         let sender = self.send.clone();
         let target = self.hwnd.0 as usize;
         let generation = self.generation.get();
         self.file_task.replace(Some(self.runtime.spawn(async move {
-            let result = actions::prepare(&pipe, id, positions, action).await;
+            let result = actions::prepare(&endpoint, id, positions, action).await;
             notify(&sender, target, Update::Files(generation, action, result));
         })));
     }
@@ -790,7 +791,12 @@ mod tests {
     #[test]
     #[ignore = "opens a native window on the interactive Windows desktop"]
     fn dpi_change_resizes_the_real_edit_and_list_columns() {
-        let worker = thread::spawn(|| run(stashfinder_windows::ipc::DEFAULT_PIPE.into()).unwrap());
+        let worker = thread::spawn(|| {
+            run(Endpoint::Direct(
+                stashfinder_windows::ipc::DEFAULT_PIPE.into(),
+            ))
+            .unwrap()
+        });
         let deadline = Instant::now() + Duration::from_secs(6);
         // SAFETY: The window is in this test process. Its RECT remains valid across each
         // synchronous DPI message and the test reads only native control geometry.

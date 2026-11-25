@@ -352,8 +352,31 @@ async fn edit_samples(
 }
 
 fn main() {
-    if let Err(error) = run() {
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    let result = match args.first().map(String::as_str) {
+        None => run(),
+        Some("--quick-search") => std::env::current_exe()
+            .map_err(anyhow::Error::from)
+            .and_then(|program| stashfinder_native_search::run(&program, &args[1..])),
+        Some(
+            "--portable-shared"
+            | "--desktop-shared"
+            | "--installed-service"
+            | "--probe"
+            | "--snapshot"
+            | "--request",
+        ) => {
+            if let Err(error) = stashfinder_service::runtime::run(&args) {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
+        Some(flag) => Err(anyhow::anyhow!("未知启动参数：{flag}")),
+    };
+    if let Err(error) = result {
         runtime::show_error(&format!("{error:#}"));
+        std::process::exit(1);
     }
 }
 

@@ -6,21 +6,21 @@ StashFinder 是一个 Windows 硬盘目录工具。比如，你记得存过一�
 
 ## 开始使用
 
-需要 Windows 10/11 x64 和 WebView2 Runtime。目前可从源码生成便携版和安装版。按[开发指南](docs/development.md)准备构建环境，然后在仓库根目录运行下面的命令。
+需要 Windows 10/11 x64，管理主界面使用系统 WebView2 Runtime。目前可从源码生成便携版和安装版。按[开发指南](docs/development.md)准备构建环境，然后在仓库根目录运行下面的命令。
 
 ```powershell
 pnpm install --frozen-lockfile
 pnpm package
 ```
 
-- **便携版**在 `.local/packages/`。把 ZIP 完整解压到可写目录。用 `StashFinder.exe` 登记和管理分区，之后可以直接双击 `QuickSearch.exe` 搜索，主界面可以保持关闭。两个入口共用程序旁 `data/` 中的索引。[便携版使用说明](docs/portable.md)
+- **便携版**在 `.local/packages/`。将 `StashFinder.exe` 放入可写目录，双击即可登记和管理分区。运行 `StashFinder.exe --quick-search` 或双击包内的 `QuickSearch.cmd` 可以独立搜索。两个入口共用程序旁 `data/` 中的索引。[便携版使用说明](docs/portable.md)
 - **安装版**在 `target/release/bundle/nsis/`。运行安装程序，后台默认随应用启动和退出。需要关闭窗口后继续更新索引时，可在安装时选择 Windows 服务模式。
 
 首次使用桌面管理的后台时，选择「启动索引后台」并确认 Windows 的管理员授权。进入「概览 → 登记分区…」，选中要管理的分区，保留「登记后自动建立索引」。建库完成后，可以双击分区打开目录，也可以在概览输入关键词，按 Enter 搜索所有已登记分区。
 
 ## 搜索和浏览
 
-安装时勾选 Windows 服务后，可以直接从开始菜单打开「StashFinder 快速搜索」。输入关键词即可搜索已登记分区，主界面可以保持关闭。在结果列表中按 Enter 或双击可打开在线项目，Ctrl+Shift+C 可复制在线或离线记录的路径。
+安装后，两种后台模式都可以直接从开始菜单打开「StashFinder 快速搜索」。输入关键词即可搜索已登记分区，主界面可以保持关闭。在结果列表中按 Enter 或双击可打开在线项目，Ctrl+Shift+C 可复制在线或离线记录的路径。
 
 搜索默认包含在线和离线的已登记分区。在独立标签页里浏览目录或查看搜索结果，可以切回之前的位置。离线时看到的是上次保存的文件名、路径、大小和时间，已有的缩略图也能查看。打开或操作源文件需要接上源盘。格式化前的旧目录保留为历史记录，可在搜索范围中选查。
 

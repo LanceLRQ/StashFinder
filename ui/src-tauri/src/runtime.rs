@@ -2,9 +2,8 @@ use anyhow::{Context, Result, ensure};
 pub use stashfinder_windows::portable::show_error;
 use stashfinder_windows::{
     ipc,
-    portable::{
-        ClientKind, Layout, Process, confirm_index_backend, is_elevated, session::PortableSession,
-    },
+    portable::{ClientKind, Layout, confirm_index_backend, is_elevated},
+    session::ManagedSession,
 };
 use std::{
     fs::File,
@@ -115,8 +114,7 @@ pub fn configure(config: &mut Config, layout: Option<&Layout>) {
 }
 
 pub struct Session {
-    _backend: Option<Backend>,
-    _portable: Option<PortableSession>,
+    _backend: Option<ManagedSession>,
     _lock: Option<File>,
 }
 impl Session {
@@ -124,28 +122,16 @@ impl Session {
         BACKEND_DEFERRED.store(true, Ordering::Relaxed);
         Self {
             _backend: None,
-            _portable: None,
             _lock: lock,
         }
     }
 }
 
-struct Backend {
-    marker: Option<tempfile::NamedTempFile>,
-    process: Process,
-}
-impl Drop for Backend {
-    fn drop(&mut self) {
-        self.marker.take();
-        if !matches!(self.process.wait(15_000), Ok(true)) {
-            show_error("索引后台尚未退出，请稍候再重新打开 StashFinder。");
-        }
-    }
-}
 pub fn start(config: &mut Config) -> Result<Option<Session>> {
     let executable = std::env::current_exe()?;
     let layout = Layout::discover(&executable)?;
-    let installed = layout.is_none() && executable.with_file_name("installed.marker").is_file();
+    let installed =
+        layout.is_none() && stashfinder_windows::storage::is_installed_program(&executable)?;
     ensure!(INSTALLED.set(installed).is_ok(), "运行模式已初始化");
     let windows_service = installed && stashfinder_windows::scm::registered()?;
     ensure!(
@@ -161,52 +147,16 @@ pub fn start(config: &mut Config) -> Result<Option<Session>> {
         !is_elevated(),
         "请以普通权限双击 StashFinder。程序会单独为索引后台申请管理员权限。"
     );
-    if let Some(layout) = &layout {
-        let lock = layout.lock()?;
-        return Ok(Some(
-            match PortableSession::start(layout, || confirm_index_backend(ClientKind::Desktop))? {
-                Some(session) => Session {
-                    _backend: None,
-                    _portable: Some(session),
-                    _lock: Some(lock),
-                },
-                None => Session::defer(Some(lock)),
-            },
-        ));
-    }
-    let backend = executable.with_file_name("stashfinder-service.exe");
-    ensure!(
-        backend.is_file(),
-        "缺少 stashfinder-service.exe，请重新安装"
-    );
-    if !confirm_index_backend(ClientKind::Desktop)? {
-        return Ok(Some(Session::defer(None)));
-    }
-
-    let marker = tempfile::Builder::new()
-        .prefix("stashfinder-session-")
-        .suffix(".guard")
-        .tempfile()?;
-    let args = [
-        "--desktop-session".into(),
-        std::process::id().to_string(),
-        marker.path().to_string_lossy().into_owned(),
-    ];
-    let Some(process) = Process::launch_elevated(&backend, &args)? else {
-        return Ok(Some(Session::defer(None)));
-    };
-    let backend = Backend {
-        marker: Some(marker),
-        process,
-    };
-    let runtime = tokio::runtime::Runtime::new()?;
-    backend
-        .process
-        .wait_ready(&runtime, pipe(), "desktop_session")?;
-    Ok(Some(Session {
-        _backend: Some(backend),
-        _portable: None,
-        _lock: None,
+    let lock = layout.as_ref().map(Layout::lock).transpose()?;
+    let session = ManagedSession::start(&executable, layout.as_ref(), || {
+        confirm_index_backend(ClientKind::Desktop)
+    })?;
+    Ok(Some(match session {
+        Some(backend) => Session {
+            _backend: Some(backend),
+            _lock: lock,
+        },
+        None => Session::defer(lock),
     }))
 }
 

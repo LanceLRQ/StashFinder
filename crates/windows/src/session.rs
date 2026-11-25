@@ -1,5 +1,8 @@
-use super::{Layout, Process};
-use crate::ipc;
+use crate::{
+    ipc,
+    portable::{Layout, Process, show_error},
+    scm, storage,
+};
 use anyhow::{Context, Result, ensure};
 use std::{
     fs::{File, TryLockError},
@@ -43,7 +46,7 @@ pub struct SessionFiles {
 }
 
 impl SessionFiles {
-    pub fn open(runtime: &Path) -> Result<Self> {
+    pub fn portable(runtime: &Path) -> Result<Self> {
         std::fs::create_dir_all(runtime).context("便携目录不可写")?;
         let open = |name| {
             File::options()
@@ -57,6 +60,17 @@ impl SessionFiles {
         Ok(Self {
             gate: open("startup.lock")?,
             clients: open("clients.lock")?,
+        })
+    }
+
+    pub fn installed(program: &Path) -> Result<Self> {
+        // Both locks work with read-only handles. Clients need no write access
+        // to the installation or the protected index in ProgramData.
+        Ok(Self {
+            gate: File::open(program.with_file_name("installed.marker"))
+                .context("无法打开安装标记")?,
+            clients: File::open(program.with_file_name("installed.clients"))
+                .context("缺少安装会话文件，请重新安装")?,
         })
     }
 
@@ -82,49 +96,74 @@ impl SessionFiles {
     }
 }
 
-pub struct PortableSession {
+pub struct ManagedSession {
     files: SessionFiles,
     pipe: String,
 }
 
-impl PortableSession {
-    pub fn start(layout: &Layout, confirm: impl FnOnce() -> Result<bool>) -> Result<Option<Self>> {
-        let mut files = SessionFiles::open(&layout.runtime)?;
+impl ManagedSession {
+    pub fn start(
+        program: &Path,
+        layout: Option<&Layout>,
+        confirm: impl FnOnce() -> Result<bool>,
+    ) -> Result<Option<Self>> {
+        let (mut files, pipe, mode, flag, mut pid_file) = if let Some(layout) = layout {
+            (
+                SessionFiles::portable(&layout.runtime)?,
+                layout.pipe.as_str(),
+                "portable",
+                "--portable-shared",
+                None,
+            )
+        } else {
+            let files = SessionFiles::installed(program)?;
+            let profile = storage::local_app_data()?.join("io.github.lancelrq.stashfinder");
+            std::fs::create_dir_all(&profile)?;
+            let record = File::options()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(profile.join("desktop-session.pid"))?;
+            (
+                files,
+                scm::INSTALLED_PIPE,
+                "desktop_session",
+                "--desktop-shared",
+                Some(record),
+            )
+        };
         files.gate.lock()?;
         files.clients.lock_shared()?;
+        let record = pid_file.as_mut().unwrap_or(&mut files.gate);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        if pipe_present(&layout.pipe)? {
-            let status = runtime.block_on(ipc::status(&layout.pipe))?;
+        if pipe_present(pipe)? {
+            let status = runtime.block_on(ipc::status(pipe))?;
             let mut recorded_pid = [0; 4];
             ensure!(
-                status.mode == "portable"
-                    && files.gate.read_exact(&mut recorded_pid).is_ok()
+                status.mode == mode
+                    && record.read_exact(&mut recorded_pid).is_ok()
                     && status.process_id == u32::from_le_bytes(recorded_pid),
-                "此目录的后台不属于当前便携会话，请退出后台并使用同一便携包重新启动"
+                "索引后台不属于当前会话，请退出旧版本并重新启动"
             );
         } else {
-            let executable = layout.root.join("stashfinder-service.exe");
-            ensure!(
-                executable.is_file(),
-                "缺少 stashfinder-service.exe，请完整解压便携包"
-            );
             if !confirm()? {
                 return Ok(None);
             }
-            let args = ["--portable-shared".into(), std::process::id().to_string()];
-            let Some(process) = Process::launch_elevated(&executable, &args)? else {
+            let args = [flag.into(), std::process::id().to_string()];
+            let Some(process) = Process::launch_elevated(program, &args)? else {
                 return Ok(None);
             };
-            files.gate.rewind()?;
-            files.gate.write_all(&process.id().to_le_bytes())?;
-            process.wait_ready(&runtime, &layout.pipe, "portable")?;
+            record.rewind()?;
+            record.write_all(&process.id().to_le_bytes())?;
+            process.wait_ready(&runtime, pipe, mode)?;
         }
         files.gate.unlock()?;
         Ok(Some(Self {
             files,
-            pipe: layout.pipe.clone(),
+            pipe: pipe.to_owned(),
         }))
     }
 
@@ -143,17 +182,17 @@ impl PortableSession {
             }
             ensure!(
                 Instant::now() < deadline,
-                "便携后台尚未退出，请稍候再移动目录"
+                "索引后台尚未退出，请稍候再移动目录或更新软件"
             );
             std::thread::sleep(Duration::from_millis(100));
         }
     }
 }
 
-impl Drop for PortableSession {
+impl Drop for ManagedSession {
     fn drop(&mut self) {
         if let Err(error) = self.leave() {
-            super::show_error(&format!("{error:#}"));
+            show_error(&format!("{error:#}"));
         }
     }
 }

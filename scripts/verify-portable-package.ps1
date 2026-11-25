@@ -10,7 +10,7 @@ try {
     $prefix = $manifestEntry[0].FullName.Replace('\','/').Substring(0, $manifestEntry[0].FullName.Replace('\','/').Length - 'manifest.json'.Length)
     $reader = [IO.StreamReader]::new($manifestEntry[0].Open())
     try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
-    $required = @('StashFinder.exe','QuickSearch.exe','stashfinder-service.exe','portable.json','README.md','README.en.md','LICENSE','third-party.md','third-party.en.md')
+    $required = @('StashFinder.exe','QuickSearch.cmd','portable.json','README.md','README.en.md','LICENSE','third-party.md','third-party.en.md')
     if (@($manifest.files).Count -ne $required.Count -or @($manifest.files.name | Sort-Object -Unique).Count -ne $required.Count -or $entries.Count -ne ($required.Count + 1) -or $manifest.architecture -ne 'windows-x64') { throw 'Unexpected package content or architecture.' }
     foreach ($expected in $manifest.files) {
         if ($expected.name -notin $required) { throw 'Unexpected package file.' }

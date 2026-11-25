@@ -39,9 +39,9 @@ pnpm dev
 
 ### Win32 快速搜索
 
-安装时勾选 Windows 服务后，开始菜单会出现「StashFinder 快速搜索」。也可用普通权限直接运行安装目录的 `stashfinder-native-search.exe`。首次查询会按需启动已注册服务，并核对服务模式和进程 ID；关闭所有搜索窗口后服务继续运行。切换安装模式、升级或卸载前请退出快速搜索。
+两种安装模式都有开始菜单入口「StashFinder 快速搜索」，目标为 `StashFinder.exe --quick-search`。默认模式下，首个窗口经确认后启动后台，主界面和快速搜索共享它，最后一个使用者退出时后台停止。选择 Windows 服务后，首次查询会按需启动服务并核对模式和进程 ID，关闭窗口后服务继续运行。切换模式、升级或卸载前请退出主程序和快速搜索。
 
-在便携目录双击 `QuickSearch.exe`，即可独立搜索该目录的 `data/index`。主界面和搜索窗口复用一个后台。最后一个使用它的程序退出后，后台释放索引。
+在便携目录运行 `StashFinder.exe --quick-search` 或双击 `QuickSearch.cmd`，即可独立搜索该目录的 `data/index`。主界面和搜索窗口复用一个后台。最后一个使用它的程序退出后，后台释放索引。
 
 开发环境在仓库根目录以普通权限启动后台和快速搜索窗口：
 
@@ -61,9 +61,9 @@ pnpm dev:native
 
 从仓库根目录运行 `pnpm package`，依次生成便携 ZIP 和 NSIS 安装包。也可单独运行 `pnpm package:portable` 或 `pnpm package:installer`。便携包位于 `.local/packages/`，NSIS 安装包位于 `target/release/bundle/nsis/`。
 
-安装时保留默认的 `Program Files\StashFinder` 位置。首次安装默认由桌面管理后台。打开应用时可选择“启动索引后台”或“稍后启动”。启动时按 Windows 提示确认 UAC，退出应用后后台随之停止。勾选安装 Windows 服务后，安装器会注册并启动自动运行的 `StashFinder` 服务，关闭界面后服务继续运行。服务停止时，打开界面或在“关于与诊断”重新连接会尝试启动。两种模式下界面都以普通权限运行，共用受保护的 `%ProgramData%\StashFinder` 和原安装账户。
+安装时保留默认的 `Program Files\StashFinder` 位置。首次安装默认由桌面管理后台。打开应用时可选择“启动索引后台”或“稍后启动”。启动时按 Windows 提示确认 UAC，退出最后一个使用后台的窗口程序后，后台停止。勾选安装 Windows 服务后，安装器会注册并启动自动运行的 `StashFinder` 服务，关闭界面后服务继续运行。服务停止时，打开界面或在“关于与诊断”重新连接会尝试启动。两种模式下界面都以普通权限运行，共用受保护的 `%ProgramData%\StashFinder` 和原安装账户。
 
-退出桌面后重新运行安装包可切换模式。安装器记住上次选择。静默安装用 `/S /SERVICE` 或 `/S /NOSERVICE` 显式指定，单独使用 `/S` 沿用已保存的选择。卸载移除服务注册并保留索引目录。实机验收应分别核对桌面退出后会话后台停止、服务模式下关闭桌面后服务继续运行，以及切换后索引仍可读。
+退出主程序和快速搜索后，重新运行安装包可切换模式。安装器记住上次选择。静默安装用 `/S /SERVICE` 或 `/S /NOSERVICE` 显式指定，单独使用 `/S` 沿用已保存的选择。从多 EXE 的服务版升级时，检查服务的可执行文件已从 `stashfinder-service.exe` 切换为 `StashFinder.exe`，原账户仍能搜索原先登记的分区。卸载移除服务注册并保留索引目录。
 
 ## 桌面界面与设置验收
 
@@ -281,8 +281,8 @@ cargo build -p stashfinder-store --bin baseline --release --locked
 
 ## 便携构建
 
-运行 `pnpm package:portable` 构建主界面、原生快速搜索和后台，生成白名单 ZIP 和 SHA256 清单。默认输出到忽略的 `.local/packages/`；已有输出目录会被拒绝。包验证入口为 `scripts/verify-portable-package.ps1 -Archive <zip路径>`，不执行包内程序。
+运行 `pnpm package:portable` 将主界面、原生快速搜索和索引后台编入同一份 `StashFinder.exe`，生成白名单 ZIP 和 SHA256 清单。默认输出到忽略的 `.local/packages/`；已有输出目录会被拒绝。包验证入口为 `scripts/verify-portable-package.ps1 -Archive <zip路径>`，不执行包内程序。
 
-`portable.json` 标记启用程序目录旁的 `data`，覆盖索引、界面设置、图片缓存及 WebView2 用户数据路径。两个入口均以普通权限运行，首个使用者确认后单独提升后台。共享文件锁随窗口进程退出而释放，最后一个使用者正常退出时会等待后台释放索引。使用和依赖见[便携版说明](portable.md)。
+在安装目录外，`StashFinder.exe` 默认使用旁边的 `data`，也兼容已有的 `portable.json` 标记。该目录保存索引、界面设置、图片缓存及 WebView2 用户数据路径。两个入口均以普通权限运行，首个使用者确认后单独提升后台。共享文件锁随窗口进程退出而释放，最后一个使用者正常退出时会等待后台释放索引。使用和依赖见[便携版说明](portable.md)。
 
-专项回归：`cargo test -p stashfinder-windows --test portable --locked`、`cargo test -p stashfinder-service --test portable --locked`、`cargo test -p stashfinder-desktop runtime --locked`。服务集成测试仅在临时目录建立空登记，不注册或扫描资料盘；真实 UAC、托盘和目录搬迁另行实机验收。
+专项回归：`cargo test -p stashfinder-windows --test portable --locked`、`cargo test -p stashfinder-service --test portable --locked`、`cargo test -p stashfinder-desktop runtime --locked`、`cargo test -p stashfinder-desktop --test single_executable --locked`。服务集成测试仅在临时目录建立空登记，不注册或扫描资料盘；真实 UAC、托盘和目录搬迁另行实机验收。

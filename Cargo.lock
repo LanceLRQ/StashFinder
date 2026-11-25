@@ -3048,6 +3048,8 @@ dependencies = [
  "serde_json",
  "sha2",
  "stashfinder-core",
+ "stashfinder-native-search",
+ "stashfinder-service",
  "stashfinder-windows",
  "tauri",
  "tauri-build",

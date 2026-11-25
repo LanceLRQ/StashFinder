@@ -39,9 +39,9 @@ The app opens on the Overview tab, pinned at the far left. Double-click a partit
 
 ### Native Win32 Quick Search
 
-Select Windows service mode during installation to add **StashFinder 快速搜索** (Quick Search) to Start. You can also run `stashfinder-native-search.exe` from the installation directory as an ordinary user. The first search starts the registered service if needed and checks its mode and process ID. Closing all search windows leaves the service running. Close Quick Search before upgrading, changing modes, or uninstalling.
+Both installation modes add **StashFinder 快速搜索** (Quick Search) to Start. Its target is `StashFinder.exe --quick-search`. In the default mode, the first client asks before starting a shared backend. The backend stops after its last client exits. In Windows service mode, the first query starts the registered service if needed and checks its mode and process ID. Closing all windows leaves the service running. Exit the main application and Quick Search before upgrading, changing modes, or uninstalling.
 
-In a portable folder, double-click `QuickSearch.exe` to search that folder's `data/index` independently. The main application and search windows share one backend. The backend releases the index after the last client exits.
+In a portable folder, run `StashFinder.exe --quick-search` or double-click `QuickSearch.cmd` to search that folder's `data/index` independently. The main application and search windows share one backend. The backend releases the index after the last client exits.
 
 Start the development backend and native search window from a non-elevated terminal at the repository root:
 
@@ -61,9 +61,9 @@ On an interactive Windows desktop, run `cargo test -p stashfinder-native-search 
 
 Run `pnpm package` from the repository root to build the portable ZIP and the NSIS installer in sequence. To build either artifact individually, run `pnpm package:portable` or `pnpm package:installer`. The portable ZIP goes to `.local/packages/` and the NSIS installer to `target/release/bundle/nsis/`.
 
-Keep the default `Program Files\StashFinder` directory. A fresh install defaults to desktop management. When opening the app, choose **Start indexing backend** or **Start later**. Approve UAC if Windows prompts you when starting the backend. The process stops when the app exits. Select the Windows service option to register and start the automatic `StashFinder` service, which keeps running after the GUI closes. Opening the app or reconnecting from About and diagnostics starts a stopped service. Both modes keep the GUI unelevated and share the protected `%ProgramData%\StashFinder` index and configured account.
+Keep the default `Program Files\StashFinder` directory. A fresh install defaults to desktop management. When opening the app, choose **Start indexing backend** or **Start later**. Approve UAC if Windows prompts you when starting the backend. The process stops when the last client exits. Select the Windows service option to register and start the automatic `StashFinder` service, which keeps running after the GUI closes. Opening the app or reconnecting from About and diagnostics starts a stopped service. Both modes keep the GUI unelevated and share the protected `%ProgramData%\StashFinder` index and configured account.
 
-Exit StashFinder and rerun the installer to switch modes. Setup remembers the last selection. For silent setup use `/S /SERVICE` or `/S /NOSERVICE` to select a mode explicitly. `/S` alone reuses the saved choice. Uninstall removes the service registration and keeps the index directory. Verify that desktop-managed indexing stops on exit, service-managed indexing continues after exit, and existing indexes can be read after switching.
+Exit the main application and Quick Search, then rerun the installer to switch modes. Setup remembers the last selection. For silent setup use `/S /SERVICE` or `/S /NOSERVICE` to select a mode explicitly. `/S` alone reuses the saved choice. When upgrading from a multi-executable service installation, check that the service image changes from `stashfinder-service.exe` to `StashFinder.exe` and that the original account can still search its registered partitions. Uninstall removes the service registration and keeps the index directory.
 
 ## Desktop and preferences acceptance
 
@@ -281,8 +281,8 @@ See [system icons and thumbnails](system-visuals.en.md). The desktop obtains sys
 
 ## Portable builds
 
-Run `pnpm package:portable` to build the main application, native Quick Search, and backend into an allowlisted ZIP with SHA256 metadata. Output defaults to the ignored `.local/packages/` directory. Existing output directories are rejected. Validate with `scripts/verify-portable-package.ps1 -Archive <zip-path>` without executing packaged programs.
+Run `pnpm package:portable` to build the main application, native Quick Search, and indexing backend into one `StashFinder.exe` and generate an allowlisted ZIP with SHA256 metadata. Output defaults to the ignored `.local/packages/` directory. Existing output directories are rejected. Validate with `scripts/verify-portable-package.ps1 -Archive <zip-path>` without executing packaged programs.
 
-The `portable.json` marker enables the adjacent `data` folder for indexes, preferences, image caches, and WebView2 user data. Both frontends run as an ordinary user. The first client asks for confirmation before elevating the backend separately. Shared file locks are released when a client exits, including after a crash. On a normal exit, the last client waits for the backend to release the index. See the [portable guide](portable.en.md) for usage and dependencies.
+Outside the installation directory, `StashFinder.exe` uses the adjacent `data` folder for indexes, preferences, image caches, and WebView2 user data. Existing `portable.json` markers remain supported. Both frontends run as an ordinary user. The first client asks for confirmation before elevating the backend separately. Shared file locks are released when a client exits, including after a crash. On a normal exit, the last client waits for the backend to release the index. See the [portable guide](portable.en.md) for usage and dependencies.
 
-Focused regression commands: `cargo test -p stashfinder-windows --test portable --locked`, `cargo test -p stashfinder-service --test portable --locked`, and `cargo test -p stashfinder-desktop runtime --locked`. The service integration test creates empty registrations in a temporary directory without registering or scanning data disks. Actual UAC, tray behavior, and directory relocation need separate machine verification.
+Focused regression commands: `cargo test -p stashfinder-windows --test portable --locked`, `cargo test -p stashfinder-service --test portable --locked`, `cargo test -p stashfinder-desktop runtime --locked`, and `cargo test -p stashfinder-desktop --test single_executable --locked`. The service integration test creates empty registrations in a temporary directory without registering or scanning data disks. Actual UAC, tray behavior, and directory relocation need separate machine verification.

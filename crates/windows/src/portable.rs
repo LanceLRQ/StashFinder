@@ -1,5 +1,3 @@
-pub mod session;
-
 use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -39,18 +37,29 @@ pub struct Layout {
 impl Layout {
     pub fn discover(executable: &Path) -> Result<Option<Self>> {
         let root = executable.parent().context("程序路径无父目录")?;
-        let bytes = match std::fs::read(root.join("portable.json")) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error).context("无法读取便携配置"),
-        };
+        if crate::storage::is_installed_program(executable)? {
+            return Ok(None);
+        }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Marker {
             version: u32,
         }
-        let marker: Marker = serde_json::from_slice(&bytes).context("便携配置损坏")?;
-        ensure!(marker.version == 1, "便携配置版本不受支持");
+        match std::fs::read(root.join("portable.json")) {
+            Ok(bytes) => {
+                let marker: Marker = serde_json::from_slice(&bytes).context("便携配置损坏")?;
+                ensure!(marker.version == 1, "便携配置版本不受支持");
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if !executable
+                    .file_name()
+                    .is_some_and(|n| n.eq_ignore_ascii_case("StashFinder.exe"))
+                {
+                    return Ok(None);
+                }
+            }
+            Err(error) => return Err(error).context("无法读取便携配置"),
+        }
         let root = std::fs::canonicalize(root)?;
         let key: Vec<u8> = root
             .as_os_str()

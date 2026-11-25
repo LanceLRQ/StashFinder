@@ -1,3 +1,4 @@
+use crate::Endpoint;
 use anyhow::{Context, Result, bail, ensure};
 use stashfinder_core::{
     Action, Response,
@@ -5,7 +6,7 @@ use stashfinder_core::{
         MAX_SELECTED, PreparedTarget, SelectionChunk, SelectionOrigin, record_text, top_level,
     },
 };
-use stashfinder_windows::{file_operations::verify, ipc, scm, shell};
+use stashfinder_windows::{file_operations::verify, ipc, shell};
 use std::{collections::HashSet, path::PathBuf};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -45,8 +46,8 @@ impl Prepared {
     }
 }
 
-pub async fn prepare(
-    pipe: &str,
+pub(super) async fn prepare(
+    endpoint: &Endpoint,
     snapshot: u64,
     positions: Vec<usize>,
     action: FileAction,
@@ -59,9 +60,8 @@ pub async fn prepare(
         action != FileAction::Open || positions.len() == 1,
         "打开文件时请选择一项"
     );
-    if pipe == scm::INSTALLED_PIPE {
-        scm::installed_status().await?;
-    }
+    endpoint.ready().await?;
+    let pipe = endpoint.pipe();
     let origin = SelectionOrigin::Search {
         id: snapshot,
         range: None,
@@ -245,6 +245,7 @@ mod tests {
                 }
             }
         });
+        let pipe = Endpoint::Direct(pipe);
         let result = prepare(&pipe, 17, vec![3, 1002], FileAction::Drag).await;
         assert!(
             result.is_err_and(|e| e.to_string().contains("离线")),

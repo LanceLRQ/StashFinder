@@ -20,14 +20,6 @@ try {
         if ($BinaryDirectory -ne (Join-Path $projectRoot 'target\release')) { throw 'Custom BinaryDirectory requires -SkipBuild.' }
         & pnpm --dir ui run tauri build --no-bundle -- -- --locked
         if ($LASTEXITCODE -ne 0) { throw 'Desktop release build failed.' }
-        $originalRustFlags = [Environment]::GetEnvironmentVariable('RUSTFLAGS', 'Process')
-        try {
-            [Environment]::SetEnvironmentVariable('RUSTFLAGS', ($originalRustFlags + ' -C target-feature=+crt-static').Trim(), 'Process')
-            & cargo build -p stashfinder-service -p stashfinder-native-search --release --locked
-            if ($LASTEXITCODE -ne 0) { throw 'Backend or native quick search release build failed.' }
-        } finally {
-            [Environment]::SetEnvironmentVariable('RUSTFLAGS', $originalRustFlags, 'Process')
-        }
     }
     $revision = (& git rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Cannot determine source revision.' }
@@ -36,8 +28,6 @@ try {
     $folder = Join-Path $OutputDirectory $name
     $sources = [ordered]@{
         'StashFinder.exe' = (Join-Path $BinaryDirectory 'stashfinder-desktop.exe')
-        'QuickSearch.exe' = (Join-Path $BinaryDirectory 'stashfinder-native-search.exe')
-        'stashfinder-service.exe' = (Join-Path $BinaryDirectory 'stashfinder-service.exe')
         'README.md' = (Join-Path $projectRoot 'docs\portable.md')
         'README.en.md' = (Join-Path $projectRoot 'docs\portable.en.md')
         'LICENSE' = (Join-Path $projectRoot 'LICENSE')
@@ -54,6 +44,7 @@ try {
         [IO.File]::WriteAllText($path, ([IO.File]::ReadAllText($path).Replace($readme[1], $readme[2])), [Text.UTF8Encoding]::new($false))
     }
     [IO.File]::WriteAllText((Join-Path $folder 'portable.json'), '{"version":1}', [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $folder 'QuickSearch.cmd'), '@start "" "%~dp0StashFinder.exe" --quick-search' + "`r`n", [Text.Encoding]::ASCII)
     $files = @(Get-ChildItem -LiteralPath $folder -File | Sort-Object Name | ForEach-Object {
         [ordered]@{ name = $_.Name; bytes = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
     })

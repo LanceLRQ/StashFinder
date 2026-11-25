@@ -1,10 +1,10 @@
 {
+  "mainBinaryName": "StashFinder",
   "bundle": {
     "active": true,
     "targets": ["nsis"],
     "resources": {
-      "../../target/release/stashfinder-service.exe": "stashfinder-service.exe",
-      "../../target/release/stashfinder-native-search.exe": "stashfinder-native-search.exe",
+      "installer/installed.clients": "installed.clients",
       "installer/installed.marker": "installed.marker"
     },
     "windows": {

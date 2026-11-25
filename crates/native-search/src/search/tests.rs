@@ -104,7 +104,7 @@ async fn cold_start_retries_then_paging_sort_and_close_share_a_snapshot() {
     let (request, updates) = watch::channel(Some(view.clone()));
     let (out, mut pages) = mpsc::unbounded_channel();
     let worker = tokio::spawn(async move {
-        serve(&pipe, updates, |view, page| {
+        serve(&Endpoint::Direct(pipe), updates, |view, page| {
             out.send((view, page)).unwrap();
         })
         .await

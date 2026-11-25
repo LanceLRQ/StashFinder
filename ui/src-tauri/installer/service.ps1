@@ -18,7 +18,8 @@ $directory = [IO.Path]::GetFullPath($InstallDirectory).TrimEnd('\')
 if ($directory -ne (Join-Path $programFiles $name)) {
     throw "Install StashFinder in the default protected directory: $programFiles\$name"
 }
-$binary = Join-Path $directory 'stashfinder-service.exe'
+$binary = Join-Path $directory 'StashFinder.exe'
+$legacyBinary = Join-Path $directory 'stashfinder-service.exe'
 $data = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) $name
 $windows = [Environment]::GetFolderPath('Windows')
 $sc = Join-Path ([Environment]::SystemDirectory) 'sc.exe'
@@ -68,7 +69,8 @@ function Remove-InstalledService {
 $service = Get-CimInstance Win32_Service -Filter "Name='$name'"
 $owner = $null
 if ($service) {
-    $expected = '^' + [regex]::Escape('"' + $binary + '" --installed-service ') + '(S-1-(?:\d+-)*\d+)$'
+    $paths = [regex]::Escape($binary) + '|' + [regex]::Escape($legacyBinary)
+    $expected = '^"(?:' + $paths + ')" --installed-service (S-1-(?:\d+-)*\d+)$'
     if ($service.PathName -match $expected -and $service.StartName -eq 'LocalSystem') {
         $owner = $Matches[1]
     } else {
@@ -84,13 +86,11 @@ Assert-ProtectedPath $directory
 if (Test-Path -LiteralPath $binary) { Assert-ProtectedPath $binary }
 
 if ($Phase -in @('Prepare', 'Uninstall')) {
-    $quickSearch = Join-Path $directory 'stashfinder-native-search.exe'
-    $runningSearch = Get-CimInstance Win32_Process -Filter "Name='stashfinder-native-search.exe'" |
-        Where-Object ExecutablePath -eq $quickSearch
-    if ($runningSearch) { throw 'Close StashFinder Quick Search before changing the installation.' }
-    $desktopBackend = Get-CimInstance Win32_Process -Filter "Name='stashfinder-service.exe'" |
-        Where-Object { $_.ExecutablePath -eq $binary -and $_.CommandLine -match '\s--desktop-session\s' }
-    if ($desktopBackend) { throw 'Close StashFinder and wait for its indexing backend to exit before changing the installation.' }
+    $registeredPid = if ($service) { $service.ProcessId } else { 0 }
+    $programs = @($binary, $legacyBinary, (Join-Path $directory 'stashfinder-native-search.exe'), (Join-Path $directory 'stashfinder-desktop.exe'))
+    $active = Get-CimInstance Win32_Process -Filter "Name='StashFinder.exe' OR Name='stashfinder-service.exe' OR Name='stashfinder-native-search.exe' OR Name='stashfinder-desktop.exe'" |
+        Where-Object { $_.ExecutablePath -in $programs -and $_.ProcessId -ne $registeredPid }
+    if ($active) { throw 'Close StashFinder and Quick Search and wait for the indexing backend to exit before changing the installation.' }
 }
 
 if ($Phase -eq 'Prepare') {
@@ -141,19 +141,35 @@ if ($InstallService -eq '0') {
 
 $created = $false
 try {
+    $command = '"{0}" --installed-service {1}' -f $binary, $owner
     if (-not $service) {
         New-Service -Name $name -DisplayName $name -StartupType Automatic `
-            -BinaryPathName ('"{0}" --installed-service {1}' -f $binary, $owner) | Out-Null
+            -BinaryPathName $command | Out-Null
         $created = $true
+    } elseif ($service.PathName -ne $command) {
+        $changed = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments @{PathName=$command}
+        if ($changed.ReturnValue -ne 0) { throw "Could not update the StashFinder service executable ($($changed.ReturnValue))." }
     }
     # The installation account can query and start this service. Only administrators can change it.
     & $sc sdset $name ('D:P(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;LCRP;;;{0})' -f $owner)
     if ($LASTEXITCODE -ne 0) { throw 'Could not set the StashFinder service permissions.' }
     Set-Service -Name $name -StartupType Automatic
     Start-Service -Name $name
-    $status = & $binary --probe $pipe
-    if ($LASTEXITCODE -ne 0) { throw 'The installed backend did not respond to its readiness probe.' }
-    $reported = $status | ConvertFrom-Json
+    # The installed program uses the GUI subsystem. NSIS has no console, so
+    # explicitly create a stdout pipe and wait for this diagnostic role.
+    $probe = [Diagnostics.Process]::new()
+    try {
+        $probe.StartInfo.FileName = $binary
+        $probe.StartInfo.Arguments = '--probe ' + $pipe
+        $probe.StartInfo.UseShellExecute = $false
+        $probe.StartInfo.CreateNoWindow = $true
+        $probe.StartInfo.RedirectStandardOutput = $true
+        $null = $probe.Start()
+        $status = $probe.StandardOutput.ReadToEnd()
+        $probe.WaitForExit()
+        if ($probe.ExitCode -ne 0) { throw 'The installed backend did not respond to its readiness probe.' }
+        $reported = $status | ConvertFrom-Json
+    } finally { $probe.Dispose() }
     $actual = Get-CimInstance Win32_Service -Filter "Name='$name'"
     if ($reported.mode -ne 'windows_service' -or $reported.process_id -ne $actual.ProcessId) {
         throw 'The readiness probe did not reach the installed StashFinder service.'

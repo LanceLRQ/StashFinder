@@ -4,9 +4,9 @@
 
 适用于 Windows 10/11 x64。这是开发阶段的便携构建，尚未完成全部干净系统发布验收。
 
-1. 完整解压 ZIP 到可写目录，例如 `D:\Tools\StashFinder`，不要直接在压缩包内运行。
+1. 将 ZIP 解压到可写目录，例如 `D:\Tools\StashFinder`。也可以只复制 `StashFinder.exe` 到一个空目录，首次运行会在旁边创建 `data`。
 2. 第一次使用时，以普通权限双击 `StashFinder.exe`，选择“启动索引后台”，按 Windows 提示确认 UAC，然后在概览登记需要管理的分区。软件只扫描已登记分区，不会自动导入开发版或安装版的数据。
-3. 已有索引时，直接双击同一目录的 `QuickSearch.exe`，输入文件名或路径即可搜索，包括已离线的分区。后台已运行时直接复用。后台未启动时，选择“稍后启动”或取消 UAC 会退出快速搜索；在主界面选择稍后启动仍可打开设置。退出后重新打开即可再次选择。
+3. 已有索引时，运行 `StashFinder.exe --quick-search`，或双击包内的 `QuickSearch.cmd`，输入文件名或路径即可搜索，包括已离线的分区。后台已运行时直接复用。后台未启动时，选择“稍后启动”或取消 UAC 会退出快速搜索；在主界面选择稍后启动仍可打开设置。退出后重新打开即可再次选择。
 4. 关闭主窗口会驻留托盘。单击托盘图标恢复主界面。要退出主程序，使用托盘的“退出”或“设置 → 关于与诊断 → 退出便携版”。文件操作尚在执行时会阻止主界面退出。
 5. 退出主程序后，已打开的快速搜索仍可使用。关闭最后一个使用后台的程序后，后台自动停止。搬迁前请退出主程序、关闭所有快速搜索窗口，再移动整个目录。
 
@@ -27,16 +27,16 @@
 
 NTFS 系统内部暂存的待删除文件不会作为用户文件展示。已经删除且未入库的临时文件，在确认删除证据后不再触发空同步；读取失败仍会明确报错。
 
-搬到其他电脑后，离线记录仍可搜索；在线硬盘需要重新核对身份和更新索引。当前缓存默认 2 GB，可在设置中调整或清空；清空不会删除索引或源文件。不要只带走 EXE，必须保留后台、`portable.json` 和整个 `data`。
+搬到其他电脑后，离线记录仍可搜索；在线硬盘需要重新核对身份和更新索引。当前缓存默认 2 GB，可在设置中调整或清空；清空不会删除索引或源文件。要保留已有登记和索引，请一起搬走 `StashFinder.exe` 和整个 `data`。从旧便携包升级时，先退出旧程序，把新包解压到新目录，再复制原 `data`。
 
 ## 系统依赖与边界
 
 快速搜索使用 Windows 原生控件，可独立运行。主界面使用系统安装的 WebView2，便携包不会自动下载运行时。缺少运行时时，请在启动主界面前安装。[Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
 
-每次需要启动后台时，Windows 单独为后台提升权限。便携版不安装 Windows 服务或登录启动项。其连接由本目录决定，与安装版隔离。窗口进程意外退出也会释放它对后台的使用权。同一账户在同一 Windows 登录会话内只能运行一个管理主界面。目录不可写时会报错。程序本身不提供跨电脑的管理员权限。
+当后台需要启动时，Windows 提升同一份 `StashFinder.exe` 的另一个进程，窗口保持普通权限。便携版不安装 Windows 服务或登录启动项。其连接由本目录决定，与安装版隔离。窗口进程意外退出也会释放它对后台的使用权。同一账户在同一 Windows 登录会话内只能运行一个管理主界面。目录不可写时会报错。程序本身不提供跨电脑的管理员权限。
 
 提升后的后台启用账户已有的备份读取权限，以枚举受保护目录；不授予新的账户权限、不修改源文件 ACL，也不启用还原写入权限。若系统策略未授予该读取权限，后台会报错。
 
 包内 `manifest.json` 记录基础源码提交、是否包含未提交改动、文件大小及 SHA256；`built_from_source=false` 表示使用预先构建的二进制打包。ZIP 旁的 `.sha256` 用于核对完整归档。此开发包未签名；第三方来源见包内说明，完整发布许可和系统矩阵继续在发布阶段收口。
 
-在仓库根目录运行 `pnpm package:portable` 从源码打包。默认输出到 `.local/packages/<时间>/`，每次构建使用新目录。若使用预构建文件，运行 `pnpm package:portable -SkipBuild -BinaryDirectory <目录>`，该目录需含 `stashfinder-desktop.exe`、`stashfinder-native-search.exe` 和 `stashfinder-service.exe`。脚本只复制这些文件。用 `scripts/verify-portable-package.ps1 -Archive <zip路径>` 校验归档。
+在仓库根目录运行 `pnpm package:portable` 从源码打包。默认输出到 `.local/packages/<时间>/`，每次构建使用新目录。若使用预构建文件，运行 `pnpm package:portable -SkipBuild -BinaryDirectory <目录>`，该目录只需提供 release 构建的 `stashfinder-desktop.exe`，脚本将其打包为 `StashFinder.exe`。用 `scripts/verify-portable-package.ps1 -Archive <zip路径>` 校验归档。

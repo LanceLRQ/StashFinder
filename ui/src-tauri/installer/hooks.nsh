@@ -77,11 +77,9 @@ FunctionEnd
 !macro NSIS_HOOK_POSTINSTALL
   !insertmacro STASHFINDER_SERVICE_PHASE Install $StashFinderService
   WriteRegDWORD HKLM "Software\StashFinder" "InstallService" $StashFinderService
-  ${If} $StashFinderService == 1
-    CreateShortcut "${STASHFINDER_SEARCH_LINK}" "$INSTDIR\stashfinder-native-search.exe"
-  ${Else}
-    Delete "${STASHFINDER_SEARCH_LINK}"
-  ${EndIf}
+  CreateShortcut "${STASHFINDER_SEARCH_LINK}" "$INSTDIR\StashFinder.exe" "--quick-search"
+  Delete "$INSTDIR\stashfinder-native-search.exe"
+  Delete "$INSTDIR\stashfinder-service.exe"
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL

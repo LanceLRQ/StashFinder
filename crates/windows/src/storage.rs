@@ -22,6 +22,10 @@ pub fn program_data() -> Result<PathBuf> {
     known_folder(&FOLDERID_ProgramData)
 }
 
+pub(crate) fn local_app_data() -> Result<PathBuf> {
+    known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData)
+}
+
 fn known_folder(id: &GUID) -> Result<PathBuf> {
     use windows::Win32::{
         System::Com::CoTaskMemFree,

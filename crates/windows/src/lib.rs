@@ -7,6 +7,7 @@ pub mod ntfs;
 pub mod portable;
 pub mod scan;
 pub mod scm;
+pub mod session;
 pub mod shell;
 pub mod storage;
 pub mod visuals;

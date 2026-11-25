@@ -57,7 +57,7 @@ async fn portable_backend_uses_its_own_directory_and_stops_when_its_gui_session_
 
 #[test]
 fn portable_backend_outlives_its_first_window_and_stops_after_the_last() {
-    use stashfinder_windows::portable::session::PortableSession;
+    use stashfinder_windows::session::ManagedSession;
     use std::{fs::File, io::Write};
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let temp = tempfile::tempdir().unwrap();
@@ -85,11 +85,11 @@ fn portable_backend_outlives_its_first_window_and_stops_after_the_last() {
     // An already listening backend must match the one recorded by the launcher.
     let already_running = || panic!("a running backend should not prompt for elevation");
     assert!(
-        PortableSession::start(&layout, already_running)
+        ManagedSession::start(&executable, Some(&layout), already_running)
             .err()
             .unwrap()
             .to_string()
-            .contains("不属于当前便携会话")
+            .contains("不属于当前会话")
     );
     let mut gate = File::options()
         .write(true)
@@ -98,7 +98,7 @@ fn portable_backend_outlives_its_first_window_and_stops_after_the_last() {
     gate.lock().unwrap();
     gate.write_all(&service.id().to_le_bytes()).unwrap();
     drop(gate);
-    let second = PortableSession::start(&layout, already_running)
+    let second = ManagedSession::start(&executable, Some(&layout), already_running)
         .unwrap()
         .unwrap();
     drop(first);

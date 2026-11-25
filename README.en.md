@@ -6,21 +6,21 @@ StashFinder catalogs drives on Windows. Say you remember saving a video but can'
 
 ## Getting started
 
-You need Windows 10 or 11 (x64) and the WebView2 Runtime. You can build a portable ZIP and a Windows installer from source. Set up the tools in the [development guide](docs/development.en.md), then run these commands from the repository root.
+You need Windows 10 or 11 (x64). The main application uses the system WebView2 Runtime. You can build a portable ZIP and a Windows installer from source. Set up the tools in the [development guide](docs/development.en.md), then run these commands from the repository root.
 
 ```powershell
 pnpm install --frozen-lockfile
 pnpm package
 ```
 
-- The **portable ZIP** is in `.local/packages/`. Extract it to a writable folder. Use `StashFinder.exe` to register and manage partitions. You can then double-click `QuickSearch.exe` to search with the main window closed. Both programs use the index in the adjacent `data/` folder. [Using the portable build](docs/portable.en.md)
+- The **portable ZIP** is in `.local/packages/`. Place `StashFinder.exe` in a writable folder and open it to register and manage partitions. Run `StashFinder.exe --quick-search` or double-click the included `QuickSearch.cmd` to search with the main window closed. Both entry points use the adjacent `data/` folder. [Using the portable build](docs/portable.en.md)
 - The **Windows installer** is in `target/release/bundle/nsis/`. Run the installer. By default, the backend starts and stops with the app. Choose Windows service mode during installation to keep indexing after you close the window.
 
 When you first use the desktop-managed backend, choose to start it and approve the Windows administrator prompt. In the overview, open the partition registration dialog, select the partitions you want, and leave automatic initial indexing enabled. Once indexing finishes, double-click a partition to browse it, or enter a query in the overview and press Enter to search all registered partitions.
 
 ## Searching and browsing
 
-If you selected Windows service mode during installation, open **StashFinder 快速搜索** (Quick Search) directly from Start. Type a query to search registered partitions with the main desktop closed. In the results list, press Enter or double-click to open an online item, or press Ctrl+Shift+C to copy the path of an online or offline record.
+In either installation mode, open **StashFinder 快速搜索** (Quick Search) directly from Start. Type a query to search registered partitions with the main desktop closed. In the results list, press Enter or double-click to open an online item, or press Ctrl+Shift+C to copy the path of an online or offline record.
 
 Search includes both online and offline registered partitions by default. Browse folders and open search results in separate tabs, then return to where you left off. While a drive is offline, you can see the last saved names, paths, sizes, and timestamps, along with any cached thumbnails. Reconnect the drive to open or work with the files. You can include historical records from before a reformat in the search scope.
 

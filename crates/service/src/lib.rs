@@ -2,6 +2,7 @@ pub mod assets;
 mod file_operations;
 pub mod index;
 pub mod jobs;
+pub mod runtime;
 pub mod scan;
 pub mod supervisor;
 mod thumbnails;
