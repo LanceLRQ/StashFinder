@@ -355,9 +355,9 @@ fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         None => run(),
-        Some("--quick-search") => std::env::current_exe()
+        Some("--quick-search" | "--browse") => std::env::current_exe()
             .map_err(anyhow::Error::from)
-            .and_then(|program| stashfinder_native_search::run(&program, &args[1..])),
+            .and_then(|program| stashfinder_native_search::run(&program, &args)),
         Some(
             "--portable-shared"
             | "--desktop-shared"

@@ -64,6 +64,34 @@ fn search_window_accepts_input_and_reports_a_disconnected_backend() {
             !menu.is_invalid() && GetMenuItemCount(Some(menu)) == 2,
             "the native window must expose Open and Copy path without opening the desktop"
         );
+        let browse = GetSubMenu(GetMenu(window), 1);
+        assert!(
+            !browse.is_invalid(),
+            "the native window must offer indexed partition browsing"
+        );
+        let partitions = GetMenuItemID(browse, 0);
+        let deadline = Instant::now() + Duration::from_secs(8);
+        SendMessageW(window, WM_COMMAND, Some(WPARAM(partitions as usize)), None);
+        loop {
+            let mut label = [0u16; 512];
+            let len = GetWindowTextW(status, &mut label) as usize;
+            if String::from_utf16_lossy(&label[..len]).contains("无法读取") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "disconnected browsing must report a read error"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!IsWindowVisible(edit).as_bool());
+        let search = GetMenuItemID(browse, GetMenuItemCount(Some(browse)) - 1);
+        SendMessageW(window, WM_COMMAND, Some(WPARAM(search as usize)), None);
+        assert!(
+            IsWindowVisible(edit).as_bool(),
+            "returning to search restores its edit control"
+        );
+        let deadline = Instant::now() + Duration::from_secs(8);
         SendMessageW(
             edit,
             WM_SETTEXT,

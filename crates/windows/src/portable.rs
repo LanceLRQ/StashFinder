@@ -366,7 +366,7 @@ pub fn confirm_index_backend(kind: ClientKind) -> Result<bool> {
                 w!("启动后台时，Windows 可能会请求授权。选择稍后启动仍可打开设置。")
             }
             ClientKind::QuickSearch => {
-                w!("启动后台时，Windows 可能会请求授权。选择稍后启动将退出快速搜索。")
+                w!("启动后台时，Windows 可能会请求授权。选择稍后启动将关闭此窗口。")
             }
         },
         Anonymous1: TASKDIALOGCONFIG_0 {

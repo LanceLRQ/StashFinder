@@ -1,6 +1,9 @@
+mod browsing;
+
 use crate::{
     Endpoint,
     actions::{self, FileAction, Prepared},
+    browse::{Browser, Listing, Location},
     search::{self, Page, View},
 };
 use anyhow::{Result, ensure};
@@ -27,7 +30,8 @@ use windows::{
             Controls::*,
             HiDpi::*,
             Input::KeyboardAndMouse::{
-                GetKeyState, SetFocus, VK_A, VK_C, VK_CONTROL, VK_RETURN, VK_SHIFT, VK_TAB,
+                EnableWindow, GetKeyState, SetFocus, VK_A, VK_BACK, VK_C, VK_CONTROL, VK_F, VK_F5,
+                VK_RETURN, VK_SHIFT, VK_TAB,
             },
             Shell::{DefSubclassProc, SetWindowSubclass},
             WindowsAndMessaging::*,
@@ -41,6 +45,12 @@ const SCROLL: u32 = WM_APP + 2;
 const DEBOUNCE: usize = 1;
 const OPEN: usize = 101;
 const COPY_PATH: usize = 102;
+const PARTITIONS: usize = 103;
+const UP: usize = 104;
+const PREVIOUS: usize = 105;
+const NEXT: usize = 106;
+const REFRESH: usize = 107;
+const SEARCH: usize = 108;
 const COLUMNS: [(&str, i32, Option<SortField>); 5] = [
     ("名称", 235, Some(SortField::Name)),
     ("卷内路径", 375, Some(SortField::Path)),
@@ -52,6 +62,7 @@ const COLUMNS: [(&str, i32, Option<SortField>); 5] = [
 enum Update {
     Page(View, Result<Page>),
     Files(u64, FileAction, Result<Prepared>),
+    Browse(u64, Result<Listing>),
 }
 
 struct Window {
@@ -59,6 +70,12 @@ struct Window {
     edit: HWND,
     list: HWND,
     status: HWND,
+    path: HWND,
+    up: HWND,
+    previous: HWND,
+    next: HWND,
+    browser: RefCell<Option<Browser>>,
+    browse_task: RefCell<Option<JoinHandle<()>>>,
     font: Cell<HFONT>,
     dpi: Cell<u32>,
     endpoint: Endpoint,
@@ -77,7 +94,7 @@ struct Window {
 
 thread_local! { static WINDOW: RefCell<Option<Rc<Window>>> = const { RefCell::new(None) }; }
 
-pub(super) fn run(endpoint: Endpoint) -> Result<()> {
+pub(super) fn run(endpoint: Endpoint, browse: bool) -> Result<()> {
     let runtime = Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -122,6 +139,18 @@ pub(super) fn run(endpoint: Endpoint) -> Result<()> {
         AppendMenuW(file, MF_STRING, OPEN, w!("打开(&O)\tEnter"))?;
         AppendMenuW(file, MF_STRING, COPY_PATH, w!("复制路径(&P)\tCtrl+Shift+C"))?;
         AppendMenuW(menu, MF_POPUP, file.0 as usize, w!("文件(&F)"))?;
+        let navigation = CreatePopupMenu()?;
+        AppendMenuW(navigation, MF_STRING, PARTITIONS, w!("已登记分区(&P)"))?;
+        AppendMenuW(navigation, MF_STRING, UP, w!("上一级(&U)\tBackspace"))?;
+        AppendMenuW(navigation, MF_STRING, REFRESH, w!("刷新(&R)\tF5"))?;
+        AppendMenuW(navigation, MF_SEPARATOR, 0, None)?;
+        AppendMenuW(
+            navigation,
+            MF_STRING,
+            SEARCH,
+            w!("返回快速搜索(&S)\tCtrl+F"),
+        )?;
+        AppendMenuW(menu, MF_POPUP, navigation.0 as usize, w!("浏览(&B)"))?;
         SetMenu(hwnd, Some(menu))?;
         let child = |class, text, style, edge, id| {
             CreateWindowExW(
@@ -160,6 +189,37 @@ pub(super) fn run(endpoint: Endpoint) -> Result<()> {
             WINDOW_EX_STYLE(0),
             3,
         )?;
+        let path = child(
+            w!("STATIC"),
+            w!("已登记分区"),
+            WINDOW_STYLE(0),
+            WINDOW_EX_STYLE(0),
+            4,
+        )?;
+        let up = child(
+            w!("BUTTON"),
+            w!("上一级"),
+            WS_TABSTOP,
+            WINDOW_EX_STYLE(0),
+            UP,
+        )?;
+        let previous = child(
+            w!("BUTTON"),
+            w!("上一页"),
+            WS_TABSTOP,
+            WINDOW_EX_STYLE(0),
+            PREVIOUS,
+        )?;
+        let next = child(
+            w!("BUTTON"),
+            w!("下一页"),
+            WS_TABSTOP,
+            WINDOW_EX_STYLE(0),
+            NEXT,
+        )?;
+        for control in [path, up, previous, next] {
+            let _ = ShowWindow(control, SW_HIDE);
+        }
         SetWindowSubclass(edit, Some(edit_proc), 1, 0).ok()?;
         SendMessageW(
             edit,
@@ -193,6 +253,12 @@ pub(super) fn run(endpoint: Endpoint) -> Result<()> {
             edit,
             list,
             status,
+            path,
+            up,
+            previous,
+            next,
+            browser: RefCell::new(None),
+            browse_task: RefCell::new(None),
             endpoint,
             requests,
             send,
@@ -211,7 +277,11 @@ pub(super) fn run(endpoint: Endpoint) -> Result<()> {
         WINDOW.with(|slot| slot.replace(Some(app.clone())));
         app.scale(true)?;
         let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
-        let _ = SetFocus(Some(edit));
+        if browse {
+            app.browse_to(Location::Partitions, false);
+        } else {
+            let _ = SetFocus(Some(edit));
+        }
         let mut message = MSG::default();
         let result = loop {
             match GetMessageW(&mut message, None, 0, 0).0 {
@@ -221,6 +291,27 @@ pub(super) fn run(endpoint: Endpoint) -> Result<()> {
             }
             if message.message == WM_KEYDOWN && !app.composing.get() {
                 let key = message.wParam.0 as u16;
+                if app.browser.borrow().is_some() {
+                    match key {
+                        k if k == VK_F.0 && GetKeyState(VK_CONTROL.0 as i32) < 0 => {
+                            app.return_to_search()
+                        }
+                        k if k == VK_F5.0 => app.browse_command(REFRESH),
+                        k if k == VK_BACK.0 => app.browse_command(UP),
+                        k if k == VK_RETURN.0 && message.hwnd == list => {
+                            app.enter_selected_folder()
+                        }
+                        k if k == VK_RETURN.0 && [up, previous, next].contains(&message.hwnd) => {
+                            SendMessageW(message.hwnd, BM_CLICK, None, None);
+                        }
+                        k if k == VK_TAB.0 && IsDialogMessageW(hwnd, &message).as_bool() => {}
+                        _ => {
+                            let _ = TranslateMessage(&message);
+                            DispatchMessageW(&message);
+                        }
+                    }
+                    continue;
+                }
                 if key == VK_TAB.0 && (message.hwnd == edit || message.hwnd == list) {
                     let _ = SetFocus(Some(if message.hwnd == edit { list } else { edit }));
                     continue;
@@ -302,6 +393,7 @@ unsafe extern "system" fn edit_proc(
     let app = WINDOW.with(|slot| slot.borrow().clone());
     if msg == WM_IME_STARTCOMPOSITION
         && let Some(app) = &app
+        && app.browser.borrow().is_none()
     {
         app.composing.set(true);
         // SAFETY: Stop any pending input timer on the parent window.
@@ -344,7 +436,13 @@ impl Window {
                 WM_COMMAND
                     if HWND(lp.0 as *mut _) == self.edit && (wp.0 >> 16) as u32 == EN_CHANGE =>
                 {
-                    self.edited()
+                    self.edited();
+                }
+                WM_COMMAND if (PARTITIONS..=SEARCH).contains(&(wp.0 & 0xffff)) => {
+                    self.browse_command(wp.0 & 0xffff)
+                }
+                WM_COMMAND if lp.0 == 0 && wp.0 == OPEN && self.browser.borrow().is_some() => {
+                    self.enter_selected_folder()
                 }
                 WM_COMMAND if lp.0 == 0 && wp.0 == OPEN => self.start_action(FileAction::Open),
                 WM_COMMAND if lp.0 == 0 && wp.0 == COPY_PATH => {
@@ -355,14 +453,29 @@ impl Window {
                     let count =
                         SendMessageW(self.list, LVM_GETSELECTEDCOUNT, None, None).0 as usize;
                     let idle = self.file_task.borrow().is_none();
+                    let browsing = self.browser.borrow().is_some();
                     for (id, enabled) in [
-                        (OPEN, count == 1),
-                        (COPY_PATH, (1..=MAX_SELECTED).contains(&count)),
+                        (
+                            OPEN,
+                            count == 1 && (!browsing || self.selected_folder().is_some()),
+                        ),
+                        (COPY_PATH, !browsing && (1..=MAX_SELECTED).contains(&count)),
+                        (
+                            UP,
+                            browsing
+                                && self
+                                    .browser
+                                    .borrow()
+                                    .as_ref()
+                                    .is_some_and(|b| !b.location.is_partitions()),
+                        ),
+                        (REFRESH, browsing),
+                        (SEARCH, browsing),
                     ] {
                         let _ = EnableMenuItem(
                             menu,
                             id as u32,
-                            if idle && enabled {
+                            if enabled && (id >= PARTITIONS || idle) {
                                 MF_ENABLED
                             } else {
                                 MF_GRAYED
@@ -384,10 +497,16 @@ impl Window {
                                 && item.cchTextMax > 0
                             {
                                 let page = self.page.borrow();
+                                let browser = self.browser.borrow();
                                 let row = page.as_ref().and_then(|(start, page)| {
                                     page.rows.get((item.iItem as usize).checked_sub(*start)?)
                                 });
-                                let text = row.map_or("…", |row| cell_text(row, item.iSubItem));
+                                let text = match browser.as_ref() {
+                                    Some(browser) => {
+                                        browser.cell(item.iItem as usize, item.iSubItem)
+                                    }
+                                    None => row.map_or("…", |row| cell_text(row, item.iSubItem)),
+                                };
                                 let buf = std::slice::from_raw_parts_mut(
                                     item.pszText.0,
                                     item.cchTextMax as usize,
@@ -398,13 +517,13 @@ impl Window {
                                     n += 1;
                                 }
                                 buf[n] = 0;
-                                if row.is_none() {
+                                if browser.is_none() && row.is_none() {
                                     self.schedule_scroll();
                                 }
                             }
                         }
                         LVN_ODCACHEHINT => self.schedule_scroll(),
-                        LVN_COLUMNCLICK => {
+                        LVN_COLUMNCLICK if self.browser.borrow().is_none() => {
                             let col = (*(lp.0 as *const NMLISTVIEW)).iSubItem as usize;
                             if let Some((_, _, Some(sort))) = COLUMNS.get(col) {
                                 self.descending
@@ -416,7 +535,11 @@ impl Window {
                         }
                         NM_DBLCLK => {
                             if (*(lp.0 as *const NMITEMACTIVATE)).iItem >= 0 {
-                                self.start_action(FileAction::Open);
+                                if self.browser.borrow().is_some() {
+                                    self.enter_selected_folder();
+                                } else {
+                                    self.start_action(FileAction::Open);
+                                }
                             }
                         }
                         LVN_BEGINDRAG => self.start_action(FileAction::Drag),
@@ -458,7 +581,15 @@ impl Window {
             )?;
             let font = CreateFontIndirectW(&metrics.lfMessageFont);
             ensure!(!font.is_invalid(), "无法创建系统字体");
-            for child in [self.edit, self.list, self.status] {
+            for child in [
+                self.edit,
+                self.list,
+                self.status,
+                self.path,
+                self.up,
+                self.previous,
+                self.next,
+            ] {
                 SendMessageW(
                     child,
                     WM_SETFONT,
@@ -479,7 +610,14 @@ impl Window {
     fn columns(&self, initial: bool, resize: bool) {
         // SAFETY: The list view synchronously copies each column descriptor and title.
         unsafe {
-            for (i, (name, width, sort)) in COLUMNS.iter().enumerate() {
+            let columns = self.browser.borrow().as_ref().map_or(&COLUMNS[..], |b| {
+                if b.location.is_partitions() {
+                    browsing::PARTITION_COLUMNS
+                } else {
+                    browsing::FOLDER_COLUMNS
+                }
+            });
+            for (i, (name, width, sort)) in columns.iter().enumerate() {
                 let title = if *sort == Some(self.sort.get()) {
                     format!("{name} {}", if self.descending.get() { "▼" } else { "▲" })
                 } else {
@@ -522,15 +660,50 @@ impl Window {
             let width = (r.right - 2 * gap).max(0);
             let top = 2 * gap + px(29);
             let bottom = (r.bottom - px(27)).max(top);
-            let _ = MoveWindow(self.edit, gap, gap, width, px(29), true);
+            let browsing = self.browser.borrow().is_some();
+            let button = px(76).min((width / 3).max(0));
+            if browsing {
+                let _ = MoveWindow(self.up, gap, gap, button, px(29), true);
+                let _ = MoveWindow(
+                    self.path,
+                    2 * gap + button,
+                    gap + px(5),
+                    (width - button - gap).max(0),
+                    px(24),
+                    true,
+                );
+                let _ = MoveWindow(
+                    self.previous,
+                    r.right - gap * 2 - button * 2,
+                    bottom,
+                    button,
+                    px(25),
+                    true,
+                );
+                let _ = MoveWindow(
+                    self.next,
+                    r.right - gap - button,
+                    bottom,
+                    button,
+                    px(25),
+                    true,
+                );
+            } else {
+                let _ = MoveWindow(self.edit, gap, gap, width, px(29), true);
+            }
             let _ = MoveWindow(self.list, gap, top, width, bottom - top, true);
-            let _ = MoveWindow(self.status, gap, bottom + px(3), width, px(22), true);
+            let status_width = if browsing {
+                (width - 2 * button - 2 * gap).max(0)
+            } else {
+                width
+            };
+            let _ = MoveWindow(self.status, gap, bottom + px(3), status_width, px(22), true);
         }
         self.schedule_scroll();
     }
 
     fn edited(&self) {
-        if self.composing.get() {
+        if self.composing.get() || self.browser.borrow().is_some() {
             return;
         }
         self.generation.set(self.generation.get() + 1);
@@ -554,7 +727,7 @@ impl Window {
         // SAFETY: The text buffer is owned and sized for the synchronous edit query.
         unsafe {
             let _ = KillTimer(Some(self.hwnd), DEBOUNCE);
-            if self.composing.get() {
+            if self.composing.get() || self.browser.borrow().is_some() {
                 return;
             }
             let mut buf = vec![0; GetWindowTextLengthW(self.edit) as usize + 1];
@@ -693,6 +866,10 @@ impl Window {
                         }
                     }
                 }
+                Update::Browse(generation, result) if generation == self.generation.get() => {
+                    self.display_browse(result);
+                }
+                Update::Browse(..) => {}
             }
         }
     }
@@ -768,15 +945,19 @@ fn cell_text(row: &SearchHit, column: i32) -> &str {
         2 => &row.partition_name,
         3 if row.file.kind == "folder" => "—",
         3 => row.file.size.as_deref().unwrap_or("未知"),
-        4 => match row.connection.as_str() {
-            "online" => "在线",
-            "offline" => "离线",
-            "changed" | "historical" => "历史记录",
-            "uncertain" => "身份待确认",
-            "inaccessible" => "无法访问",
-            _ => "状态未确认",
-        },
+        4 => connection_label(&row.connection),
         _ => "",
+    }
+}
+
+pub(super) fn connection_label(connection: &str) -> &str {
+    match connection {
+        "online" => "在线",
+        "offline" => "离线",
+        "changed" | "historical" => "历史记录",
+        "uncertain" => "身份待确认",
+        "inaccessible" => "无法访问",
+        _ => "状态未确认",
     }
 }
 
@@ -792,9 +973,10 @@ mod tests {
     #[ignore = "opens a native window on the interactive Windows desktop"]
     fn dpi_change_resizes_the_real_edit_and_list_columns() {
         let worker = thread::spawn(|| {
-            run(Endpoint::Direct(
-                stashfinder_windows::ipc::DEFAULT_PIPE.into(),
-            ))
+            run(
+                Endpoint::Direct(stashfinder_windows::ipc::DEFAULT_PIPE.into()),
+                false,
+            )
             .unwrap()
         });
         let deadline = Instant::now() + Duration::from_secs(6);

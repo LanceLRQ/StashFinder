@@ -10,6 +10,8 @@ For Windows 10/11 x64. This is a development portable build; the full clean-mach
 4. Closing the main window leaves it in the tray. Click the tray icon to restore it. To exit the main application, choose **Exit** in the tray menu or **Settings → About and diagnostics → Exit portable version**. Active file operations prevent the main application from exiting.
 5. Open Quick Search windows continue working after you exit the main application. The backend stops after its last client exits. Before moving the folder, exit the main application and close every Quick Search window, then move the whole folder.
 
+To browse an indexed directory directly, including offline partitions, run `StashFinder.exe --browse` or choose **浏览 → 已登记分区** (Browse → Registered partitions) in Quick Search. Double-click a partition or folder to enter it, press Backspace to go up, and use the previous and next buttons to page through a directory. Ctrl+F returns to search.
+
 ## Data location
 
 All persistent application data resides in `data` next to the executable:
