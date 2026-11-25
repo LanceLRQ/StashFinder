@@ -6,7 +6,11 @@ use std::{
 use windows::{
     Win32::{
         Foundation::{HWND, LPARAM, WPARAM},
-        UI::{Controls::LVM_GETITEMCOUNT, WindowsAndMessaging::*},
+        UI::{
+            Controls::{BST_CHECKED, LVM_GETITEMCOUNT},
+            Input::KeyboardAndMouse::IsWindowEnabled,
+            WindowsAndMessaging::*,
+        },
     },
     core::{PCWSTR, w},
 };
@@ -85,6 +89,19 @@ fn search_window_accepts_input_and_reports_a_disconnected_backend() {
             thread::sleep(Duration::from_millis(20));
         }
         assert!(!IsWindowVisible(edit).as_bool());
+        let register = GetDlgItem(Some(window), 110).unwrap();
+        assert!(IsWindowVisible(register).as_bool() && IsWindowEnabled(register).as_bool());
+        SendMessageW(register, BM_CLICK, None, None);
+        let automatic = GetDlgItem(Some(window), 111).unwrap();
+        assert!(IsWindowVisible(automatic).as_bool());
+        assert_eq!(
+            SendMessageW(automatic, BM_GETCHECK, None, None).0,
+            BST_CHECKED.0 as isize
+        );
+        assert!(
+            !IsWindowEnabled(register).as_bool(),
+            "registration requires one eligible selection"
+        );
         let search = GetMenuItemID(browse, GetMenuItemCount(Some(browse)) - 1);
         SendMessageW(window, WM_COMMAND, Some(WPARAM(search as usize)), None);
         assert!(

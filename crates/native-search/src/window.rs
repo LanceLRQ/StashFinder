@@ -1,4 +1,5 @@
 mod browsing;
+mod partitions;
 
 use crate::{
     Endpoint,
@@ -8,7 +9,10 @@ use crate::{
 };
 use anyhow::{Result, ensure};
 use stashfinder_core::{
-    SEARCH_SNAPSHOT_EXPIRED, file_operations::MAX_SELECTED, index::SearchHit, search::SortField,
+    SEARCH_SNAPSHOT_EXPIRED,
+    file_operations::MAX_SELECTED,
+    index::{IndexStatus, SearchHit},
+    search::SortField,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -51,6 +55,10 @@ const PREVIOUS: usize = 105;
 const NEXT: usize = 106;
 const REFRESH: usize = 107;
 const SEARCH: usize = 108;
+const CANDIDATES: usize = 109;
+const REGISTER: usize = 110;
+const AUTO_INDEX: usize = 111;
+const START_INDEX: usize = 112;
 const COLUMNS: [(&str, i32, Option<SortField>); 5] = [
     ("名称", 235, Some(SortField::Name)),
     ("卷内路径", 375, Some(SortField::Path)),
@@ -63,6 +71,9 @@ enum Update {
     Page(View, Result<Page>),
     Files(u64, FileAction, Result<Prepared>),
     Browse(u64, Result<Listing>),
+    Registered(u64, Result<String>),
+    Index(String, Result<IndexStatus>),
+    IndexStarted(String, Result<()>),
 }
 
 struct Window {
@@ -74,6 +85,12 @@ struct Window {
     up: HWND,
     previous: HWND,
     next: HWND,
+    register: HWND,
+    auto_index: HWND,
+    start_index: HWND,
+    write_task: RefCell<Option<JoinHandle<()>>>,
+    focus_partition: RefCell<Option<String>>,
+    index: RefCell<Option<partitions::IndexWatch>>,
     browser: RefCell<Option<Browser>>,
     browse_task: RefCell<Option<JoinHandle<()>>>,
     font: Cell<HFONT>,
@@ -141,6 +158,7 @@ pub(super) fn run(endpoint: Endpoint, browse: bool) -> Result<()> {
         AppendMenuW(menu, MF_POPUP, file.0 as usize, w!("文件(&F)"))?;
         let navigation = CreatePopupMenu()?;
         AppendMenuW(navigation, MF_STRING, PARTITIONS, w!("已登记分区(&P)"))?;
+        AppendMenuW(navigation, MF_STRING, CANDIDATES, w!("登记分区(&A)…"))?;
         AppendMenuW(navigation, MF_STRING, UP, w!("上一级(&U)\tBackspace"))?;
         AppendMenuW(navigation, MF_STRING, REFRESH, w!("刷新(&R)\tF5"))?;
         AppendMenuW(navigation, MF_SEPARATOR, 0, None)?;
@@ -217,7 +235,28 @@ pub(super) fn run(endpoint: Endpoint, browse: bool) -> Result<()> {
             WINDOW_EX_STYLE(0),
             NEXT,
         )?;
-        for control in [path, up, previous, next] {
+        let register = child(
+            w!("BUTTON"),
+            w!("登记分区…"),
+            WS_TABSTOP,
+            WINDOW_EX_STYLE(0),
+            REGISTER,
+        )?;
+        let auto_index = child(
+            w!("BUTTON"),
+            w!("登记后自动建立索引"),
+            WS_TABSTOP | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
+            WINDOW_EX_STYLE(0),
+            AUTO_INDEX,
+        )?;
+        let start_index = child(
+            w!("BUTTON"),
+            w!("建立索引"),
+            WS_TABSTOP,
+            WINDOW_EX_STYLE(0),
+            START_INDEX,
+        )?;
+        for control in [path, up, previous, next, register, auto_index, start_index] {
             let _ = ShowWindow(control, SW_HIDE);
         }
         SetWindowSubclass(edit, Some(edit_proc), 1, 0).ok()?;
@@ -257,6 +296,12 @@ pub(super) fn run(endpoint: Endpoint, browse: bool) -> Result<()> {
             up,
             previous,
             next,
+            register,
+            auto_index,
+            start_index,
+            write_task: RefCell::new(None),
+            focus_partition: RefCell::new(None),
+            index: RefCell::new(None),
             browser: RefCell::new(None),
             browse_task: RefCell::new(None),
             endpoint,
@@ -301,7 +346,10 @@ pub(super) fn run(endpoint: Endpoint, browse: bool) -> Result<()> {
                         k if k == VK_RETURN.0 && message.hwnd == list => {
                             app.enter_selected_folder()
                         }
-                        k if k == VK_RETURN.0 && [up, previous, next].contains(&message.hwnd) => {
+                        k if k == VK_RETURN.0
+                            && [up, previous, next, register, start_index]
+                                .contains(&message.hwnd) =>
+                        {
                             SendMessageW(message.hwnd, BM_CLICK, None, None);
                         }
                         k if k == VK_TAB.0 && IsDialogMessageW(hwnd, &message).as_bool() => {}
@@ -352,9 +400,13 @@ pub(super) fn run(endpoint: Endpoint, browse: bool) -> Result<()> {
         };
         WINDOW.with(|slot| slot.take());
         let file_task = app.file_task.take();
+        let write_task = app.write_task.take();
         drop(app);
         runtime.block_on(worker)?;
         if let Some(task) = file_task {
+            runtime.block_on(task)?;
+        }
+        if let Some(task) = write_task {
             runtime.block_on(task)?;
         }
         result
@@ -441,6 +493,9 @@ impl Window {
                 WM_COMMAND if (PARTITIONS..=SEARCH).contains(&(wp.0 & 0xffff)) => {
                     self.browse_command(wp.0 & 0xffff)
                 }
+                WM_COMMAND if wp.0 == CANDIDATES => self.open_candidates(),
+                WM_COMMAND if wp.0 == REGISTER => self.register_selected(),
+                WM_COMMAND if wp.0 == START_INDEX => self.start_index(),
                 WM_COMMAND if lp.0 == 0 && wp.0 == OPEN && self.browser.borrow().is_some() => {
                     self.enter_selected_folder()
                 }
@@ -523,6 +578,9 @@ impl Window {
                             }
                         }
                         LVN_ODCACHEHINT => self.schedule_scroll(),
+                        LVN_ITEMCHANGED | LVN_ODSTATECHANGED if self.browser.borrow().is_some() => {
+                            self.update_partition_selection();
+                        }
                         LVN_COLUMNCLICK if self.browser.borrow().is_none() => {
                             let col = (*(lp.0 as *const NMLISTVIEW)).iSubItem as usize;
                             if let Some((_, _, Some(sort))) = COLUMNS.get(col) {
@@ -589,6 +647,9 @@ impl Window {
                 self.up,
                 self.previous,
                 self.next,
+                self.register,
+                self.auto_index,
+                self.start_index,
             ] {
                 SendMessageW(
                     child,
@@ -610,13 +671,15 @@ impl Window {
     fn columns(&self, initial: bool, resize: bool) {
         // SAFETY: The list view synchronously copies each column descriptor and title.
         unsafe {
-            let columns = self.browser.borrow().as_ref().map_or(&COLUMNS[..], |b| {
-                if b.location.is_partitions() {
-                    browsing::PARTITION_COLUMNS
-                } else {
-                    browsing::FOLDER_COLUMNS
-                }
-            });
+            let columns =
+                self.browser
+                    .borrow()
+                    .as_ref()
+                    .map_or(&COLUMNS[..], |b| match b.location {
+                        Location::Candidates => browsing::CANDIDATE_COLUMNS,
+                        Location::Partitions => browsing::PARTITION_COLUMNS,
+                        Location::Folder { .. } => browsing::FOLDER_COLUMNS,
+                    });
             for (i, (name, width, sort)) in columns.iter().enumerate() {
                 let title = if *sort == Some(self.sort.get()) {
                     format!("{name} {}", if self.descending.get() { "▼" } else { "▲" })
@@ -660,15 +723,47 @@ impl Window {
             let width = (r.right - 2 * gap).max(0);
             let top = 2 * gap + px(29);
             let bottom = (r.bottom - px(27)).max(top);
-            let browsing = self.browser.borrow().is_some();
+            let (browsing, folders, candidates) = {
+                let browser = self.browser.borrow();
+                (
+                    browser.is_some(),
+                    matches!(
+                        browser.as_ref().map(|b| &b.location),
+                        Some(Location::Folder { .. })
+                    ),
+                    matches!(
+                        browser.as_ref().map(|b| &b.location),
+                        Some(Location::Candidates)
+                    ),
+                )
+            };
             let button = px(76).min((width / 3).max(0));
             if browsing {
                 let _ = MoveWindow(self.up, gap, gap, button, px(29), true);
+                let left = if folders || candidates {
+                    2 * gap + button
+                } else {
+                    gap
+                };
+                let mut path_end = r.right - gap;
+                if !folders {
+                    let submit = px(108).min(width / 3);
+                    let other = px(if candidates { 162 } else { 108 }).min(width / 3);
+                    let _ = MoveWindow(self.register, path_end - submit, gap, submit, px(29), true);
+                    path_end -= submit + gap;
+                    let control = if candidates {
+                        self.auto_index
+                    } else {
+                        self.start_index
+                    };
+                    let _ = MoveWindow(control, path_end - other, gap, other, px(29), true);
+                    path_end -= other + gap;
+                }
                 let _ = MoveWindow(
                     self.path,
-                    2 * gap + button,
+                    left,
                     gap + px(5),
-                    (width - button - gap).max(0),
+                    (path_end - left).max(0),
                     px(24),
                     true,
                 );
@@ -692,7 +787,7 @@ impl Window {
                 let _ = MoveWindow(self.edit, gap, gap, width, px(29), true);
             }
             let _ = MoveWindow(self.list, gap, top, width, bottom - top, true);
-            let status_width = if browsing {
+            let status_width = if folders {
                 (width - 2 * button - 2 * gap).max(0)
             } else {
                 width
@@ -870,6 +965,11 @@ impl Window {
                     self.display_browse(result);
                 }
                 Update::Browse(..) => {}
+                Update::Registered(generation, result) => {
+                    self.registration_finished(generation, result)
+                }
+                Update::Index(id, result) => self.show_index(&id, result),
+                Update::IndexStarted(id, result) => self.index_started(&id, result),
             }
         }
     }

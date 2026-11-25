@@ -1,6 +1,13 @@
 use super::*;
 
 type Columns = &'static [(&'static str, i32, Option<SortField>)];
+pub(super) const CANDIDATE_COLUMNS: Columns = &[
+    ("分区名称", 200, None),
+    ("挂载点", 145, None),
+    ("所属硬盘", 225, None),
+    ("文件系统", 100, None),
+    ("登记状态", 250, None),
+];
 pub(super) const PARTITION_COLUMNS: Columns = &[
     ("分区名称", 225, None),
     ("所属硬盘", 250, None),
@@ -41,7 +48,7 @@ impl Window {
         }
     }
 
-    pub(super) fn selected_folder(&self) -> Option<Location> {
+    pub(super) fn selected_row(&self) -> Option<usize> {
         // SAFETY: Both list-view queries return scalar selection indices.
         let row = unsafe {
             if SendMessageW(self.list, LVM_GETSELECTEDCOUNT, None, None).0 != 1 {
@@ -55,10 +62,12 @@ impl Window {
             )
             .0
         };
-        self.browser
-            .borrow()
-            .as_ref()?
-            .enter(usize::try_from(row).ok()?)
+        usize::try_from(row).ok()
+    }
+
+    pub(super) fn selected_folder(&self) -> Option<Location> {
+        let row = self.selected_row()?;
+        self.browser.borrow().as_ref()?.enter(row)
     }
 
     pub(super) fn enter_selected_folder(&self) {
@@ -68,6 +77,8 @@ impl Window {
     }
 
     pub(super) fn browse_to(&self, mut target: Location, refresh: bool) {
+        self.index.take();
+        self.focus_partition.take();
         if refresh
             && let Location::Folder {
                 request, previous, ..
@@ -79,11 +90,10 @@ impl Window {
         if let Some(task) = self.browse_task.take() {
             task.abort();
         }
-        let changed_columns = self
-            .browser
-            .borrow()
-            .as_ref()
-            .is_none_or(|b| b.location.is_partitions() != target.is_partitions());
+        let changed_columns =
+            self.browser.borrow().as_ref().is_none_or(|b| {
+                std::mem::discriminant(&b.location) != std::mem::discriminant(&target)
+            });
         let restore_search = self.browser.borrow().as_ref().map_or_else(
             // SAFETY: The edit belongs to this thread and lives for the lifetime of the window.
             || self.requests.borrow().is_some() || unsafe { GetWindowTextLengthW(self.edit) } > 0,
@@ -101,6 +111,7 @@ impl Window {
         self.set_browse_controls(true, changed_columns);
         let caption = match &target {
             Location::Partitions => "已登记分区",
+            Location::Candidates => "登记分区",
             Location::Folder { name, .. } => name,
         };
         // SAFETY: The text is copied synchronously and these are this window's own controls.
@@ -109,7 +120,11 @@ impl Window {
             let _ = SetWindowTextW(self.path, &HSTRING::from(caption));
             let _ = SetFocus(Some(self.list));
         }
-        self.status("正在读取索引…");
+        self.status(if matches!(target, Location::Candidates) {
+            "正在读取可登记分区…"
+        } else {
+            "正在读取索引…"
+        });
         let endpoint = self.endpoint.clone();
         let send = self.send.clone();
         let hwnd = self.hwnd.0 as usize;
@@ -125,6 +140,13 @@ impl Window {
         self.browse_task.take();
         match result {
             Ok(listing) => {
+                let focus = match (&listing, self.focus_partition.take()) {
+                    (Listing::Partitions(snapshot), Some(id)) => snapshot
+                        .assets
+                        .iter()
+                        .position(|a| a.registration.partition_id == id),
+                    _ => None,
+                };
                 let Some((path, status, count)) =
                     self.browser.borrow_mut().as_mut().map(|b| b.apply(listing))
                 else {
@@ -136,6 +158,24 @@ impl Window {
                     SendMessageW(self.list, LVM_SETITEMCOUNT, Some(WPARAM(count)), None);
                 }
                 self.status(&status);
+                if let Some(row) = focus {
+                    let selected = LIST_VIEW_ITEM_STATE_FLAGS(LVIS_SELECTED.0 | LVIS_FOCUSED.0);
+                    let item = LVITEMW {
+                        stateMask: selected,
+                        state: selected,
+                        ..Default::default()
+                    };
+                    // SAFETY: The synchronous list-view messages consume a row from its current snapshot.
+                    unsafe {
+                        SendMessageW(
+                            self.list,
+                            LVM_SETITEMSTATE,
+                            Some(WPARAM(row)),
+                            Some(LPARAM(&item as *const _ as isize)),
+                        );
+                        SendMessageW(self.list, LVM_ENSUREVISIBLE, Some(WPARAM(row)), None);
+                    }
+                }
             }
             Err(error) => self.status(&format!("无法读取：{error:#}（F5 刷新）")),
         }
@@ -149,6 +189,8 @@ impl Window {
         if let Some(task) = self.browse_task.take() {
             task.abort();
         }
+        self.index.take();
+        self.focus_partition.take();
         self.generation.set(self.generation.get() + 1);
         self.clear();
         self.set_browse_controls(false, true);
@@ -162,6 +204,14 @@ impl Window {
     }
 
     fn set_browse_controls(&self, browse: bool, changed_columns: bool) {
+        let (partitions, candidates) = {
+            let b = self.browser.borrow();
+            (
+                b.as_ref().is_some_and(|b| b.location.is_partitions()),
+                b.as_ref()
+                    .is_some_and(|b| matches!(b.location, Location::Candidates)),
+            )
+        };
         // SAFETY: Only the window thread changes its controls or column descriptors.
         unsafe {
             let _ = SetWindowTextW(
@@ -181,8 +231,24 @@ impl Window {
                 },
             );
             let _ = ShowWindow(self.edit, if browse { SW_HIDE } else { SW_SHOW });
-            for child in [self.path, self.up, self.previous, self.next] {
-                let _ = ShowWindow(child, if browse { SW_SHOW } else { SW_HIDE });
+            let _ = SetWindowTextW(
+                self.register,
+                if candidates {
+                    w!("登记所选分区")
+                } else {
+                    w!("登记分区…")
+                },
+            );
+            for (child, visible) in [
+                (self.path, browse),
+                (self.up, browse && !partitions),
+                (self.previous, browse && !partitions && !candidates),
+                (self.next, browse && !partitions && !candidates),
+                (self.register, partitions || candidates),
+                (self.auto_index, candidates),
+                (self.start_index, partitions),
+            ] {
+                let _ = ShowWindow(child, if visible { SW_SHOW } else { SW_HIDE });
             }
             if changed_columns {
                 while SendMessageW(self.list, LVM_DELETECOLUMN, Some(WPARAM(0)), None).0 != 0 {}
@@ -211,5 +277,6 @@ impl Window {
             let _ = EnableWindow(self.previous, previous);
             let _ = EnableWindow(self.next, next);
         }
+        self.update_partition_selection();
     }
 }

@@ -12,6 +12,8 @@ For Windows 10/11 x64. This is a development portable build; the full clean-mach
 
 To browse an indexed directory directly, including offline partitions, run `StashFinder.exe --browse` or choose **浏览 → 已登记分区** (Browse → Registered partitions) in Quick Search. Double-click a partition or folder to enter it, press Backspace to go up, and use the previous and next buttons to page through a directory. Ctrl+F returns to search.
 
+With an empty catalog, click **登记分区…** (Register partition) in the native window. Identify one partition by its label, mount point and disk, select it, and click **登记所选分区** (Register selected partition). Automatic initial indexing is checked by default. The window selects the newly registered partition and shows its index progress. If you clear the checkbox, you can start indexing later from the registered partitions list. For NTFS without a USN journal, click **仅扫描建索引** to build a scan-only snapshot.
+
 ## Data location
 
 All persistent application data resides in `data` next to the executable:

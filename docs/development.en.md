@@ -122,6 +122,7 @@ The `registered_failures` case in `file_operations_real` is ignored by default a
 
 ## Partition registration acceptance
 
+- Leave the main desktop closed and run `StashFinder.exe --browse` with an empty catalog. Open **登记分区…** and check that no volume is preselected. Identify the test volume by its label and mount point. Verify automatic indexing, manual indexing after clearing the checkbox, and the scan-only option for NTFS without a journal. Once the status bar reports a published index, press Ctrl+F and search for a known file. Reopen registration and verify the registered state.
 - Open Register partitions from Overview and select the partitions to manage. Build the index after registration is checked by default and queues the initial build. Clear it to start later from the partition's Index settings. For NTFS without a USN journal, choose an indexing mode first. Creating a journal requires separate consent.
 - Registered partitions are grouped by physical disk, with current mounts, filesystem, capacity and collection time. Naming changes software records only, not volume labels.
 - The backend checks devices approximately every 5 seconds and online NTFS changes approximately every 2 seconds; device latency and running tasks affect response time. Offline capacity is historical and unavailable values remain unknown.

@@ -1,4 +1,5 @@
 use crate::Endpoint;
+use crate::registration;
 use anyhow::{Result, bail, ensure};
 use stashfinder_core::{
     Action, Response,
@@ -10,6 +11,7 @@ use stashfinder_windows::ipc;
 #[derive(Clone)]
 pub(super) enum Location {
     Partitions,
+    Candidates,
     Folder {
         name: String,
         request: Box<DirectoryRequest>,
@@ -19,6 +21,7 @@ pub(super) enum Location {
 
 pub(super) enum Listing {
     Partitions(Snapshot),
+    Candidates(Snapshot),
     Folder(Box<DirectoryPage>),
 }
 
@@ -37,6 +40,14 @@ impl Location {
         endpoint.ready().await?;
         let pipe = endpoint.pipe();
         match self {
+            Self::Candidates => {
+                let mut snapshot = registration::idle_snapshot(pipe).await?;
+                if refresh {
+                    registration::accepted(pipe, Action::Refresh).await?;
+                    snapshot = registration::idle_snapshot(pipe).await?;
+                }
+                Ok(Listing::Candidates(snapshot))
+            }
             Self::Partitions => {
                 let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
                 loop {
@@ -89,6 +100,7 @@ async fn read_directory(pipe: &str, request: &DirectoryRequest) -> Result<Box<Di
 impl Browser {
     pub fn enter(&self, row: usize) -> Option<Location> {
         match self.listing.as_ref()? {
+            Listing::Candidates(_) => None,
             Listing::Partitions(snapshot) => {
                 let asset = snapshot.assets.get(row)?;
                 let r = &asset.registration;
@@ -132,6 +144,9 @@ impl Browser {
     }
 
     pub fn up(&self) -> Option<Location> {
+        if matches!(self.location, Location::Candidates) {
+            return Some(Location::Partitions);
+        }
         let Location::Folder { request, .. } = &self.location else {
             return None;
         };
@@ -175,6 +190,19 @@ impl Browser {
 
     pub fn apply(&mut self, listing: Listing) -> (String, String, usize) {
         let (path, status, count) = match (&mut self.location, &listing) {
+            (Location::Candidates, Listing::Candidates(snapshot)) => {
+                let count = snapshot
+                    .candidates
+                    .iter()
+                    .filter(|c| registration::selectable(c))
+                    .count();
+                let status = match &snapshot.error {
+                    Some(error) => format!("无法读取完整分区状态：{error}"),
+                    None if count == 0 => "没有可登记的分区".into(),
+                    None => format!("{count} 个可登记分区，请选择一项"),
+                };
+                ("登记分区".into(), status, snapshot.candidates.len())
+            }
             (Location::Partitions, Listing::Partitions(snapshot)) => {
                 let count = snapshot.assets.len();
                 let status = if let Some(error) = &snapshot.error {
@@ -231,6 +259,28 @@ impl Browser {
 
     pub fn cell(&self, row: usize, column: i32) -> &str {
         match &self.listing {
+            Some(Listing::Candidates(snapshot)) => {
+                snapshot.candidates.get(row).map_or("", |c| {
+                    let o = &c.observation;
+                    match column {
+                        0 => registration::volume_name(o),
+                        1 => o.mounts.first().map(String::as_str).unwrap_or("无挂载点"),
+                        2 => o.model.as_deref().unwrap_or("未知"),
+                        3 => o.identity.filesystem.as_deref().unwrap_or("未知"),
+                        4 if c.registered => "已登记",
+                        4 => c.blocked.as_deref().or(o.error.as_deref()).unwrap_or(
+                            if !o.eligible() {
+                                "不支持的文件系统"
+                            } else if c.weak {
+                                "身份信息不足，需确认"
+                            } else {
+                                "可登记"
+                            },
+                        ),
+                        _ => "",
+                    }
+                })
+            }
             Some(Listing::Partitions(snapshot)) => snapshot.assets.get(row).map_or("", |asset| {
                 let r = &asset.registration;
                 match column {

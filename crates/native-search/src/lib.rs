@@ -1,5 +1,6 @@
 mod actions;
 mod browse;
+mod registration;
 mod search;
 mod window;
 
