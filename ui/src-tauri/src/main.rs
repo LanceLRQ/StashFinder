@@ -6,11 +6,14 @@ use serde::Serialize;
 use stashfinder_windows::shell;
 use std::{collections::HashSet, path::PathBuf, sync::Mutex};
 use tauri::{AppHandle, Manager, State};
+mod native;
 mod preferences;
 mod runtime;
 mod search_export;
 mod visual_cache;
 mod visuals;
+
+const WORKSPACE_MUTEX_SUFFIX: &str = ".Workspace";
 
 #[tauri::command]
 fn preferences_get(app: AppHandle) -> Result<preferences::Preferences, String> {
@@ -354,7 +357,10 @@ async fn edit_samples(
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
-        None => run(),
+        None if cfg!(debug_assertions) => run(),
+        None => native::run(),
+        Some("--native-ui") if args.len() == 1 => native::run(),
+        Some("--web-ui") if args.len() == 1 => run(),
         Some("--quick-search" | "--browse" | "--tasks") => std::env::current_exe()
             .map_err(anyhow::Error::from)
             .and_then(|program| stashfinder_native_search::run(&program, &args)),
@@ -382,8 +388,9 @@ fn main() {
 
 fn run() -> Result<(), anyhow::Error> {
     let mut context = tauri::generate_context!();
-    let Some(_desktop_instance) =
-        stashfinder_windows::portable::DesktopInstance::acquire(&context.config().identifier)?
+    let Some(_desktop_instance) = stashfinder_windows::portable::DesktopInstance::acquire(
+        &format!("{}{WORKSPACE_MUTEX_SUFFIX}", context.config().identifier),
+    )?
     else {
         return Ok(());
     };

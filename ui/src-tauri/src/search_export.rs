@@ -13,10 +13,27 @@ use std::{
 };
 use tauri::{Emitter, State, WebviewWindow};
 
-#[derive(Default)]
-pub struct SearchExport(Mutex<Option<Arc<AtomicBool>>>);
+#[derive(Clone, Default)]
+pub struct SearchExport(Arc<Mutex<Option<Arc<AtomicBool>>>>);
 
 impl SearchExport {
+    pub fn active(&self) -> bool {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+    }
+
+    pub fn begin(&self) -> Result<ActiveExport, String> {
+        let mut active = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if active.is_some() {
+            return Err("已有搜索结果正在导出".into());
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        *active = Some(cancel.clone());
+        Ok(ActiveExport {
+            state: self.clone(),
+            cancel,
+        })
+    }
+
     pub fn cancel(&self) -> bool {
         if let Some(active) = &*self.0.lock().unwrap_or_else(|e| e.into_inner()) {
             active.store(true, Ordering::Release);
@@ -24,6 +41,16 @@ impl SearchExport {
         } else {
             false
         }
+    }
+}
+
+pub struct ActiveExport {
+    state: SearchExport,
+    pub cancel: Arc<AtomicBool>,
+}
+impl Drop for ActiveExport {
+    fn drop(&mut self) {
+        *self.state.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
@@ -40,17 +67,9 @@ pub async fn export_search_csv(
     total: usize,
     spans: Option<Vec<[usize; 2]>>,
 ) -> Result<Option<usize>, String> {
-    let cancel = Arc::new(AtomicBool::new(false));
-    {
-        let mut active = state.0.lock().unwrap_or_else(|e| e.into_inner());
-        if active.is_some() {
-            return Err("已有搜索结果正在导出".into());
-        }
-        *active = Some(cancel.clone());
-    }
-    let result = export(&window, id, total, spans, &cancel).await;
-    *state.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    if cancel.load(Ordering::Acquire) && result.is_err() {
+    let active = state.begin()?;
+    let result = export(&window, id, total, spans, &active.cancel).await;
+    if active.cancel.load(Ordering::Acquire) && result.is_err() {
         return Ok(None);
     }
     result.map_err(|e| format!("{e:#}"))
@@ -88,7 +107,7 @@ async fn export(
     Ok(Some(written))
 }
 
-async fn write_csv<F: Future<Output = Result<Response>>>(
+pub async fn write_csv<F: Future<Output = Result<Response>>>(
     path: &Path,
     id: u64,
     total: usize,
@@ -254,6 +273,20 @@ fn write_row(out: &mut impl Write, hit: &SearchHit) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_export_reservation_survives_handoff_and_releases_on_drop() {
+        let exports = SearchExport::default();
+        let dialog_reservation = exports.begin().unwrap();
+        let worker_state = exports.clone();
+        assert!(worker_state.active() && worker_state.begin().is_err());
+        let active = std::thread::spawn(move || dialog_reservation)
+            .join()
+            .unwrap();
+        assert!(exports.cancel() && active.cancel.load(Ordering::Acquire));
+        drop(active);
+        assert!(!exports.active() && exports.begin().is_ok());
+    }
     use stashfinder_core::index::{SearchPage, SearchRow};
     use std::{cell::Cell, future::ready, io::BufRead};
 

@@ -37,7 +37,7 @@ NTFS 系统内部暂存的待删除文件不会作为用户文件展示。已经
 
 ## 系统依赖与边界
 
-快速搜索使用 Windows 原生控件，可独立运行。主界面使用系统安装的 WebView2，便携包不会自动下载运行时。缺少运行时时，请在启动主界面前安装。[Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
+管理主界面和快速搜索使用 Windows 原生控件。双击即可进入原生工作区，用同一窗口的标签进行浏览、搜索和任务管理。需要使用网页工作区时，退出当前主界面并运行 `StashFinder.exe --web-ui`。网页入口使用系统 WebView2 Runtime。[Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
 
 当后台需要启动时，Windows 提升同一份 `StashFinder.exe` 的另一个进程，窗口保持普通权限。便携版不安装 Windows 服务或登录启动项。其连接由本目录决定，与安装版隔离。窗口进程意外退出也会释放它对后台的使用权。同一账户在同一 Windows 登录会话内只能运行一个管理主界面。目录不可写时会报错。程序本身不提供跨电脑的管理员权限。
 

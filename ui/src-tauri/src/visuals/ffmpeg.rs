@@ -48,6 +48,17 @@ pub async fn visual_ffmpeg_rebuild(
     reference: EntryRef,
 ) -> Result<(), String> {
     let paths = Paths::from_app(&app).map_err(|error| error.to_string())?;
+    rebuild(&state, paths, request_id, reference).await?;
+    let _ = app.emit("thumbnail-cache-updated", ());
+    Ok(())
+}
+
+pub async fn rebuild(
+    state: &Visuals,
+    paths: Paths,
+    request_id: String,
+    reference: EntryRef,
+) -> Result<(), String> {
     let shared = state.0.clone();
     let mut work = Work::new(shared.clone(), request_id).map_err(|error| error.to_string())?;
     let notify: Notify = Arc::new(|_| {});
@@ -66,9 +77,7 @@ pub async fn visual_ffmpeg_rebuild(
         let ffmpeg = executable().context("未在 PATH 中找到 FFmpeg")?;
         shared.rebuild_with_ffmpeg(&paths, &record, &ffmpeg, &cancel)
     })
-    .await?;
-    let _ = app.emit("thumbnail-cache-updated", ());
-    Ok(())
+    .await
 }
 
 impl Shared {

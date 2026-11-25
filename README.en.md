@@ -6,7 +6,7 @@ StashFinder catalogs drives on Windows. Say you remember saving a video but can'
 
 ## Getting started
 
-You need Windows 10 or 11 (x64). The main application uses the system WebView2 Runtime. You can build a portable ZIP and a Windows installer from source. Set up the tools in the [development guide](docs/development.en.md), then run these commands from the repository root.
+You need Windows 10 or 11 (x64). Double-click the app to open the native Windows workspace with Overview, Browse, Search, and Tasks tabs in one window. Set up the build tools and run these commands from the repository root. [Development guide](docs/development.en.md)
 
 ```powershell
 pnpm install --frozen-lockfile
@@ -17,6 +17,8 @@ pnpm package
 - The **Windows installer** is in `target/release/bundle/nsis/`. Run the installer. By default, the backend starts and stops with the app. Choose Windows service mode during installation to keep indexing after you close the window.
 
 When you first use the desktop-managed backend, choose to start it and approve the Windows administrator prompt. In the overview, open the partition registration dialog, select the partitions you want, and leave automatic initial indexing enabled. Once indexing finishes, double-click a partition to browse it, or enter a query in the overview and press Enter to search all registered partitions.
+
+Ctrl+T opens a Browse tab, Ctrl+Shift+F opens a Search tab, and Ctrl+Tab switches tabs. Choose **Tools → Tasks** to see index progress and history. Ctrl+P opens Settings. To use the web workspace, run `StashFinder.exe --web-ui`. The web entry uses the system WebView2 Runtime.
 
 ## Searching and browsing
 
@@ -42,7 +44,7 @@ Choose file analysis for a partition or folder to generate thumbnails ahead of t
 
 ## Development
 
-The backend is written in Rust, the desktop UI uses Tauri 2, React, and TypeScript, and indexes are stored in local SQLite databases. Run `pnpm dev` to start the development app and `pnpm check` to run the automated checks. [Development and verification](docs/development.en.md) · [Query performance baseline](docs/query-performance.en.md)
+The backend is written in Rust, the native UI uses Rust and Win32, and indexes are stored in local SQLite databases. The web workspace uses Tauri 2, React, and TypeScript. Run `pnpm dev` to develop the web workspace and `pnpm check` for automated checks. [Development and verification](docs/development.en.md) · [Query performance baseline](docs/query-performance.en.md)
 
 ## License
 

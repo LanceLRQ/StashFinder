@@ -8,6 +8,7 @@
       "installer/installed.marker": "installed.marker"
     },
     "windows": {
+      "webviewInstallMode": { "type": "skip" },
       "nsis": {
         "installMode": "perMachine",
         "installerHooks": "installer/hooks.nsh"

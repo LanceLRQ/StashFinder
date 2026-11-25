@@ -37,6 +37,12 @@ The launcher clears orphaned development backends from this checkout, then allow
 
 The app opens on the Overview tab, pinned at the far left. Double-click a partition card to browse its directories. Open the Settings dialog from Tools → Settings or press Ctrl+P. Multiple search tabs run independently in the same desktop window. Open Tools → Tasks to see progress and history for manual indexing. Automatic indexing appears in the task list only after a failure or interruption, or when confirmation is required. The Overview sidebar shows partition details and index status. Cancellation targets a task ID and pauses its partition until updates are explicitly resumed. An ordinary foreground process may lack access to physical disk layouts. The UI reports this explicitly. Use the LocalSystem verification service below for complete device validation. Help → About and diagnostics reports the actual app version, backend mode and connection state. The local pipe allows the configured account, SYSTEM and administrators and rejects remote clients. IPC accepts neither database paths nor arbitrary commands.
 
+### Win32 main workspace
+
+Release packages open the native workspace by default. Start the development backend in a separate terminal, then run `cargo run --locked -p stashfinder-desktop -- --native-ui` to open the native workspace. `pnpm dev` opens the web workspace for development. Run `StashFinder.exe --web-ui` to open the web workspace from the same release.
+
+Use a dedicated catalog to verify tabs, Settings dialogs, partition registration and indexing, the directory tree and history, previews and file operations, filter presets, bookmarks, and CSV export. Run `cargo test --locked -p stashfinder-desktop --test native_desktop -- --ignored --test-threads=1` for the interactive smoke test. Check that the native window starts without WebView2 child processes, connects to the correct backend in each distribution mode, and works with File Explorer.
+
 ### Native Win32 Quick Search
 
 Both installation modes add **StashFinder 快速搜索** (Quick Search) to Start. Its target is `StashFinder.exe --quick-search`. In the default mode, the first client asks before starting a shared backend. The backend stops after its last client exits. In Windows service mode, the first query starts the registered service if needed and checks its mode and process ID. Closing all windows leaves the service running. Exit the main application and Quick Search before upgrading, changing modes, or uninstalling.

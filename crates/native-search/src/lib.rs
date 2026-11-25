@@ -6,6 +6,7 @@ mod tasks;
 mod window;
 
 use anyhow::{Result, bail, ensure};
+pub use registration::phase_label;
 use stashfinder_windows::{ipc, portable, scm, session::ManagedSession, storage};
 use std::path::Path;
 

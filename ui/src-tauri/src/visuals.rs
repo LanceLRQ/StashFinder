@@ -11,7 +11,7 @@ use stashfinder_core::{
     Action, Response,
     file_operations::{EntryRef, PreparedTarget, ThumbnailTypes, VisualRecord},
 };
-use stashfinder_windows::{file_operations::verify, ipc};
+use stashfinder_windows::file_operations::verify;
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -23,11 +23,17 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Clone)]
-struct Paths {
+pub struct Paths {
     root: PathBuf,
     config: PathBuf,
 }
 impl Paths {
+    pub fn new(config: &std::path::Path, local: &std::path::Path) -> Self {
+        Self {
+            root: local.join("visual-cache"),
+            config: config.join("visual-cache.json"),
+        }
+    }
     fn from_app(app: &AppHandle) -> Result<Self> {
         Ok(Self {
             root: app.path().app_local_data_dir()?.join("visual-cache"),
@@ -43,10 +49,10 @@ pub enum Kind {
 }
 #[derive(Serialize)]
 pub struct Image {
-    data_url: Option<String>,
-    source: &'static str,
-    historical: bool,
-    warning: Option<String>,
+    pub data_url: Option<String>,
+    pub source: &'static str,
+    pub historical: bool,
+    pub warning: Option<String>,
 }
 impl Image {
     fn png(bytes: &[u8], source: &'static str, historical: bool, warning: Option<String>) -> Self {
@@ -284,10 +290,10 @@ impl Default for Visuals {
 #[derive(Serialize)]
 pub struct CacheStatus {
     #[serde(flatten)]
-    stats: Stats,
-    thumbnail_types: ThumbnailTypes,
-    waiting: usize,
-    active: usize,
+    pub stats: Stats,
+    pub thumbnail_types: ThumbnailTypes,
+    pub waiting: usize,
+    pub active: usize,
 }
 type Notify = Arc<dyn Fn(&str) + Send + Sync>;
 struct Work {
@@ -344,7 +350,7 @@ impl Drop for Work {
 async fn background<T: Send + 'static>(
     operation: impl FnOnce() -> Result<T> + Send + 'static,
 ) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(operation)
+    tokio::task::spawn_blocking(operation)
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| format!("{e:#}"))
@@ -352,6 +358,14 @@ async fn background<T: Send + 'static>(
 #[tauri::command]
 pub async fn visual_icon(
     state: State<'_, Visuals>,
+    name: String,
+    folder: bool,
+    size: u32,
+) -> Result<Image, String> {
+    type_icon(&state, name, folder, size).await
+}
+pub async fn type_icon(
+    state: &Visuals,
     name: String,
     folder: bool,
     size: u32,
@@ -374,7 +388,6 @@ pub async fn visual_preview(
     size: u32,
 ) -> Result<Image, String> {
     let paths = Paths::from_app(&app).map_err(|e| e.to_string())?;
-    let shared = state.0.clone();
     let event_id = request_id.clone();
     let notify: Notify = Arc::new(move |phase| {
         let _ = app.emit(
@@ -382,10 +395,23 @@ pub async fn visual_preview(
             serde_json::json!({ "request_id": event_id, "phase": phase }),
         );
     });
+    preview(&state, paths, request_id, reference, kind, size, notify).await
+}
+
+pub async fn preview(
+    state: &Visuals,
+    paths: Paths,
+    request_id: String,
+    reference: EntryRef,
+    kind: Kind,
+    size: u32,
+    notify: Notify,
+) -> Result<Image, String> {
+    let shared = state.0.clone();
     let mut work = Work::new(shared.clone(), request_id).map_err(|e| e.to_string())?;
     let _permit = work.enter(&notify).await.map_err(|e| e.to_string())?;
     notify("record");
-    let response = ipc::request(crate::runtime::pipe(), Action::FileInspect(reference))
+    let response = crate::runtime::request(Action::FileInspect(reference))
         .await
         .map_err(|e| format!("{e:#}"))?;
     let Response::VisualRecord(record) = response else {
@@ -396,12 +422,15 @@ pub async fn visual_preview(
 }
 #[tauri::command]
 pub fn visual_cancel(state: State<'_, Visuals>, request_id: String) {
+    cancel(&state, &request_id)
+}
+pub fn cancel(state: &Visuals, request_id: &str) {
     if let Some(cancel) = state
         .0
         .requests
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .get(&request_id)
+        .get(request_id)
     {
         cancel.store(true, Ordering::Release);
     }
@@ -412,6 +441,9 @@ pub async fn visual_cache_status(
     state: State<'_, Visuals>,
 ) -> Result<CacheStatus, String> {
     let paths = Paths::from_app(&app).map_err(|e| e.to_string())?;
+    cache_status(&state, paths).await
+}
+pub async fn cache_status(state: &Visuals, paths: Paths) -> Result<CacheStatus, String> {
     let shared = state.0.clone();
     background(move || shared.status(&paths)).await
 }
@@ -423,8 +455,16 @@ pub async fn visual_cache_limit(
     request_id: String,
 ) -> Result<CacheStatus, String> {
     let paths = Paths::from_app(&app).map_err(|e| e.to_string())?;
-    let shared = state.0.clone();
     let progress = maintenance_progress(app, request_id);
+    cache_limit(&state, paths, limit_bytes, progress).await
+}
+pub async fn cache_limit(
+    state: &Visuals,
+    paths: Paths,
+    limit_bytes: Option<u64>,
+    progress: impl FnMut(Progress) + Send + 'static,
+) -> Result<CacheStatus, String> {
+    let shared = state.0.clone();
     background(move || {
         shared.cached(&paths, |cache| cache.set_limit(limit_bytes, progress))?;
         shared.status(&paths)
@@ -439,6 +479,13 @@ pub async fn visual_thumbnail_types(
     types: ThumbnailTypes,
 ) -> Result<CacheStatus, String> {
     let paths = Paths::from_app(&app).map_err(|e| e.to_string())?;
+    thumbnail_types(&state, paths, types).await
+}
+pub async fn thumbnail_types(
+    state: &Visuals,
+    paths: Paths,
+    types: ThumbnailTypes,
+) -> Result<CacheStatus, String> {
     let shared = state.0.clone();
     background(move || {
         shared.cached(&paths, |cache| cache.set_thumbnail_types(types))?;
@@ -453,8 +500,15 @@ pub async fn visual_cache_clear(
     request_id: String,
 ) -> Result<CacheStatus, String> {
     let paths = Paths::from_app(&app).map_err(|e| e.to_string())?;
-    let shared = state.0.clone();
     let progress = maintenance_progress(app, request_id);
+    cache_clear(&state, paths, progress).await
+}
+pub async fn cache_clear(
+    state: &Visuals,
+    paths: Paths,
+    progress: impl FnMut(Progress) + Send + 'static,
+) -> Result<CacheStatus, String> {
+    let shared = state.0.clone();
     background(move || {
         shared.clear(&paths, progress)?;
         shared.status(&paths)

@@ -6,7 +6,7 @@ StashFinder 是一个 Windows 硬盘目录工具。比如，你记得存过一�
 
 ## 开始使用
 
-需要 Windows 10/11 x64，管理主界面使用系统 WebView2 Runtime。目前可从源码生成便携版和安装版。按[开发指南](docs/development.md)准备构建环境，然后在仓库根目录运行下面的命令。
+需要 Windows 10/11 x64。双击打开 Windows 原生工作区，可在同一窗口使用概览、浏览、搜索和任务标签页。准备好构建环境后，在仓库根目录运行下面的命令。[开发指南](docs/development.md)
 
 ```powershell
 pnpm install --frozen-lockfile
@@ -17,6 +17,8 @@ pnpm package
 - **安装版**在 `target/release/bundle/nsis/`。运行安装程序，后台默认随应用启动和退出。需要关闭窗口后继续更新索引时，可在安装时选择 Windows 服务模式。
 
 首次使用桌面管理的后台时，选择「启动索引后台」并确认 Windows 的管理员授权。进入「概览 → 登记分区…」，选中要管理的分区，保留「登记后自动建立索引」。建库完成后，可以双击分区打开目录，也可以在概览输入关键词，按 Enter 搜索所有已登记分区。
+
+Ctrl+T 新建浏览标签，Ctrl+Shift+F 新建搜索标签，Ctrl+Tab 切换标签。从「工具 → 任务」查看索引进度和历史，Ctrl+P 打开设置弹层。需要使用网页工作区时，运行 `StashFinder.exe --web-ui`。网页入口使用系统 WebView2 Runtime。
 
 ## 搜索和浏览
 
@@ -42,7 +44,7 @@ pnpm package
 
 ## 开发
 
-服务使用 Rust，界面使用 Tauri 2、React 和 TypeScript，索引保存在本地 SQLite 数据库中。运行 `pnpm dev` 启动开发环境，`pnpm check` 执行自动检查。[开发与验证](docs/development.md) · [查询性能基线](docs/query-performance.md)
+后台使用 Rust，原生界面使用 Rust 与 Win32，索引保存在本地 SQLite 数据库中。网页工作区使用 Tauri 2、React 和 TypeScript。运行 `pnpm dev` 启动网页开发环境，`pnpm check` 执行自动检查。[开发与验证](docs/development.md) · [查询性能基线](docs/query-performance.md)
 
 ## 许可
 

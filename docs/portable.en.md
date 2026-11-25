@@ -37,7 +37,7 @@ Offline records remain searchable after moving to another computer. Connected di
 
 ## Dependencies and limitations
 
-Quick Search runs independently using native Windows controls. The main application uses the system WebView2 installation. The portable package does not automatically download the runtime. Install the runtime before opening the main application if it is missing. [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
+The main workspace and Quick Search use native Windows controls. Double-click the app to browse, search, and manage tasks in tabs. To use the web workspace, exit the current main window and run `StashFinder.exe --web-ui`. The web entry uses the system WebView2 Runtime. [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
 
 When the backend needs to start, Windows elevates a second process running the same `StashFinder.exe`. The windows keep ordinary user privileges. The portable build installs no Windows service or login startup entry. Its endpoint is tied to this folder and isolated from the installed version. A client process that exits unexpectedly also releases its claim on the backend. The same account can run one main application per Windows session. Unwritable directories produce an error. The application does not grant administrator access on another computer.
 

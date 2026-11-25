@@ -159,7 +159,7 @@ pub(super) fn index_label(status: &IndexStatus) -> String {
     }
 }
 
-pub(super) fn phase_label(phase: &str) -> &str {
+pub fn phase_label(phase: &str) -> &str {
     match phase {
         "not_indexed" => "尚未索引",
         "loading" => "正在恢复索引状态",

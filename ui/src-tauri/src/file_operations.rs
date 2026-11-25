@@ -74,6 +74,10 @@ fn entry_chunks(entries: Vec<Vec<u8>>) -> Result<Vec<SelectionChunk>> {
 
 #[tauri::command]
 pub fn file_status(state: State<'_, Operations>) -> OperationStatus {
+    operation_status(&state)
+}
+
+pub fn operation_status(state: &Operations) -> OperationStatus {
     state
         .inner
         .lock()
@@ -83,6 +87,10 @@ pub fn file_status(state: State<'_, Operations>) -> OperationStatus {
 }
 #[tauri::command]
 pub fn file_cancel(state: State<'_, Operations>) {
+    cancel(&state)
+}
+
+pub fn cancel(state: &Operations) {
     let mut work = state.inner.lock().unwrap_or_else(|e| e.into_inner());
     work.cancel.store(true, Ordering::Release);
     work.targets = None;
@@ -101,7 +109,14 @@ pub async fn file_prepare(
     input: SelectionInput,
     records_only: Option<bool>,
 ) -> Result<PreparedSummary, String> {
-    let records_only = records_only.unwrap_or(false);
+    prepare(&state, input, records_only.unwrap_or(false)).await
+}
+
+pub async fn prepare(
+    state: &Operations,
+    input: SelectionInput,
+    records_only: bool,
+) -> Result<PreparedSummary, String> {
     let id = state.sequence.fetch_add(1, Ordering::Relaxed) + 1;
     let shared = state.inner.clone();
     let cancel = Arc::new(AtomicBool::new(false));
@@ -211,7 +226,7 @@ pub async fn file_prepare(
         });
         let progress = shared.clone();
         let cancelled = cancel.clone();
-        tauri::async_runtime::spawn_blocking(move || -> Result<Vec<PreparedTarget>> {
+        tokio::task::spawn_blocking(move || -> Result<Vec<PreparedTarget>> {
             let mut failures = Vec::new();
             for (index, row) in rows.iter().enumerate() {
                 ensure!(!cancelled.load(Ordering::Acquire), "操作准备已取消");
@@ -392,6 +407,14 @@ pub fn file_report(
     id: Option<u64>,
     offset: usize,
 ) -> Result<Option<ReportPage>, String> {
+    report(&state, id, offset)
+}
+
+pub fn report(
+    state: &Operations,
+    id: Option<u64>,
+    offset: usize,
+) -> Result<Option<ReportPage>, String> {
     let work = state.inner.lock().unwrap_or_else(|e| e.into_inner());
     if id.is_some_and(|id| id != work.status.id) {
         return Err("文件操作结果已过期".into());
@@ -429,6 +452,10 @@ pub fn prevent_close(state: &Operations) -> bool {
 }
 #[tauri::command]
 pub fn file_keep_open(state: State<'_, Operations>) {
+    keep_open(&state)
+}
+
+pub fn keep_open(state: &Operations) {
     state
         .inner
         .lock()
@@ -447,6 +474,20 @@ pub async fn file_run(
 ) -> Result<String, String> {
     let owner = window.hwnd().map_err(|e| e.to_string())?.0 as usize;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    run_prepared(&state, id, action, owner, scale, move |job| {
+        app.run_on_main_thread(job).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+pub async fn run_prepared(
+    state: &Operations,
+    id: u64,
+    action: FileAction,
+    owner: usize,
+    scale: f64,
+    schedule: impl FnOnce(Box<dyn FnOnce() + Send>) -> Result<(), String>,
+) -> Result<String, String> {
     let shared = state.inner.clone();
     let rows = {
         let mut work = shared.lock().unwrap_or_else(|e| e.into_inner());
@@ -492,66 +533,64 @@ pub async fn file_run(
         .await;
     }
     let (send, receive) = tokio::sync::oneshot::channel();
-    let scheduled = app
-        .run_on_main_thread(move || {
-            let result = (|| -> Result<String> {
-                if matches!(action, FileAction::CopyName | FileAction::CopyPath) {
-                    let text = record_text(&rows, matches!(action, FileAction::CopyName));
-                    shell::copy_text(&text, owner)?;
-                    return Ok("已复制记录文字".into());
+    let scheduled = schedule(Box::new(move || {
+        let result = (|| -> Result<String> {
+            if matches!(action, FileAction::CopyName | FileAction::CopyPath) {
+                let text = record_text(&rows, matches!(action, FileAction::CopyName));
+                shell::copy_text(&text, owner)?;
+                return Ok("已复制记录文字".into());
+            }
+            let paths = rows
+                .iter()
+                .map(|row| verify(row, false))
+                .collect::<Result<Vec<_>>>()?;
+            match action {
+                FileAction::Rename(_) | FileAction::Recycle | FileAction::Delete => {
+                    unreachable!("handled by STA worker")
                 }
-                let paths = rows
-                    .iter()
-                    .map(|row| verify(row, false))
-                    .collect::<Result<Vec<_>>>()?;
-                match action {
-                    FileAction::Rename(_) | FileAction::Recycle | FileAction::Delete => {
-                        unreachable!("handled by STA worker")
-                    }
-                    FileAction::CopyName | FileAction::CopyPath => unreachable!("handled above"),
-                    FileAction::More { x, y } => {
-                        if stashfinder_windows::context_menu::show(&paths, owner, x, y, scale)? {
-                            Ok("已调用 Windows 菜单命令；索引将按实际变化更新".into())
-                        } else {
-                            Ok("已关闭 Windows 菜单".into())
-                        }
-                    }
-                    FileAction::Copy => {
-                        shell::copy_samples(&paths)?;
-                        Ok("已复制到剪贴板".into())
-                    }
-                    FileAction::Cut => {
-                        shell::cut_samples(&paths)?;
-                        Ok("已剪切到剪贴板，源文件尚未移动".into())
-                    }
-                    FileAction::Drag => {
-                        ensure!(shell::left_button_down(), "已松开鼠标，拖出已取消");
-                        if shell::drag_samples(&paths)? {
-                            Ok("目标已接受复制，请核对目标文件".into())
-                        } else {
-                            Ok("拖出已取消或目标未接受复制".into())
-                        }
-                    }
-                    FileAction::Open
-                    | FileAction::OpenWith
-                    | FileAction::Locate
-                    | FileAction::Properties => {
-                        ensure!(paths.len() == 1, "此操作只支持选择一项");
-                        let operation = match action {
-                            FileAction::Open => shell::OpenAction::Open,
-                            FileAction::OpenWith => shell::OpenAction::OpenWith,
-                            FileAction::Locate => shell::OpenAction::Locate,
-                            _ => shell::OpenAction::Properties,
-                        };
-                        shell::open_file(&paths[0], operation, owner)?;
-                        Ok("已交给 Windows 打开".into())
+                FileAction::CopyName | FileAction::CopyPath => unreachable!("handled above"),
+                FileAction::More { x, y } => {
+                    if stashfinder_windows::context_menu::show(&paths, owner, x, y, scale)? {
+                        Ok("已调用 Windows 菜单命令；索引将按实际变化更新".into())
+                    } else {
+                        Ok("已关闭 Windows 菜单".into())
                     }
                 }
-            })()
-            .map_err(|e| format!("{e:#}"));
-            let _ = send.send(result);
-        })
-        .map_err(|e| e.to_string());
+                FileAction::Copy => {
+                    shell::copy_samples(&paths)?;
+                    Ok("已复制到剪贴板".into())
+                }
+                FileAction::Cut => {
+                    shell::cut_samples(&paths)?;
+                    Ok("已剪切到剪贴板，源文件尚未移动".into())
+                }
+                FileAction::Drag => {
+                    ensure!(shell::left_button_down(), "已松开鼠标，拖出已取消");
+                    if shell::drag_samples(&paths)? {
+                        Ok("目标已接受复制，请核对目标文件".into())
+                    } else {
+                        Ok("拖出已取消或目标未接受复制".into())
+                    }
+                }
+                FileAction::Open
+                | FileAction::OpenWith
+                | FileAction::Locate
+                | FileAction::Properties => {
+                    ensure!(paths.len() == 1, "此操作只支持选择一项");
+                    let operation = match action {
+                        FileAction::Open => shell::OpenAction::Open,
+                        FileAction::OpenWith => shell::OpenAction::OpenWith,
+                        FileAction::Locate => shell::OpenAction::Locate,
+                        _ => shell::OpenAction::Properties,
+                    };
+                    shell::open_file(&paths[0], operation, owner)?;
+                    Ok("已交给 Windows 打开".into())
+                }
+            }
+        })()
+        .map_err(|e| format!("{e:#}"));
+        let _ = send.send(result);
+    }));
     let result = match scheduled {
         Ok(()) => receive.await.map_err(|e| e.to_string()).and_then(|r| r),
         Err(error) => Err(error),
@@ -566,6 +605,10 @@ pub async fn file_paste(
     target: EntryRef,
 ) -> Result<String, String> {
     let owner = window.hwnd().map_err(|e| e.to_string())?.0 as usize;
+    paste(&state, target, owner).await
+}
+
+pub async fn paste(state: &Operations, target: EntryRef, owner: usize) -> Result<String, String> {
     let shared = state.inner.clone();
     let id = state.sequence.fetch_add(1, Ordering::Relaxed) + 1;
     let cancel = Arc::new(AtomicBool::new(false));

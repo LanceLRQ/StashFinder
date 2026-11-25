@@ -15,7 +15,7 @@ use std::{
 };
 use tauri::{Emitter, State};
 
-#[derive(Clone, Copy, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum BatchState {
     Running,
@@ -30,27 +30,27 @@ pub enum BatchState {
     Failed,
 }
 impl BatchState {
-    fn finished(self) -> bool {
+    pub fn finished(self) -> bool {
         matches!(self, Self::Cancelled | Self::Completed | Self::Failed)
     }
 }
 
 #[derive(Clone, Serialize)]
 pub struct BatchStatus {
-    partition_id: String,
-    label: String,
-    state: BatchState,
-    total: Option<usize>,
-    saved: usize,
-    skipped: usize,
-    unsupported: usize,
-    analysing: bool,
-    videos: usize,
-    other: usize,
-    unknown: usize,
-    failed: usize,
+    pub partition_id: String,
+    pub label: String,
+    pub state: BatchState,
+    pub total: Option<usize>,
+    pub saved: usize,
+    pub skipped: usize,
+    pub unsupported: usize,
+    pub analysing: bool,
+    pub videos: usize,
+    pub other: usize,
+    pub unknown: usize,
+    pub failed: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Default)]
@@ -83,6 +83,18 @@ pub async fn thumbnail_start(
     options: BatchOptions,
 ) -> Result<(), String> {
     let paths = Paths::from_app(&app).map_err(|error| error.to_string())?;
+    start(&state, paths, options, move || {
+        let _ = app.emit("thumbnail-cache-updated", ());
+    })
+    .await
+}
+
+pub async fn start(
+    state: &Visuals,
+    paths: Paths,
+    options: BatchOptions,
+    changed: impl FnOnce() + Send + 'static,
+) -> Result<(), String> {
     let shared = state.0.clone();
     let probe = options
         .analyse
@@ -133,7 +145,7 @@ pub async fn thumbnail_start(
     });
     let epoch = shared.epoch.load(Ordering::Acquire);
     drop(slot);
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         let context = &shared;
         let cache_paths = &paths;
         let result = async move {
@@ -186,7 +198,7 @@ pub async fn thumbnail_start(
             job.saved
         };
         if saved > 0 {
-            let _ = app.emit("thumbnail-cache-updated", ());
+            changed();
         }
     });
     Ok(())
@@ -195,16 +207,16 @@ pub async fn thumbnail_start(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BatchOptions {
-    partition_id: String,
-    filesystem_id: String,
-    folder: Option<Vec<u8>>,
-    generation: Option<String>,
-    label: String,
-    rebuild: bool,
+    pub partition_id: String,
+    pub filesystem_id: String,
+    pub folder: Option<Vec<u8>>,
+    pub generation: Option<String>,
+    pub label: String,
+    pub rebuild: bool,
     #[serde(default)]
-    analyse: bool,
+    pub analyse: bool,
     #[serde(default = "default_thumbnails")]
-    thumbnails: bool,
+    pub thumbnails: bool,
 }
 fn default_thumbnails() -> bool {
     true
@@ -212,11 +224,17 @@ fn default_thumbnails() -> bool {
 
 #[tauri::command]
 pub fn thumbnail_status(state: State<'_, Visuals>) -> Option<BatchStatus> {
+    status(&state)
+}
+pub fn status(state: &Visuals) -> Option<BatchStatus> {
     state.0.batch.lock().clone()
 }
 
 #[tauri::command]
 pub fn thumbnail_control(state: State<'_, Visuals>, action: BatchAction) {
+    control(&state, action)
+}
+pub fn control(state: &Visuals, action: BatchAction) {
     if let Some(job) = state.0.batch.lock().as_mut() {
         job.state = match (action, job.state) {
             (
