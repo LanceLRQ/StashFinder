@@ -7,7 +7,7 @@ use stashfinder_core::{
     MAX_FRAME,
     assets::{Asset, IdentityMatch, Snapshot},
     index::{IndexMode, IndexStatus},
-    tasks::{PartitionIndex, Task, TaskOverviewPage, TaskOverviewRow},
+    tasks::{PartitionIndex, TASK_SNAPSHOT_EXPIRED, Task, TaskOverviewPage, TaskOverviewRow},
 };
 use stashfinder_store::{catalog::Catalog, search::SearchIndex, tasks::Tasks, volume::Volume};
 use stashfinder_windows::{ntfs::VolumeReader, volumes};
@@ -400,7 +400,7 @@ impl Runner {
             let revision = t.revision()?;
             ensure!(
                 version.is_none_or(|v| v == revision),
-                "任务快照已更新，请重试"
+                "{TASK_SNAPSHOT_EXPIRED}"
             );
             let mut rows = t.list()?;
             let states = self.shared.states.lock().unwrap_or_else(|e| e.into_inner());
@@ -458,7 +458,7 @@ impl Runner {
             let current_version = format!("{:x}:{:x}", tasks.revision()?, hash.finish());
             ensure!(
                 version.is_none_or(|v| v == current_version),
-                "任务快照已更新，请重试"
+                "{TASK_SNAPSHOT_EXPIRED}"
             );
             let mut entries = tasks.list()?;
             {

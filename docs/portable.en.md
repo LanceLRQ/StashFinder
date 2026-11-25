@@ -14,6 +14,8 @@ To browse an indexed directory directly, including offline partitions, run `Stas
 
 With an empty catalog, click **登记分区…** (Register partition) in the native window. Identify one partition by its label, mount point and disk, select it, and click **登记所选分区** (Register selected partition). Automatic initial indexing is checked by default. The window selects the newly registered partition and shows its index progress. If you clear the checkbox, you can start indexing later from the registered partitions list. For NTFS without a USN journal, click **仅扫描建索引** to build a scan-only snapshot.
 
+Choose **浏览 → 索引任务** (Browse → Index tasks) or run `StashFinder.exe --tasks` directly. The native list refreshes manual tasks and automatic tasks requiring attention. Select a task to read its error, cancel active work or retry once its partition is online and ready. Cancelling preserves the committed index and pauses automatic updates for that partition. Press Ctrl+F to return to search.
+
 ## Data location
 
 All persistent application data resides in `data` next to the executable:

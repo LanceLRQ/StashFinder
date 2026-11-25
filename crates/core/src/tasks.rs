@@ -1,6 +1,8 @@
 use crate::index::IndexMode;
 use serde::{Deserialize, Serialize};
 
+pub const TASK_SNAPSHOT_EXPIRED: &str = "任务快照已更新，请重试";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,

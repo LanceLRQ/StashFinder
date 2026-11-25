@@ -146,24 +146,7 @@ pub(super) fn index_label(status: &IndexStatus) -> String {
     if status.journal_missing {
         return "缺少 USN 日志，可使用仅扫描索引".into();
     }
-    let phase = match status.phase.as_str() {
-        "not_indexed" => "尚未索引",
-        "loading" => "正在恢复索引状态",
-        "queued" => "等待索引",
-        "building" => "准备建立索引",
-        "enumerating" => "正在读取 NTFS 记录",
-        "scanning" => "正在扫描文件",
-        "replaying" => "正在补齐文件变更",
-        "publishing" => "正在发布索引",
-        "syncing" => "正在同步文件变更",
-        "ready" => "索引已建立",
-        "snapshot" => "扫描索引已建立",
-        "waiting" => "等待分区接入或恢复",
-        "failed" => "索引未完成",
-        "needs_validation" => "索引需要校验",
-        "needs_rebuild" => "索引需要重建",
-        other => other,
-    };
+    let phase = phase_label(&status.phase);
     if let Some(error) = &status.error {
         format!("{phase} · {error}")
     } else if matches!(
@@ -173,6 +156,29 @@ pub(super) fn index_label(status: &IndexStatus) -> String {
         format!("{phase} · {} 项", status.records)
     } else {
         phase.into()
+    }
+}
+
+pub(super) fn phase_label(phase: &str) -> &str {
+    match phase {
+        "not_indexed" => "尚未索引",
+        "loading" => "正在恢复索引状态",
+        "queued" => "等待索引",
+        "building" => "准备建立索引",
+        "enumerating" => "正在读取 NTFS 记录",
+        "scanning" => "正在扫描文件",
+        "replaying" => "正在补齐文件变更",
+        "search_build" => "正在构建搜索索引",
+        "search_built" => "搜索索引已生成",
+        "publishing" => "正在发布索引",
+        "syncing" => "正在同步文件变更",
+        "ready" => "索引已建立",
+        "snapshot" => "扫描索引已建立",
+        "waiting" => "等待分区接入或恢复",
+        "failed" => "索引未完成",
+        "needs_validation" => "索引需要校验",
+        "needs_rebuild" => "索引需要重建",
+        other => other,
     }
 }
 

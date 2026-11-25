@@ -59,6 +59,8 @@ pnpm dev:native
 
 在交互式 Windows 桌面执行 `cargo test -p stashfinder-native-search --locked -- --ignored --test-threads=1` 可单独验证断开后台时的提示，以及窗口处理 DPI 变化后的控件尺寸。
 
+验收原生索引任务时，保持管理主界面关闭，在专用测试分区建立索引，再从「浏览 → 索引任务」或 `StashFinder.exe --tasks` 打开列表。观察执行阶段，选中任务后取消，核对任务状态和分区暂停状态。重试后应出现新的执行记录，完成后可搜索测试文件。两个窗口同时打开时，刷新或列表重新排序应保留选中的任务 ID。后台断开时应提示读取失败并禁用操作，连接恢复后可继续使用。
+
 ## 正式 Windows 安装包
 
 从仓库根目录运行 `pnpm package`，依次生成便携 ZIP 和 NSIS 安装包。也可单独运行 `pnpm package:portable` 或 `pnpm package:installer`。便携包位于 `.local/packages/`，NSIS 安装包位于 `target/release/bundle/nsis/`。

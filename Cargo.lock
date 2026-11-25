@@ -3062,6 +3062,7 @@ name = "stashfinder-native-search"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "chrono",
  "serde_json",
  "stashfinder-core",
  "stashfinder-windows",

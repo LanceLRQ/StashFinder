@@ -1,6 +1,13 @@
 use super::*;
 
 type Columns = &'static [(&'static str, i32, Option<SortField>)];
+pub(super) const TASK_COLUMNS: Columns = &[
+    ("分区", 190, None),
+    ("任务", 130, None),
+    ("状态", 145, None),
+    ("执行阶段", 215, None),
+    ("更新时间", 180, None),
+];
 pub(super) const CANDIDATE_COLUMNS: Columns = &[
     ("分区名称", 200, None),
     ("挂载点", 145, None),
@@ -26,6 +33,10 @@ impl Window {
     pub(super) fn browse_command(&self, command: usize) {
         let mut refresh = false;
         let target = match command {
+            REFRESH if self.viewing_tasks() => {
+                self.refresh_tasks();
+                return;
+            }
             PARTITIONS => Some(Location::Partitions),
             UP => self.browser.borrow().as_ref().and_then(Browser::up),
             PREVIOUS | NEXT => self
@@ -79,6 +90,7 @@ impl Window {
     pub(super) fn browse_to(&self, mut target: Location, refresh: bool) {
         self.index.take();
         self.focus_partition.take();
+        self.task_notice.take();
         if refresh
             && let Location::Folder {
                 request, previous, ..
@@ -112,6 +124,7 @@ impl Window {
         let caption = match &target {
             Location::Partitions => "已登记分区",
             Location::Candidates => "登记分区",
+            Location::Tasks => "索引任务",
             Location::Folder { name, .. } => name,
         };
         // SAFETY: The text is copied synchronously and these are this window's own controls.
@@ -120,11 +133,15 @@ impl Window {
             let _ = SetWindowTextW(self.path, &HSTRING::from(caption));
             let _ = SetFocus(Some(self.list));
         }
-        self.status(if matches!(target, Location::Candidates) {
-            "正在读取可登记分区…"
-        } else {
-            "正在读取索引…"
+        self.status(match target {
+            Location::Candidates => "正在读取可登记分区…",
+            Location::Tasks => "正在读取索引任务…",
+            _ => "正在读取索引…",
         });
+        self.load_listing(target, refresh);
+    }
+
+    pub(super) fn load_listing(&self, target: Location, refresh: bool) {
         let endpoint = self.endpoint.clone();
         let send = self.send.clone();
         let hwnd = self.hwnd.0 as usize;
@@ -138,9 +155,11 @@ impl Window {
 
     pub(super) fn display_browse(&self, result: Result<Listing>) {
         self.browse_task.take();
+        let tasks = self.viewing_tasks();
         match result {
             Ok(listing) => {
                 let focus = match (&listing, self.focus_partition.take()) {
+                    (Listing::Tasks(new), _) => self.retain_task_selection(new),
                     (Listing::Partitions(snapshot), Some(id)) => snapshot
                         .assets
                         .iter()
@@ -155,31 +174,73 @@ impl Window {
                 // SAFETY: List rows come from the stored page before the count is published.
                 unsafe {
                     let _ = SetWindowTextW(self.path, &HSTRING::from(path));
-                    SendMessageW(self.list, LVM_SETITEMCOUNT, Some(WPARAM(count)), None);
+                    SendMessageW(
+                        self.list,
+                        LVM_SETITEMCOUNT,
+                        Some(WPARAM(count)),
+                        Some(LPARAM(if tasks { LVSICF_NOSCROLL as isize } else { 0 })),
+                    );
+                    if tasks && count != 0 {
+                        SendMessageW(
+                            self.list,
+                            LVM_REDRAWITEMS,
+                            Some(WPARAM(0)),
+                            Some(LPARAM((count - 1) as isize)),
+                        );
+                    }
                 }
                 self.status(&status);
                 if let Some(row) = focus {
-                    let selected = LIST_VIEW_ITEM_STATE_FLAGS(LVIS_SELECTED.0 | LVIS_FOCUSED.0);
-                    let item = LVITEMW {
-                        stateMask: selected,
-                        state: selected,
-                        ..Default::default()
-                    };
-                    // SAFETY: The synchronous list-view messages consume a row from its current snapshot.
-                    unsafe {
-                        SendMessageW(
-                            self.list,
-                            LVM_SETITEMSTATE,
-                            Some(WPARAM(row)),
-                            Some(LPARAM(&item as *const _ as isize)),
-                        );
-                        SendMessageW(self.list, LVM_ENSUREVISIBLE, Some(WPARAM(row)), None);
+                    self.set_selected_row(Some(row));
+                    if !tasks {
+                        // SAFETY: The selected partition is a row from the current listing.
+                        unsafe {
+                            SendMessageW(self.list, LVM_ENSUREVISIBLE, Some(WPARAM(row)), None)
+                        };
                     }
                 }
+            }
+            Err(error) if tasks => {
+                let showing_last = if let Some(Listing::Tasks(list)) = self
+                    .browser
+                    .borrow_mut()
+                    .as_mut()
+                    .and_then(|b| b.listing.as_mut())
+                {
+                    list.stale = true;
+                    "，显示上次读取的任务"
+                } else {
+                    ""
+                };
+                self.status(&format!(
+                    "无法读取索引任务：{error:#}{showing_last}（F5 刷新）"
+                ));
             }
             Err(error) => self.status(&format!("无法读取：{error:#}（F5 刷新）")),
         }
         self.update_browse_buttons();
+    }
+
+    pub(super) fn set_selected_row(&self, row: Option<usize>) {
+        let mask = LIST_VIEW_ITEM_STATE_FLAGS(LVIS_SELECTED.0 | LVIS_FOCUSED.0);
+        let item = LVITEMW {
+            stateMask: mask,
+            state: if row.is_some() {
+                mask
+            } else {
+                Default::default()
+            },
+            ..Default::default()
+        };
+        // SAFETY: The list synchronously copies the state. Index -1 clears all row selections.
+        unsafe {
+            SendMessageW(
+                self.list,
+                LVM_SETITEMSTATE,
+                Some(WPARAM(row.unwrap_or(usize::MAX))),
+                Some(LPARAM(&item as *const _ as isize)),
+            )
+        };
     }
 
     pub(super) fn return_to_search(&self) {
@@ -191,6 +252,7 @@ impl Window {
         }
         self.index.take();
         self.focus_partition.take();
+        self.task_notice.take();
         self.generation.set(self.generation.get() + 1);
         self.clear();
         self.set_browse_controls(false, true);
@@ -204,6 +266,7 @@ impl Window {
     }
 
     fn set_browse_controls(&self, browse: bool, changed_columns: bool) {
+        let tasks = self.viewing_tasks();
         let (partitions, candidates) = {
             let b = self.browser.borrow();
             (
@@ -216,7 +279,9 @@ impl Window {
         unsafe {
             let _ = SetWindowTextW(
                 self.hwnd,
-                if browse {
+                if tasks {
+                    w!("StashFinder · 索引任务")
+                } else if browse {
                     w!("StashFinder · 分区与目录")
                 } else {
                     w!("StashFinder · 快速搜索")
@@ -224,7 +289,9 @@ impl Window {
             );
             let _ = SetWindowTextW(
                 self.list,
-                if browse {
+                if tasks {
+                    w!("索引任务")
+                } else if browse {
                     w!("分区与目录")
                 } else {
                     w!("搜索结果")
@@ -242,13 +309,23 @@ impl Window {
             for (child, visible) in [
                 (self.path, browse),
                 (self.up, browse && !partitions),
-                (self.previous, browse && !partitions && !candidates),
-                (self.next, browse && !partitions && !candidates),
+                (
+                    self.previous,
+                    browse && !partitions && !candidates && !tasks,
+                ),
+                (self.next, browse && !partitions && !candidates && !tasks),
                 (self.register, partitions || candidates),
                 (self.auto_index, candidates),
                 (self.start_index, partitions),
+                (self.cancel_task, tasks),
+                (self.retry_task, tasks),
             ] {
                 let _ = ShowWindow(child, if visible { SW_SHOW } else { SW_HIDE });
+            }
+            if tasks {
+                SetTimer(Some(self.hwnd), TASK_POLL, 1500, None);
+            } else {
+                let _ = KillTimer(Some(self.hwnd), TASK_POLL);
             }
             if changed_columns {
                 while SendMessageW(self.list, LVM_DELETECOLUMN, Some(WPARAM(0)), None).0 != 0 {}
@@ -277,6 +354,6 @@ impl Window {
             let _ = EnableWindow(self.previous, previous);
             let _ = EnableWindow(self.next, next);
         }
-        self.update_partition_selection();
+        self.update_selection();
     }
 }

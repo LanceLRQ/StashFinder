@@ -1,11 +1,13 @@
 mod browsing;
 mod partitions;
+mod task_view;
 
 use crate::{
     Endpoint,
     actions::{self, FileAction, Prepared},
     browse::{Browser, Listing, Location},
     search::{self, Page, View},
+    tasks::Operation,
 };
 use anyhow::{Result, ensure};
 use stashfinder_core::{
@@ -47,6 +49,7 @@ use windows::{
 const RESULTS: u32 = WM_APP + 1;
 const SCROLL: u32 = WM_APP + 2;
 const DEBOUNCE: usize = 1;
+const TASK_POLL: usize = 2;
 const OPEN: usize = 101;
 const COPY_PATH: usize = 102;
 const PARTITIONS: usize = 103;
@@ -59,6 +62,9 @@ const CANDIDATES: usize = 109;
 const REGISTER: usize = 110;
 const AUTO_INDEX: usize = 111;
 const START_INDEX: usize = 112;
+const TASKS: usize = 113;
+const CANCEL_TASK: usize = 114;
+const RETRY_TASK: usize = 115;
 const COLUMNS: [(&str, i32, Option<SortField>); 5] = [
     ("名称", 235, Some(SortField::Name)),
     ("卷内路径", 375, Some(SortField::Path)),
@@ -74,6 +80,7 @@ enum Update {
     Registered(u64, Result<String>),
     Index(String, Result<IndexStatus>),
     IndexStarted(String, Result<()>),
+    TaskAction(u64, String, Operation, Result<()>),
 }
 
 struct Window {
@@ -88,6 +95,9 @@ struct Window {
     register: HWND,
     auto_index: HWND,
     start_index: HWND,
+    cancel_task: HWND,
+    retry_task: HWND,
+    task_notice: RefCell<Option<(String, String)>>,
     write_task: RefCell<Option<JoinHandle<()>>>,
     focus_partition: RefCell<Option<String>>,
     index: RefCell<Option<partitions::IndexWatch>>,
@@ -111,7 +121,7 @@ struct Window {
 
 thread_local! { static WINDOW: RefCell<Option<Rc<Window>>> = const { RefCell::new(None) }; }
 
-pub(super) fn run(endpoint: Endpoint, browse: bool) -> Result<()> {
+pub(super) fn run(endpoint: Endpoint, initial: Option<Location>) -> Result<()> {
     let runtime = Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -159,6 +169,7 @@ pub(super) fn run(endpoint: Endpoint, browse: bool) -> Result<()> {
         let navigation = CreatePopupMenu()?;
         AppendMenuW(navigation, MF_STRING, PARTITIONS, w!("已登记分区(&P)"))?;
         AppendMenuW(navigation, MF_STRING, CANDIDATES, w!("登记分区(&A)…"))?;
+        AppendMenuW(navigation, MF_STRING, TASKS, w!("索引任务(&T)"))?;
         AppendMenuW(navigation, MF_STRING, UP, w!("上一级(&U)\tBackspace"))?;
         AppendMenuW(navigation, MF_STRING, REFRESH, w!("刷新(&R)\tF5"))?;
         AppendMenuW(navigation, MF_SEPARATOR, 0, None)?;
@@ -256,7 +267,31 @@ pub(super) fn run(endpoint: Endpoint, browse: bool) -> Result<()> {
             WINDOW_EX_STYLE(0),
             START_INDEX,
         )?;
-        for control in [path, up, previous, next, register, auto_index, start_index] {
+        let cancel_task = child(
+            w!("BUTTON"),
+            w!("取消任务"),
+            WS_TABSTOP,
+            WINDOW_EX_STYLE(0),
+            CANCEL_TASK,
+        )?;
+        let retry_task = child(
+            w!("BUTTON"),
+            w!("重试任务"),
+            WS_TABSTOP,
+            WINDOW_EX_STYLE(0),
+            RETRY_TASK,
+        )?;
+        for control in [
+            path,
+            up,
+            previous,
+            next,
+            register,
+            auto_index,
+            start_index,
+            cancel_task,
+            retry_task,
+        ] {
             let _ = ShowWindow(control, SW_HIDE);
         }
         SetWindowSubclass(edit, Some(edit_proc), 1, 0).ok()?;
@@ -299,6 +334,9 @@ pub(super) fn run(endpoint: Endpoint, browse: bool) -> Result<()> {
             register,
             auto_index,
             start_index,
+            cancel_task,
+            retry_task,
+            task_notice: RefCell::new(None),
             write_task: RefCell::new(None),
             focus_partition: RefCell::new(None),
             index: RefCell::new(None),
@@ -322,8 +360,8 @@ pub(super) fn run(endpoint: Endpoint, browse: bool) -> Result<()> {
         WINDOW.with(|slot| slot.replace(Some(app.clone())));
         app.scale(true)?;
         let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
-        if browse {
-            app.browse_to(Location::Partitions, false);
+        if let Some(location) = initial {
+            app.browse_to(location, false);
         } else {
             let _ = SetFocus(Some(edit));
         }
@@ -347,8 +385,16 @@ pub(super) fn run(endpoint: Endpoint, browse: bool) -> Result<()> {
                             app.enter_selected_folder()
                         }
                         k if k == VK_RETURN.0
-                            && [up, previous, next, register, start_index]
-                                .contains(&message.hwnd) =>
+                            && [
+                                up,
+                                previous,
+                                next,
+                                register,
+                                start_index,
+                                cancel_task,
+                                retry_task,
+                            ]
+                            .contains(&message.hwnd) =>
                         {
                             SendMessageW(message.hwnd, BM_CLICK, None, None);
                         }
@@ -496,6 +542,9 @@ impl Window {
                 WM_COMMAND if wp.0 == CANDIDATES => self.open_candidates(),
                 WM_COMMAND if wp.0 == REGISTER => self.register_selected(),
                 WM_COMMAND if wp.0 == START_INDEX => self.start_index(),
+                WM_COMMAND if wp.0 == TASKS => self.browse_to(Location::Tasks, false),
+                WM_COMMAND if wp.0 == CANCEL_TASK => self.task_command(Operation::Cancel),
+                WM_COMMAND if wp.0 == RETRY_TASK => self.task_command(Operation::Retry),
                 WM_COMMAND if lp.0 == 0 && wp.0 == OPEN && self.browser.borrow().is_some() => {
                     self.enter_selected_folder()
                 }
@@ -539,6 +588,7 @@ impl Window {
                     }
                 }
                 WM_TIMER if wp.0 == DEBOUNCE => self.submit(),
+                WM_TIMER if wp.0 == TASK_POLL => self.refresh_tasks(),
                 WM_NOTIFY => {
                     let hdr = &*(lp.0 as *const NMHDR);
                     if hdr.hwndFrom != self.list {
@@ -562,16 +612,15 @@ impl Window {
                                     }
                                     None => row.map_or("…", |row| cell_text(row, item.iSubItem)),
                                 };
-                                let buf = std::slice::from_raw_parts_mut(
-                                    item.pszText.0,
-                                    item.cchTextMax as usize,
-                                );
-                                let mut n = 0;
-                                for c in text.encode_utf16().take(buf.len() - 1) {
-                                    buf[n] = c;
-                                    n += 1;
+                                // List-view clients can supply a byte-aligned text buffer.
+                                for (index, unit) in text
+                                    .encode_utf16()
+                                    .take(item.cchTextMax as usize - 1)
+                                    .chain(std::iter::once(0))
+                                    .enumerate()
+                                {
+                                    item.pszText.0.add(index).write_unaligned(unit);
                                 }
-                                buf[n] = 0;
                                 if browser.is_none() && row.is_none() {
                                     self.schedule_scroll();
                                 }
@@ -579,7 +628,7 @@ impl Window {
                         }
                         LVN_ODCACHEHINT => self.schedule_scroll(),
                         LVN_ITEMCHANGED | LVN_ODSTATECHANGED if self.browser.borrow().is_some() => {
-                            self.update_partition_selection();
+                            self.update_selection();
                         }
                         LVN_COLUMNCLICK if self.browser.borrow().is_none() => {
                             let col = (*(lp.0 as *const NMLISTVIEW)).iSubItem as usize;
@@ -650,6 +699,8 @@ impl Window {
                 self.register,
                 self.auto_index,
                 self.start_index,
+                self.cancel_task,
+                self.retry_task,
             ] {
                 SendMessageW(
                     child,
@@ -678,6 +729,7 @@ impl Window {
                     .map_or(&COLUMNS[..], |b| match b.location {
                         Location::Candidates => browsing::CANDIDATE_COLUMNS,
                         Location::Partitions => browsing::PARTITION_COLUMNS,
+                        Location::Tasks => browsing::TASK_COLUMNS,
                         Location::Folder { .. } => browsing::FOLDER_COLUMNS,
                     });
             for (i, (name, width, sort)) in columns.iter().enumerate() {
@@ -723,39 +775,41 @@ impl Window {
             let width = (r.right - 2 * gap).max(0);
             let top = 2 * gap + px(29);
             let bottom = (r.bottom - px(27)).max(top);
-            let (browsing, folders, candidates) = {
+            let (browsing, folders, at_root, toolbar) = {
                 let browser = self.browser.borrow();
-                (
-                    browser.is_some(),
-                    matches!(
-                        browser.as_ref().map(|b| &b.location),
-                        Some(Location::Folder { .. })
+                match browser.as_ref().map(|b| &b.location) {
+                    None => (false, false, false, None),
+                    Some(Location::Folder { .. }) => (true, true, false, None),
+                    Some(Location::Partitions) => (
+                        true,
+                        false,
+                        true,
+                        Some((self.start_index, 108, self.register)),
                     ),
-                    matches!(
-                        browser.as_ref().map(|b| &b.location),
-                        Some(Location::Candidates)
+                    Some(Location::Candidates) => (
+                        true,
+                        false,
+                        false,
+                        Some((self.auto_index, 162, self.register)),
                     ),
-                )
+                    Some(Location::Tasks) => (
+                        true,
+                        false,
+                        false,
+                        Some((self.cancel_task, 108, self.retry_task)),
+                    ),
+                }
             };
             let button = px(76).min((width / 3).max(0));
             if browsing {
                 let _ = MoveWindow(self.up, gap, gap, button, px(29), true);
-                let left = if folders || candidates {
-                    2 * gap + button
-                } else {
-                    gap
-                };
+                let left = if at_root { gap } else { 2 * gap + button };
                 let mut path_end = r.right - gap;
-                if !folders {
+                if let Some((control, control_width, right)) = toolbar {
                     let submit = px(108).min(width / 3);
-                    let other = px(if candidates { 162 } else { 108 }).min(width / 3);
-                    let _ = MoveWindow(self.register, path_end - submit, gap, submit, px(29), true);
+                    let other = px(control_width).min(width / 3);
+                    let _ = MoveWindow(right, path_end - submit, gap, submit, px(29), true);
                     path_end -= submit + gap;
-                    let control = if candidates {
-                        self.auto_index
-                    } else {
-                        self.start_index
-                    };
                     let _ = MoveWindow(control, path_end - other, gap, other, px(29), true);
                     path_end -= other + gap;
                 }
@@ -970,6 +1024,9 @@ impl Window {
                 }
                 Update::Index(id, result) => self.show_index(&id, result),
                 Update::IndexStarted(id, result) => self.index_started(&id, result),
+                Update::TaskAction(generation, id, operation, result) => {
+                    self.task_action_finished(generation, id, operation, result)
+                }
             }
         }
     }
@@ -1075,7 +1132,7 @@ mod tests {
         let worker = thread::spawn(|| {
             run(
                 Endpoint::Direct(stashfinder_windows::ipc::DEFAULT_PIPE.into()),
-                false,
+                None,
             )
             .unwrap()
         });

@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+chrono = "=0.4.45"
 stashfinder-core = { path = "../core" }
 stashfinder-windows = { path = "../windows" }
 tokio.workspace = true

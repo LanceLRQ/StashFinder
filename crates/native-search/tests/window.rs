@@ -73,6 +73,28 @@ fn search_window_accepts_input_and_reports_a_disconnected_backend() {
             !browse.is_invalid(),
             "the native window must offer indexed partition browsing"
         );
+        let tasks = (0..GetMenuItemCount(Some(browse)))
+            .map(|i| GetMenuItemID(browse, i))
+            .find(|id| *id == 113)
+            .expect("the native browse menu must open index tasks");
+        SendMessageW(window, WM_COMMAND, Some(WPARAM(tasks as usize)), None);
+        let cancel = GetDlgItem(Some(window), 114).unwrap();
+        let retry = GetDlgItem(Some(window), 115).unwrap();
+        assert!(IsWindowVisible(cancel).as_bool() && IsWindowVisible(retry).as_bool());
+        let deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            let mut label = [0; 512];
+            let len = GetWindowTextW(status, &mut label) as usize;
+            if String::from_utf16_lossy(&label[..len]).contains("无法读取索引任务") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "an unavailable task list must show a read error"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!IsWindowEnabled(cancel).as_bool() && !IsWindowEnabled(retry).as_bool());
         let partitions = GetMenuItemID(browse, 0);
         let deadline = Instant::now() + Duration::from_secs(8);
         SendMessageW(window, WM_COMMAND, Some(WPARAM(partitions as usize)), None);

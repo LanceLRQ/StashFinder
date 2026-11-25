@@ -1,5 +1,6 @@
 use crate::Endpoint;
 use crate::registration;
+use crate::tasks::TaskList;
 use anyhow::{Result, bail, ensure};
 use stashfinder_core::{
     Action, Response,
@@ -12,6 +13,7 @@ use stashfinder_windows::ipc;
 pub(super) enum Location {
     Partitions,
     Candidates,
+    Tasks,
     Folder {
         name: String,
         request: Box<DirectoryRequest>,
@@ -22,6 +24,7 @@ pub(super) enum Location {
 pub(super) enum Listing {
     Partitions(Snapshot),
     Candidates(Snapshot),
+    Tasks(TaskList),
     Folder(Box<DirectoryPage>),
 }
 
@@ -40,6 +43,7 @@ impl Location {
         endpoint.ready().await?;
         let pipe = endpoint.pipe();
         match self {
+            Self::Tasks => Ok(Listing::Tasks(TaskList::load(pipe).await?)),
             Self::Candidates => {
                 let mut snapshot = registration::idle_snapshot(pipe).await?;
                 if refresh {
@@ -100,7 +104,7 @@ async fn read_directory(pipe: &str, request: &DirectoryRequest) -> Result<Box<Di
 impl Browser {
     pub fn enter(&self, row: usize) -> Option<Location> {
         match self.listing.as_ref()? {
-            Listing::Candidates(_) => None,
+            Listing::Candidates(_) | Listing::Tasks(_) => None,
             Listing::Partitions(snapshot) => {
                 let asset = snapshot.assets.get(row)?;
                 let r = &asset.registration;
@@ -144,7 +148,7 @@ impl Browser {
     }
 
     pub fn up(&self) -> Option<Location> {
-        if matches!(self.location, Location::Candidates) {
+        if matches!(self.location, Location::Candidates | Location::Tasks) {
             return Some(Location::Partitions);
         }
         let Location::Folder { request, .. } = &self.location else {
@@ -190,6 +194,9 @@ impl Browser {
 
     pub fn apply(&mut self, listing: Listing) -> (String, String, usize) {
         let (path, status, count) = match (&mut self.location, &listing) {
+            (Location::Tasks, Listing::Tasks(tasks)) => {
+                ("索引任务".into(), tasks.summary(), tasks.rows.len())
+            }
             (Location::Candidates, Listing::Candidates(snapshot)) => {
                 let count = snapshot
                     .candidates
@@ -259,6 +266,7 @@ impl Browser {
 
     pub fn cell(&self, row: usize, column: i32) -> &str {
         match &self.listing {
+            Some(Listing::Tasks(tasks)) => tasks.cell(row, column),
             Some(Listing::Candidates(snapshot)) => {
                 snapshot.candidates.get(row).map_or("", |c| {
                     let o = &c.observation;

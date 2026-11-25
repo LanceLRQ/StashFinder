@@ -2,6 +2,7 @@ mod actions;
 mod browse;
 mod registration;
 mod search;
+mod tasks;
 mod window;
 
 use anyhow::{Result, bail, ensure};
@@ -32,11 +33,11 @@ impl Endpoint {
 
 pub fn run(program: &Path, args: &[String]) -> Result<()> {
     ensure!(!portable::is_elevated(), "请用普通用户权限启动搜索窗口");
-    let (browse, args) = match args {
-        [entry, rest @ ..] if matches!(entry.as_str(), "--browse" | "--quick-search") => {
-            (entry == "--browse", rest)
-        }
-        _ => (false, args),
+    let (initial, args) = match args {
+        [entry, rest @ ..] if entry == "--tasks" => (Some(browse::Location::Tasks), rest),
+        [entry, rest @ ..] if entry == "--browse" => (Some(browse::Location::Partitions), rest),
+        [entry, rest @ ..] if entry == "--quick-search" => (None, rest),
+        _ => (None, args),
     };
     let layout = portable::Layout::discover(program)?;
     let installed = layout.is_none() && storage::is_installed_program(program)?;
@@ -49,7 +50,7 @@ pub fn run(program: &Path, args: &[String]) -> Result<()> {
             return Ok(());
         };
         let pipe = layout.map_or_else(|| scm::INSTALLED_PIPE.to_owned(), |l| l.pipe);
-        return window::run(Endpoint::Direct(pipe), browse);
+        return window::run(Endpoint::Direct(pipe), initial);
     }
     let pipe = search_pipe(args, installed)?;
     window::run(
@@ -58,7 +59,7 @@ pub fn run(program: &Path, args: &[String]) -> Result<()> {
         } else {
             Endpoint::Direct(pipe)
         },
-        browse,
+        initial,
     )
 }
 

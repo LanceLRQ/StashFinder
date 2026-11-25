@@ -24,6 +24,8 @@ Run `StashFinder.exe --browse` or choose **浏览 → 已登记分区** (Browse 
 
 You can also start here with an empty catalog. Click **登记分区…** (Register partition), select a volume and click **登记所选分区** (Register selected partition). Initial indexing is enabled by default. The status bar shows progress for the selected partition. If you turn automatic indexing off, select the registered partition later to start it manually. For NTFS without a USN journal, click **仅扫描建索引** to build a scan-only index.
 
+Open **浏览 → 索引任务** (Browse → Index tasks) or run `StashFinder.exe --tasks` to see execution phases and errors in the native window. Cancel a queued, running or waiting task to pause automatic updates for its partition. Once the partition is online and ready, you can retry a failed, interrupted or cancelled task.
+
 In either installation mode, open **StashFinder 快速搜索** (Quick Search) directly from Start. Type a query to search registered partitions with the main desktop closed. In the results list, press Enter or double-click to open an online item, or press Ctrl+Shift+C to copy the path of an online or offline record.
 
 Search includes both online and offline registered partitions by default. Browse folders and open search results in separate tabs, then return to where you left off. While a drive is offline, you can see the last saved names, paths, sizes, and timestamps, along with any cached thumbnails. Reconnect the drive to open or work with the files. You can include historical records from before a reformat in the search scope.

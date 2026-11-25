@@ -59,6 +59,8 @@ Type to search, or press Enter to submit immediately or retry. Click Name, Volum
 
 On an interactive Windows desktop, run `cargo test -p stashfinder-native-search --locked -- --ignored --test-threads=1` to check the disconnected-backend message and control dimensions after a DPI change.
 
+To verify native index tasks, keep the main desktop closed and start indexing a dedicated test partition. Open **浏览 → 索引任务** (Browse → Index tasks) or run `StashFinder.exe --tasks`. Observe the execution phase, cancel the selected task and verify its cancelled state and the partition's paused state. Retry and check that a new execution appears and the test files become searchable on completion. With two windows open, refreshes and reordered rows should preserve the selected task ID. Disconnecting the backend should show a read error and disable actions until it reconnects.
+
 ## Windows installer
 
 Run `pnpm package` from the repository root to build the portable ZIP and the NSIS installer in sequence. To build either artifact individually, run `pnpm package:portable` or `pnpm package:installer`. The portable ZIP goes to `.local/packages/` and the NSIS installer to `target/release/bundle/nsis/`.
